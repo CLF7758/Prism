@@ -7,6 +7,7 @@ on:
 jobs:
   test:
     runs-on: windows-latest
+    timeout-minutes: 30
     env:
       # The suite drives real widgets; never try to open a display.
       QT_QPA_PLATFORM: offscreen
@@ -24,4 +25,11 @@ jobs:
           python -m pip install -e .
 
       - name: Run tests
-        run: pytest --cov=prism --cov-report=term-missing
+        run: python tools/run_tests_safe.py --timeout 120 --report output/ci-tests.txt
+
+      - name: Preserve test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: output/ci-tests.txt
