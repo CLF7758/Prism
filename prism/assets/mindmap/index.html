@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prism Mind Map</title>
+  <link rel="stylesheet" href="vendor/simpleMindMap.esm.min.css">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #1c1c1e;
+      color: #eee;
+      font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+      font-size: 13px;
+    }
+    #shell { display: flex; flex-direction: column; height: 100%; }
+    #toolbar {
+      flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap;
+      gap: 4px; padding: 5px 8px; background: #252529;
+      border-bottom: 1px solid #3a3a40;
+    }
+    #toolbar .group {
+      display: flex; align-items: center; gap: 4px;
+      padding: 0 6px; border-right: 1px solid #3a3a40;
+    }
+    #toolbar .group:last-child { border-right: 0; }
+    #toolbar button, #toolbar select, #toolbar input {
+      height: 28px; padding: 0 8px; color: #eee; background: #35353a;
+      border: 1px solid #4a4a50; border-radius: 5px; font: inherit;
+      line-height: 1;
+    }
+    #toolbar button:hover, #toolbar select:hover { background: #465d78; }
+    #toolbar button.active { background: #4a6b93; border-color: #6f96c4; }
+    #toolbar button.danger:hover { background: #813f45; }
+    #toolbar .tight { padding: 0 7px; min-width: 30px; }
+    #toolbar .spacer { flex: 1 1 auto; }
+    #toolbar .sep { width: 1px; height: 20px; background: #3a3a40; }
+    #body { flex: 1 1 auto; display: flex; min-height: 0; }
+    #map { flex: 1 1 auto; min-width: 0; position: relative; }
+    #side {
+      flex: 0 0 214px; overflow-y: auto; background: #202024;
+      border-left: 1px solid #3a3a40; padding: 10px 10px 40px;
+    }
+    #side h4 {
+      margin: 14px 0 6px; font-size: 12px; font-weight: 600;
+      color: rgba(245,245,247,0.55); letter-spacing: .04em;
+    }
+    #side h4:first-child { margin-top: 0; }
+    .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .row + .row { margin-top: 6px; }
+    .swatch {
+      width: 22px; height: 22px; border-radius: 4px; cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.22); box-sizing: border-box;
+    }
+    .swatch.active { outline: 2px solid #6f96c4; outline-offset: 1px; }
+    .swatch.none {
+      background: repeating-linear-gradient(45deg, #35353a, #35353a 4px,
+        #4a4a50 4px, #4a4a50 8px);
+    }
+    #side input[type="number"], #side select, #side button {
+      height: 26px; color: #eee; background: #35353a;
+      border: 1px solid #4a4a50; border-radius: 4px; font: inherit;
+      padding: 0 6px;
+    }
+    #side input[type="number"] { width: 58px; }
+    #side button { cursor: pointer; }
+    #side button:hover { background: #465d78; }
+    #side button.on { background: #4a6b93; border-color: #6f96c4; }
+    #side .pill {
+      display: inline-flex; align-items: center; height: 26px; padding: 0 8px;
+      border-radius: 4px; background: #2c2c31; color: #cfd3da; cursor: pointer;
+      border: 1px solid #43434a;
+    }
+    #side .pill:hover { background: #3a3a42; }
+    #iconGrid { display: flex; flex-wrap: wrap; gap: 3px; }
+    #iconGrid img, #iconGrid span.icon {
+      width: 22px; height: 22px; cursor: pointer; border-radius: 3px;
+      padding: 1px; box-sizing: border-box;
+    }
+    #iconGrid img:hover { background: #465d78; }
+    #iconGrid img.on { background: #4a6b93; }
+    #hint {
+      margin-top: 10px; color: rgba(245,245,247,0.45); font-size: 11px;
+      line-height: 1.7;
+    }
+    kbd {
+      background: #31313a; border: 1px solid #47474f; border-bottom-width: 2px;
+      border-radius: 3px; padding: 0 4px; font-family: inherit; font-size: 10px;
+    }
+    #status {
+      position: fixed; left: 10px; bottom: 6px; color: rgba(245,245,247,0.5);
+      font-size: 12px; pointer-events: none;
+    }
+    /* Context menu */
+    #menu {
+      position: fixed; z-index: 40; min-width: 168px; padding: 4px;
+      background: #2a2a30; border: 1px solid #45454e; border-radius: 6px;
+      box-shadow: 0 8px 26px rgba(0,0,0,0.5); display: none;
+    }
+    #menu .item {
+      padding: 6px 10px; border-radius: 4px; cursor: pointer;
+      display: flex; justify-content: space-between; gap: 20px;
+    }
+    #menu .item:hover { background: #465d78; }
+    #menu .item .key { color: rgba(245,245,247,0.4); }
+    #menu .hr { height: 1px; margin: 4px 6px; background: #45454e; }
+    /* Text input overlay (QWebEngine does not show window.prompt) */
+    #ask {
+      position: fixed; inset: 0; z-index: 50; display: none;
+      background: rgba(0,0,0,0.35); align-items: center; justify-content: center;
+    }
+    #ask .box {
+      width: 340px; background: #2a2a30; border: 1px solid #45454e;
+      border-radius: 8px; padding: 14px; box-shadow: 0 12px 30px rgba(0,0,0,.5);
+    }
+    #ask .title { margin-bottom: 8px; color: #dfe3ea; }
+    #ask input, #ask textarea {
+      width: 100%; box-sizing: border-box; background: #35353a; color: #eee;
+      border: 1px solid #4a4a50; border-radius: 4px; padding: 6px; font: inherit;
+    }
+    #ask textarea { min-height: 96px; resize: vertical; }
+    #ask .buttons { margin-top: 10px; display: flex; justify-content: flex-end; gap: 8px; }
+    #ask button {
+      height: 28px; padding: 0 14px; border-radius: 4px; cursor: pointer;
+      background: #35353a; color: #eee; border: 1px solid #4a4a50; font: inherit;
+    }
+    #ask button.primary { background: #3f6fa8; border-color: #5c8dc4; }
+    /* simple-mind-map stores a node label as HTML and injects it straight
+       into the node box; the label arrives wrapped in <p>.  The browser's
+       default 1em paragraph margin then collapses through the wrapper and
+       pushes the text down by a full font size, which is enough to shove a
+       single-line label out of the 20px-tall foreignObject.  Reset the
+       block margins only - the library measures the box itself. */
+    #map .smm-richtext-node-wrap,
+    #map .smm-richtext-node-wrap * {
+      margin: 0;
+      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    }
+    .smm-node-edit-wrap {
+      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="shell">
+    <div id="toolbar">
+      <div class="group">
+        <button data-cmd="BACK" title="撤销 (Ctrl+Z)">撤销</button>
+        <button data-cmd="FORWARD" title="重做 (Ctrl+Y)">重做</button>
+      </div>
+      <div class="group">
+        <button data-cmd="INSERT_CHILD_NODE" title="插入子主题 (Tab)">+ 子主题</button>
+        <button data-cmd="INSERT_NODE" title="插入同级主题 (Enter)">+ 同级</button>
+        <button data-cmd="INSERT_PARENT_NODE" title="插入父主题 (Shift+Tab)">+ 父主题</button>
+        <button class="danger" data-cmd="REMOVE_NODE" title="删除主题 (Delete)">删除</button>
+      </div>
+      <div class="group">
+        <button data-act="copy" title="复制 (Ctrl+C)">复制</button>
+        <button data-act="paste" title="粘贴 (Ctrl+V)">粘贴</button>
+        <button data-act="image" title="为选中的主题插入图片">图片</button>
+        <button data-act="icon" title="展开右侧图标面板">图标</button>
+        <button data-act="hyperlink" title="添加超链接">链接</button>
+        <button data-act="note" title="添加备注">备注</button>
+        <button data-act="tag" title="添加标签">标签</button>
+      </div>
+      <div class="group">
+        <button data-act="associative" title="给选中的两个主题加联系线">联系线</button>
+        <button data-act="generalization" title="给选中的主题加概要 (Ctrl+G)">概要</button>
+        <button data-act="outerFrame" title="给选中的主题加边界">边界</button>
+      </div>
+      <div class="group">
+        <select id="layout" title="布局"></select>
+        <button data-act="expandAll" title="展开全部主题">全部展开</button>
+        <button data-act="collapseAll" title="折叠到第二层">收起一层</button>
+        <button data-act="resetLayout" title="恢复自动布局 (Ctrl+L)">恢复布局</button>
+      </div>
+      <div class="group">
+        <button id="zoomOut" class="tight" title="缩小 (Ctrl+-)">−</button>
+        <button id="fit" title="适应窗口 (Ctrl+I)">适应窗口</button>
+        <button id="zoomIn" class="tight" title="放大 (Ctrl+=)">＋</button>
+        <button id="center" title="回到中心主题 (Ctrl+Enter)">回到中心</button>
+      </div>
+    </div>
+    <div id="body">
+      <div id="map"></div>
+      <aside id="side">
+        <h4>文字</h4>
+        <div class="row">
+          <button id="fontMinus" title="减小字号">A−</button>
+          <input id="fontSize" type="number" min="9" max="96" step="1" title="字号">
+          <button id="fontPlus" title="增大字号">A＋</button>
+          <button id="bold" title="加粗 (Ctrl+B)"><b>B</b></button>
+          <button id="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
+          <button id="strike" title="删除线"><s>S</s></button>
+        </div>
+        <div class="row" id="textColors"></div>
+        <h4>节点</h4>
+        <div class="row">
+          <select id="shape" title="形状"></select>
+        </div>
+        <div class="row"><span style="color:rgba(245,245,247,.5)">填充</span></div>
+        <div class="row" id="fillColors"></div>
+        <div class="row"><span style="color:rgba(245,245,247,.5)">边框</span></div>
+        <div class="row" id="borderColors"></div>
+        <h4>图标</h4>
+        <div id="iconGrid"></div>
+        <h4>主题信息</h4>
+        <div class="row">
+          <span class="pill" data-act="note">备注</span>
+          <span class="pill" data-act="hyperlink">链接</span>
+          <span class="pill" data-act="tag">标签</span>
+        </div>
+        <div id="hint">
+          <kbd>Tab</kbd> 子主题 · <kbd>Enter</kbd> 同级 · <kbd>Shift+Tab</kbd> 父主题<br>
+          <kbd>F2</kbd> 或双击改文字 · <kbd>方向键</kbd> 在主题间移动<br>
+          <kbd>Delete</kbd> 删除 · <kbd>Ctrl+C/V</kbd> 复制分支<br>
+          <kbd>Ctrl+Z/Y</kbd> 撤销重做 · <kbd>Ctrl+G</kbd> 概要 · <kbd>Ctrl+L</kbd> 重排
+        </div>
+      </aside>
+    </div>
+  </div>
+  <div id="status"></div>
+  <div id="menu"></div>
+  <div id="ask">
+    <div class="box">
+      <div class="title" id="askTitle"></div>
+      <div id="askField"></div>
+      <div class="buttons">
+        <button id="askCancel">取消</button>
+        <button id="askOk" class="primary">确定</button>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="fileInput" accept="image/*" style="display:none">
+
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script type="module">
+    import MindMap from './vendor/simpleMindMap.esm.min.js';
+
+    const status = document.getElementById('status');
+    const menuEl = document.getElementById('menu');
+    const askEl = document.getElementById('ask');
+
+    let mindMap = null;
+    let bridge = null;
+    // Suppress the data_change echo while Python is pushing a tree in.
+    let applyingFromHost = false;
+    // Images live outside the tree: the tree only keeps a short key, the
+    // key resolves to a data URL here.  Chrome needs no round trip per
+    // image, and the board file stays small.
+    const imageStore = new Map();
+    let newImages = {};
+    let imageCounter = 0;
+    let pendingImageNodes = [];
+    let pendingPush = null;
+    let viewRestoring = false;
+
+    const EMPTY_TREE = { data: { text: '中心主题' }, children: [] };
+
+    const COLORS = [
+      '#ffffff', '#d9d9d9', '#8c8c8c', '#404040', '#000000',
+      '#ff6b6b', '#ff9f43', '#feca57', '#48dbfb', '#1dd1a1',
+      '#5f27cd', '#c8d6e5'
+    ];
+
+    const SHAPES = [
+      ['roundedRectangle', '圆角矩形'],
+      ['rectangle', '矩形'],
+      ['diamond', '菱形'],
+      ['parallelogram', '平行四边形'],
+      ['octagonalRectangle', '八角矩形'],
+      ['outerTriangularRectangle', '外三角矩形'],
+      ['ellipse', '椭圆'],
+    ];
+
+    const LAYOUTS = [
+      ['logicalStructure', '逻辑结构图'],
+      ['mindMap', '思维导图'],
+      ['organizationStructure', '组织结构图'],
+      ['catalogOrganization', '目录组织图'],
+      ['timeline', '时间轴'],
+      ['timeline2', '时间轴 2'],
+      ['verticalTimeline', '竖向时间轴'],
+      ['fishbone', '鱼骨图'],
+      ['fishbone2', '鱼骨图 2'],
+      ['rightFishbone', '向右鱼骨图'],
+    ];
+
+    // ── helpers ──────────────────────────────────────────────────
+
+    function setStatus(text) {
+      status.textContent = text || '';
+    }
+
+    function plainText(html) {
+      // Node labels are stored as HTML (<p>text</p>).  A label that is
+      // nothing but one paragraph is handed back as the bare string so the
+      // board file and the exports stay readable.
+      if (typeof html !== 'string') return html;
+      const match = /^<p>([^<>]*)<\/p>$/.exec(html);
+      if (!match) return html;
+      return match[1]
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+        .replace(/&amp;/g, '&');
+    }
+
+    function activeNodes() {
+      return (mindMap && mindMap.renderer.activeNodeList) || [];
+    }
+
+    function needSelection() {
+      if (activeNodes().length) return false;
+      setStatus('请先选中一个主题');
+      return true;
+    }
+
+    function styleOf(node, prop) {
+      try {
+        if (node.style && typeof node.style.merge === 'function') {
+          return node.style.merge(prop);
+        }
+        if (typeof node.getStyle === 'function') return node.getStyle(prop);
+      } catch (error) {
+        // fall through: an unset style is simply "unknown"
+      }
+      return undefined;
+    }
+
+    function forEachActive(callback) {
+      const nodes = activeNodes();
+      if (!nodes.length) { setStatus('请先选中一个主题'); return; }
+      mindMap.command.pause();
+      try {
+        nodes.forEach(callback);
+      } finally {
+        mindMap.command.recovery();
+      }
+      mindMap.command.addHistory();
+      mindMap.render();
+    }
+
+    function styleSelection(prop, value) {
+      forEachActive((node) => {
+        mindMap.execCommand('SET_NODE_STYLE', node, prop, value);
+      });
+    }
+
+    // ── ask overlay (window.prompt does not work in QWebEngine) ──
+
+    let askResolve = null;
+
+    function askText(title, value, multiline) {
+      document.getElementById('askTitle').textContent = title;
+      const field = document.getElementById('askField');
+      field.innerHTML = '';
+      const input = document.createElement(multiline ? 'textarea' : 'input');
+      if (!multiline) input.type = 'text';
+      input.value = value || '';
+      field.appendChild(input);
+      askEl.style.display = 'flex';
+      input.focus();
+      input.select();
+      return new Promise((resolve) => { askResolve = resolve; });
+    }
+
+    function closeAsk(result) {
+      askEl.style.display = 'none';
+      const resolve = askResolve;
+      askResolve = null;
+      if (resolve) resolve(result);
+    }
+
+    document.getElementById('askOk').addEventListener('click', () => {
+      const input = document.querySelector('#askField input, #askField textarea');
+      closeAsk(input ? input.value : '');
+    });
+    document.getElementById('askCancel').addEventListener('click', () => closeAsk(null));
+    askEl.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.stopPropagation(); closeAsk(null); }
+      if (event.key === 'Enter' && !event.shiftKey && event.target.tagName !== 'TEXTAREA') {
+        event.preventDefault();
+        event.stopPropagation();
+        document.getElementById('askOk').click();
+      }
+    });
+
+    // ── the map itself ───────────────────────────────────────────
+
+    function resolveImages(tree) {
+      // Swap the stored picture keys for the picture itself before the
+      // canvas sees the tree.  Going through the library's own image map
+      // would mean the first frame draws nothing: the render tree is
+      // rebuilt while it renders, and the map goes with it.
+      const walk = (node) => {
+        const data = node && node.data;
+        if (data && typeof data.image === 'string' && imageStore.has(data.image)) {
+          data.image = imageStore.get(data.image);
+        }
+        ((node && node.children) || []).forEach(walk);
+      };
+      walk(tree);
+      return tree;
+    }
+
+    function normalizeTree(tree) {
+      // The canvas destructures imageSize whenever a node carries a picture,
+      // and throws on a tree that does not have one.  Imported maps always
+      // bring a size; anything else gets a placeholder instead of a crash.
+      const walk = (node) => {
+        const data = node && node.data;
+        if (data && data.image && !data.imageSize) {
+          data.imageSize = { width: 0, height: 0, custom: false };
+        }
+        ((node && node.children) || []).forEach(walk);
+      };
+      if (tree) walk(tree);
+      return tree;
+    }
+
+    function applyTree(tree) {
+      const data = resolveImages(normalizeTree(tree)) || EMPTY_TREE;
+      const layout = data._prism_layout || 'logicalStructure';
+      document.getElementById('layout').value = layout;
+      applyingFromHost = true;
+      try {
+        if (mindMap) {
+          mindMap.setData(data);
+          mindMap.setLayout(layout);
+        } else {
+          mindMap = new MindMap({
+            el: document.getElementById('map'),
+            data,
+            layout,
+            mousewheelAction: 'zoom',
+            enableFreeDrag: true,
+            selectTranslateStep: 3,
+            themeConfig: {
+              backgroundColor: '#1C1C1E', lineColor: '#737F92', lineWidth: 2,
+              lineStyle: 'curve', paddingX: 12, paddingY: 8,
+              root: {shape: 'rectangle', fillColor: '#285DA8', color: '#FFFFFF',
+                fontSize: 22, fontWeight: '600', borderWidth: 0, borderRadius: 10,
+                paddingX: 24, paddingY: 16},
+              second: {shape: 'rectangle', fillColor: '#2D3645', color: '#E7E9ED',
+                fontSize: 16, fontWeight: '500', borderWidth: 0, borderRadius: 8,
+                paddingX: 16, paddingY: 10, marginX: 64, marginY: 20},
+              node: {shape: 'rectangle', fillColor: '#282C34', color: '#E7E9ED',
+                fontSize: 14, fontWeight: '400', borderWidth: 0, borderRadius: 6,
+                paddingX: 12, paddingY: 8, marginX: 64, marginY: 20}
+            },
+            expandBtnStyle: {color: '#565D69', fill: '#2A2C32', fontColor: '#E7E9ED', fontSize: 11},
+          });
+          wireMindMap();
+          window.__mindMap = mindMap;
+        }
+        // Fit new maps after layout, but preserve an existing board's camera.
+        mindMap.render(() => {
+          if (data._prism_view) return;
+          viewRestoring = true;
+          try {
+            mindMap.view.fit();
+          } finally {
+            viewRestoring = false;
+          }
+        });
+        if (data._prism_view) {
+          viewRestoring = true;
+          try {
+            mindMap.view.setTransformData(data._prism_view);
+          } finally {
+            viewRestoring = false;
+          }
+        }
+      } finally {
+        applyingFromHost = false;
+      }
+      refreshPanel();
+      countNodes();
+    }
+
+    function createMindMap(tree) {
+      if (!mindMap) {
+        applyTree(tree || EMPTY_TREE);
+        return;
+      }
+      applyTree(tree);
+    }
+
+    let searchLocationGeneration = 0;
+    window.__restoreSearchMindMap = (state) => {
+      ++searchLocationGeneration;
+      if (!mindMap) return;
+      mindMap.execCommand('CLEAR_ACTIVE_NODE');
+      viewRestoring = true;
+      try { mindMap.view.setTransformData(state); }
+      finally { viewRestoring = false; }
+      schedulePush();
+    };
+    window.__locateMindMap = (target) => {
+      const path = Array.isArray(target) ? target : target.path;
+      const savedUid = Array.isArray(target) ? null : target.uid;
+      const generation = ++searchLocationGeneration;
+      let attempts = 0;
+      const locate = () => {
+        if (generation !== searchLocationGeneration) return;
+        let tree = mindMap && mindMap.getData();
+        for (const index of path) tree = tree && (tree.children || [])[index];
+        const uid = savedUid || (tree && tree.data && tree.data.uid);
+        if (uid && mindMap.renderer.root) {
+          mindMap.renderer.goTargetNode(uid);
+        } else if (++attempts < 40) {
+          setTimeout(locate, 50);
+        }
+      };
+      locate();
+    };
+
+    function wireMindMap() {
+      mindMap.on('data_change', () => {
+        if (applyingFromHost) return;
+        schedulePush();
+        countNodes();
+      });
+      // Collapse state and view position are part of the saved tree, so a
+      // reopened board looks the way it was left.
+      mindMap.on('node_active', () => refreshPanel());
+      mindMap.on('scale', onViewChanged);
+      mindMap.on('translate', onViewChanged);
+      mindMap.on('node_contextmenu', (event, node) => openMenu(event, node));
+      mindMap.on('draw_click', closeMenu);
+      mindMap.on('back_forward', () => { refreshPanel(); countNodes(); });
+      setStatus('拖动节点调整层级 · 双击编辑文字 · Tab 新建子节点 · 回车新建同级');
+    }
+
+    function onViewChanged() {
+      if (applyingFromHost || viewRestoring) return;
+      schedulePush();
+    }
+
+    function schedulePush() {
+      if (pendingPush) clearTimeout(pendingPush);
+      // Debounced: dragging nodes fires data_change many times a second
+      // and every push serialises the whole tree.
+      pendingPush = setTimeout(() => {
+        pendingPush = null;
+        pushTree();
+      }, 180);
+    }
+
+    function collectTree() {
+      const tree = mindMap.getData();
+      newImages = {};
+      // A picture pasted onto the canvas is moved into the library's own
+      // key table, which leaves an ``smm_img_key_*`` placeholder in the
+      // node and the real picture in the map below.  Both forms have to be
+      // resolved, or the picture never reaches the board file.
+      const imgMap = (tree && tree.data && tree.data.imgMap) || {};
+      const walk = (node) => {
+        const data = node && node.data;
+        if (data) {
+          data.text = plainText(data.text);
+          delete data.isActive;
+          let url = data.image;
+          if (typeof url === 'string' && imgMap[url]) url = imgMap[url];
+          if (typeof url === 'string' && url.startsWith('data:')) {
+            let key = null;
+            for (const [known, stored] of imageStore) {
+              if (stored === url) { key = known; break; }
+            }
+            if (!key) {
+              key = 'prism-img-' + (++imageCounter);
+              imageStore.set(key, url);
+              // Only pictures the page just gained are reported back; a
+              // known one already lives in the board file.
+              newImages[key] = url;
+            }
+            data.image = key;
+          } else if (typeof url === 'string' && url) {
+            data.image = url;
+          }
+        }
+        ((node && node.children) || []).forEach(walk);
+      };
+      walk(tree);
+      // imgMap holds every embedded image - never send that back.
+      if (tree && tree.data) delete tree.data.imgMap;
+      tree._prism_layout = document.getElementById('layout').value;
+      if (mindMap.view && mindMap.view.getTransformData) {
+        tree._prism_view = mindMap.view.getTransformData();
+      }
+      return tree;
+    }
+
+    function pushTree() {
+      if (!bridge || !mindMap) return;
+      const tree = collectTree();
+      bridge.pushTree(JSON.stringify({ tree, images: newImages }));
+      newImages = {};
+    }
+
+    function countNodes() {
+      if (!mindMap) return;
+      const tree = mindMap.getData();
+      let total = 0;
+      const walk = (node) => {
+        total += 1;
+        ((node && node.children) || []).forEach(walk);
+      };
+      walk(tree);
+      setStatus(total + ' 个主题 · Tab 子主题 · Enter 同级 · F2 改文字');
+    }
+
+    // ── toolbar ──────────────────────────────────────────────────
+
+    function buildToolbar() {
+      const select = document.getElementById('layout');
+      const known = new Set(LAYOUTS.map(([value]) => value));
+      LAYOUTS.forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        select.appendChild(option);
+      });
+      try {
+        ((MindMap.constants && MindMap.constants.layoutList) || []).forEach((item) => {
+          const value = typeof item === 'string' ? item : item && (item.value || item.name);
+          if (!value || known.has(value)) return;
+          known.add(value);
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = value;
+          select.appendChild(option);
+        });
+      } catch (error) { /* our own list is enough */ }
+
+      const shape = document.getElementById('shape');
+      SHAPES.forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        shape.appendChild(option);
+      });
+      try {
+        const shapes = (MindMap.constants && MindMap.constants.CONSTANTS &&
+          MindMap.constants.CONSTANTS.SHAPE) || null;
+        if (shapes) {
+          const knownShapes = new Set(SHAPES.map(([value]) => value));
+          Object.values(shapes).forEach((value) => {
+            if (knownShapes.has(value)) return;
+            knownShapes.add(value);
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = value;
+            shape.appendChild(option);
+          });
+        }
+      } catch (error) { /* our own list is enough */ }
+    }
+
+    function buildColors() {
+      const groups = [
+        ['textColors', 'color'],
+        ['fillColors', 'fillColor'],
+        ['borderColors', 'borderColor'],
+      ];
+      groups.forEach(([id, prop]) => {
+        const holder = document.getElementById(id);
+        if (prop !== 'color') {
+          const none = document.createElement('div');
+          none.className = 'swatch none';
+          none.dataset.value = '';
+          none.title = '无';
+          holder.appendChild(none);
+        }
+        COLORS.forEach((colour) => {
+          const chip = document.createElement('div');
+          chip.className = 'swatch';
+          chip.dataset.value = colour;
+          chip.style.background = colour;
+          chip.title = colour;
+          holder.appendChild(chip);
+        });
+        holder.addEventListener('click', (event) => {
+          const chip = event.target.closest('.swatch');
+          if (!chip) return;
+          styleSelection(prop, chip.dataset.value || '');
+          refreshPanel();
+        });
+      });
+    }
+
+    function buildIcons() {
+      const grid = document.getElementById('iconGrid');
+      let groups = [];
+      try { groups = MindMap.iconList || []; } catch (error) { groups = []; }
+      const glyphs = ['★','✓','!','?','♥','⚑','✎','⌛','☀','⚠','⬤','◆','▲','✚','➜','✦','⏱','✉','☁','⚙','♫','⌂','⬢','✿'];
+      let prototypeGroup = groups.find(group => group.type === 'prism');
+      if (!prototypeGroup) {
+        prototypeGroup = {type: 'prism', list: glyphs.map((glyph, index) => ({
+          name: String(index),
+          icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><text x="12" y="17" text-anchor="middle" font-size="16" fill="#AAB0BB">' + glyph + '</text></svg>'
+        }))};
+        groups.push(prototypeGroup);
+      }
+      groups = [prototypeGroup];
+      groups.forEach((group) => {
+        (group.list || []).forEach((item) => {
+          const icon = document.createElement('img');
+          icon.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(item.icon);
+          icon.title = (group.type || '') + ' ' + item.name;
+          icon.dataset.name = group.type + '_' + item.name;
+          grid.appendChild(icon);
+        });
+      });
+      if (!grid.children.length) {
+        grid.textContent = '这个版本没有内置图标';
+      }
+      grid.addEventListener('click', (event) => {
+        const icon = event.target.closest('img');
+        if (!icon || needSelection()) return;
+        const name = icon.dataset.name;
+        const node = activeNodes()[0];
+        let current = node.getData('icon') || [];
+        if (!Array.isArray(current)) current = [];
+        current = current.includes(name)
+          ? current.filter((item) => item !== name)
+          : current.concat([name]);
+        mindMap.execCommand('SET_NODE_ICON', node, current);
+        refreshPanel();
+      });
+    }
+
+    function markRow(holderId, value) {
+      const holder = document.getElementById(holderId);
+      [...holder.children].forEach((chip) => {
+        chip.classList.toggle('active',
+          (chip.dataset.value || '') === (value || ''));
+      });
+    }
+
+    function refreshPanel() {
+      if (!mindMap) return;
+      const nodes = activeNodes();
+      const enabled = nodes.length > 0;
+      const node = nodes[0];
+      const read = (prop, fallback) => {
+        if (!node) return fallback;
+        const value = styleOf(node, prop);
+        return value === undefined || value === null ? fallback : value;
+      };
+      document.getElementById('fontSize').value = read('fontSize', 16);
+      document.getElementById('bold').classList.toggle(
+        'on', String(read('fontWeight', '')).indexOf('bold') >= 0);
+      document.getElementById('italic').classList.toggle(
+        'on', String(read('fontStyle', '')).indexOf('italic') >= 0);
+      document.getElementById('strike').classList.toggle(
+        'on', String(read('textDecoration', '')).indexOf('line-through') >= 0);
+      markRow('textColors', read('color', ''));
+      markRow('fillColors', read('fillColor', ''));
+      markRow('borderColors', read('borderColor', ''));
+      if (node) {
+        const shape = read('shape', 'roundedRectangle');
+        const select = document.getElementById('shape');
+        if ([...select.options].some((option) => option.value === shape)) {
+          select.value = shape;
+        }
+      }
+      const icons = node ? (node.getData('icon') || []) : [];
+      [...document.getElementById('iconGrid').children].forEach((icon) => {
+        if (!icon.dataset) return;
+        icon.classList.toggle('on', Array.isArray(icons) && icons.includes(icon.dataset.name));
+      });
+      document.getElementById('side').querySelectorAll('button')
+        .forEach((button) => { button.disabled = !enabled; });
+    }
+
+    function insertImage() {
+      if (needSelection()) return;
+      pendingImageNodes = activeNodes().slice();
+      // The page cannot open a usable native dialog from QWebEngine, so
+      // the host picks the file and hands the image back.
+      if (bridge && bridge.pickImage) {
+        bridge.pickImage();
+      } else {
+        document.getElementById('fileInput').click();
+      }
+    }
+
+    function placePickedImage(payload) {
+      if (!mindMap || !payload) return;
+      let picked = null;
+      try {
+        picked = JSON.parse(payload);
+      } catch (error) {
+        setStatus('图片读取失败: ' + error);
+        return;
+      }
+      const targets = (pendingImageNodes || []).filter((node) => node && node.group);
+      pendingImageNodes = [];
+      if (!targets.length) return;
+      mindMap.command.pause();
+      try {
+        targets.forEach((node) => {
+          mindMap.execCommand('SET_NODE_IMAGE', node, {
+            url: picked.url, title: picked.title || '',
+            width: picked.width, height: picked.height, custom: false,
+          });
+        });
+      } finally {
+        mindMap.command.recovery();
+      }
+      mindMap.command.addHistory();
+      mindMap.render();
+    }
+
+    document.getElementById('fileInput').addEventListener('change', (event) => {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = '';
+      if (!file || !mindMap) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const probe = new Image();
+        probe.onload = () => {
+          placePickedImage(JSON.stringify({
+            url: reader.result, width: probe.width, height: probe.height,
+          }));
+        };
+        probe.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    async function editNote() {
+      if (needSelection()) return;
+      const node = activeNodes()[0];
+      const text = await askText('备注', node.getData('note') || '', true);
+      if (text === null) return;
+      forEachActive((item) => mindMap.execCommand('SET_NODE_NOTE', item, text));
+    }
+
+    async function editHyperlink() {
+      if (needSelection()) return;
+      const node = activeNodes()[0];
+      const text = await askText('超链接地址', node.getData('hyperlink') || '', false);
+      if (text === null) return;
+      forEachActive((item) => mindMap.execCommand('SET_NODE_HYPERLINK', item, text, ''));
+    }
+
+    async function editTags() {
+      if (needSelection()) return;
+      const node = activeNodes()[0];
+      const current = node.getData('tag') || [];
+      const text = await askText('标签（用逗号或空格分隔）',
+        Array.isArray(current) ? current.join(', ') : '', false);
+      if (text === null) return;
+      const tags = text.split(/[,，\s]+/).filter(Boolean);
+      forEachActive((item) => mindMap.execCommand('SET_NODE_TAG', item, tags));
+    }
+
+    function addAssociativeLine() {
+      const nodes = activeNodes();
+      if (nodes.length < 2) { setStatus('请先选中两个主题，再加联系线'); return; }
+      mindMap.execCommand('ADD_ASSOCIATIVE_LINE', nodes[0], nodes[1]);
+    }
+
+    function runAction(name) {
+      switch (name) {
+        case 'copy': mindMap.renderer.copy(); break;
+        case 'cut': mindMap.renderer.cut(); break;
+        case 'paste': mindMap.renderer.paste(); break;
+        case 'image': insertImage(); break;
+        case 'icon': document.getElementById('iconGrid').scrollIntoView({ block: 'center' }); break;
+        case 'hyperlink': editHyperlink(); break;
+        case 'note': editNote(); break;
+        case 'tag': editTags(); break;
+        case 'associative': addAssociativeLine(); break;
+        case 'generalization':
+          if (needSelection()) return;
+          mindMap.execCommand('ADD_GENERALIZATION');
+          break;
+        case 'outerFrame':
+          if (needSelection()) return;
+          mindMap.execCommand('ADD_OUTER_FRAME', activeNodes()[0]);
+          break;
+        case 'expandAll': mindMap.execCommand('EXPAND_ALL'); break;
+        case 'collapseAll': mindMap.execCommand('UNEXPAND_TO_LEVEL', 2); break;
+        case 'resetLayout': mindMap.execCommand('RESET_LAYOUT'); break;
+        default: break;
+      }
+    }
+
+    function bindToolbar() {
+      document.getElementById('toolbar').addEventListener('click', (event) => {
+        const button = event.target.closest('button');
+        if (!button || !mindMap) return;
+        if (button.dataset.cmd) {
+          mindMap.execCommand(button.dataset.cmd);
+          refreshPanel();
+          countNodes();
+          return;
+        }
+        if (button.dataset.act) runAction(button.dataset.act);
+        countNodes();
+      });
+
+      document.getElementById('layout').addEventListener('change', (event) => {
+        if (!mindMap) return;
+        mindMap.setLayout(event.target.value);
+        pushTree();
+      });
+
+      document.getElementById('zoomIn').addEventListener('click', () => mindMap && mindMap.view.enlarge());
+      document.getElementById('zoomOut').addEventListener('click', () => mindMap && mindMap.view.narrow());
+      document.getElementById('fit').addEventListener('click', () => mindMap && mindMap.view.fit());
+      document.getElementById('center').addEventListener('click', () => mindMap && mindMap.view.reset());
+
+      const bindStyleButton = (id, prop, on, off) => {
+        document.getElementById(id).addEventListener('click', () => {
+          if (needSelection()) return;
+          const node = activeNodes()[0];
+          const current = String(styleOf(node, prop) || '');
+          styleSelection(prop, current.indexOf(on) >= 0 ? off : on);
+          refreshPanel();
+        });
+      };
+      bindStyleButton('bold', 'fontWeight', 'bold', 'normal');
+      bindStyleButton('italic', 'fontStyle', 'italic', 'normal');
+      bindStyleButton('strike', 'textDecoration', 'line-through', 'none');
+
+      const step = (delta) => {
+        if (needSelection()) return;
+        const node = activeNodes()[0];
+        let size = parseInt(styleOf(node, 'fontSize'), 10);
+        if (!size || Number.isNaN(size)) size = 16;
+        size = Math.max(9, Math.min(96, size + delta));
+        document.getElementById('fontSize').value = size;
+        styleSelection('fontSize', size);
+      };
+      document.getElementById('fontPlus').addEventListener('click', () => step(2));
+      document.getElementById('fontMinus').addEventListener('click', () => step(-2));
+      document.getElementById('fontSize').addEventListener('change', (event) => {
+        const size = parseInt(event.target.value, 10);
+        if (!Number.isNaN(size)) styleSelection('fontSize', size);
+      });
+      document.getElementById('shape').addEventListener('change', (event) => {
+        if (needSelection()) return;
+        forEachActive((node) => {
+          mindMap.execCommand('SET_NODE_SHAPE', node, event.target.value);
+        });
+      });
+      document.getElementById('side').addEventListener('click', (event) => {
+        const pill = event.target.closest('.pill');
+        if (pill && pill.dataset.act) runAction(pill.dataset.act);
+      });
+    }
+
+    // ── context menu ─────────────────────────────────────────────
+
+    const MENU_ITEMS = [
+      ['编辑文字', 'F2', () => {
+        const node = activeNodes()[0];
+        if (node) mindMap.renderer.textEdit.show({ node });
+      }],
+      ['hr'],
+      ['插入子主题', 'Tab', () => mindMap.execCommand('INSERT_CHILD_NODE')],
+      ['插入同级主题', 'Enter', () => mindMap.execCommand('INSERT_NODE')],
+      ['插入父主题', 'Shift+Tab', () => mindMap.execCommand('INSERT_PARENT_NODE')],
+      ['删除主题', 'Delete', () => mindMap.execCommand('REMOVE_NODE')],
+      ['hr'],
+      ['复制分支', 'Ctrl+C', () => mindMap.renderer.copy()],
+      ['粘贴', 'Ctrl+V', () => mindMap.execCommand('PASTE_NODE')],
+      ['hr'],
+      ['添加概要', 'Ctrl+G', () => mindMap.execCommand('ADD_GENERALIZATION')],
+      ['添加边界', '', () => mindMap.execCommand('ADD_OUTER_FRAME', activeNodes()[0])],
+      ['添加联系线', '', addAssociativeLine],
+      ['hr'],
+      ['插入图片', '', insertImage],
+      ['超链接', '', editHyperlink],
+      ['备注', '', editNote],
+      ['标签', '', editTags],
+      ['展开全部', '', () => mindMap.execCommand('EXPAND_ALL')],
+      ['收起该分支', '/', () => {
+        const node = activeNodes()[0];
+        if (node) mindMap.execCommand('SET_NODE_EXPAND', node, false);
+      }],
+      ['恢复自动布局', 'Ctrl+L', () => mindMap.execCommand('RESET_LAYOUT')],
+    ];
+
+    function openMenu(event, node) {
+      if (!mindMap) return;
+      menuEl.innerHTML = '';
+      MENU_ITEMS.forEach((entry) => {
+        if (entry[0] === 'hr') {
+          const hr = document.createElement('div');
+          hr.className = 'hr';
+          menuEl.appendChild(hr);
+          return;
+        }
+        const [label, key, action] = entry;
+        const item = document.createElement('div');
+        item.className = 'item';
+        const text = document.createElement('span');
+        text.textContent = label;
+        item.appendChild(text);
+        if (key) {
+          const hint = document.createElement('span');
+          hint.className = 'key';
+          hint.textContent = key;
+          item.appendChild(hint);
+        }
+        item.addEventListener('click', () => {
+          closeMenu();
+          try { action(); } catch (error) { setStatus(String(error)); }
+          countNodes();
+        });
+        menuEl.appendChild(item);
+      });
+      menuEl.style.display = 'block';
+      const rect = menuEl.getBoundingClientRect();
+      const x = Math.min(event.clientX, window.innerWidth - rect.width - 6);
+      const y = Math.min(event.clientY, window.innerHeight - rect.height - 6);
+      menuEl.style.left = Math.max(0, x) + 'px';
+      menuEl.style.top = Math.max(0, y) + 'px';
+    }
+
+    function closeMenu() {
+      menuEl.style.display = 'none';
+    }
+
+    document.addEventListener('mousedown', (event) => {
+      if (!menuEl.contains(event.target)) closeMenu();
+    }, true);
+
+    // ── keyboard ─────────────────────────────────────────────────
+
+    // An IME confirms a candidate with Enter while it composes; the key
+    // must not reach the map's shortcuts, or typing Chinese would create
+    // nodes instead of picking a word.  Captured on window so no other
+    // listener sees it first.
+    ['keydown', 'keyup', 'keypress'].forEach((type) => {
+      window.addEventListener(type, (event) => {
+        if (event.isComposing || event.keyCode === 229) {
+          event.stopImmediatePropagation();
+        }
+      }, true);
+    });
+
+    // Ctrl+B / Ctrl+I are not bound by the library.
+    window.addEventListener('keydown', (event) => {
+      if (!mindMap) return;
+      if (event.ctrlKey && !event.shiftKey && !event.altKey) {
+        const key = event.key.toLowerCase();
+        if (key === 'b') {
+          event.preventDefault();
+          const node = activeNodes()[0];
+          if (!node) return;
+          const bold = String(styleOf(node, 'fontWeight') || '').indexOf('bold') >= 0;
+          styleSelection('fontWeight', bold ? 'normal' : 'bold');
+          refreshPanel();
+        } else if (key === 'i') {
+          // Ctrl+I is "fit" in the library; keep that, it is more useful.
+        }
+      }
+    }, true);
+
+    // ── bridge ───────────────────────────────────────────────────
+
+    function loadFromHost(payload) {
+      let tree = null;
+      let images = {};
+      try {
+        const parsed = payload ? JSON.parse(payload) : null;
+        if (parsed && parsed.tree) {
+          tree = parsed.tree;
+          images = parsed.images || {};
+        } else {
+          tree = parsed;
+        }
+      } catch (error) {
+        throw new Error('数据解析失败: ' + error);
+      }
+      Object.keys(images).forEach((key) => imageStore.set(key, images[key]));
+      createMindMap(tree);
+    }
+
+    if (typeof QWebChannel === 'undefined') {
+      setStatus('QWebChannel 不可用，无法与 Prism 通信');
+    } else {
+      new QWebChannel(qt.webChannelTransport, (channel) => {
+        bridge = channel.objects.bridge;
+
+        bridge.loadTree.connect((json) => {
+          try {
+            loadFromHost(json);
+            bridge.notifyTreeLoaded(true, '');
+          } catch (error) {
+            setStatus('载入失败: ' + error);
+            bridge.notifyTreeLoaded(false, String(error));
+          }
+        });
+
+        bridge.requestTree.connect(() => {
+          pushTree();
+        });
+
+        bridge.resetView.connect(() => {
+          if (mindMap) mindMap.view.reset();
+        });
+
+        bridge.imagePicked.connect((payload) => {
+          placePickedImage(payload);
+        });
+
+        bridge.notifyReady();
+      });
+    }
+
+    buildToolbar();
+    buildColors();
+    buildIcons();
+    bindToolbar();
+  </script>
+</body>
+</html>

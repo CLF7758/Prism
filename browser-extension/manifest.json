@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Prism Image Capture",
+  "version": "0.1.0",
+  "description": "Send a web image directly to the local Prism library.",
+  "permissions": ["contextMenus"],
+  "action": {"default_title": "Prism 图片采集"},
+  "host_permissions": ["http://127.0.0.1:47653/*"],
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [{
+    "matches": ["http://*/*", "https://*/*"],
+    "js": ["content.js"],
+    "run_at": "document_start"
+  }],
+  "commands": {
+    "capture-hovered-image": {
+      "suggested_key": {"default": "Alt+Shift+P"},
+      "description": "Capture the last right-clicked image"
+    }
+  }
+}

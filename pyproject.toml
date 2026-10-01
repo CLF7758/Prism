@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["prism*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.html", "*.png"]
+
+[project]
+name = "Prism"
+version = "0.3.4"
+description = "A local creative workspace for reference images, documents and mind maps"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    { name = "Rebecca Breu", email = "rebecca@rbreu.de" },
+]
+maintainers = [
+    { name = "CLF7758" },
+]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "av>=19,<20",
+    "exif>=1.3.5,<=1.6.0",
+    "lxml>=6.1.0,<7",
+    "numpy>=1.26",
+    "pyQt6-Qt6>=6.7.0,<=6.7.0",
+    "pyQt6>=6.7.0,<=6.7.0",
+    "pyQt6-WebEngine>=6.7.0,<=6.7.0",
+    "python-docx>=1.1,<2",
+    "rectangle-packer>=2.0.1,<=2.0.2",
+]
+
+[project.optional-dependencies]
+media = [
+    "OpenImageIO>=2.5",
+    "pillow>=10",
+]
+
+[project.gui-scripts]
+prism = "prism.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/CLF7758/Prism"
+Repository = "https://github.com/CLF7758/Prism"
+Issues = "https://github.com/CLF7758/Prism/issues"

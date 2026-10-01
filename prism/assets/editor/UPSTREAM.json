@@ -1,0 +1,20 @@
+{
+  "package": "quill",
+  "version": "2.0.3",
+  "license": "BSD-3-Clause",
+  "homepage": "https://quilljs.com/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/slab/quill"
+  },
+  "source": "https://cdn.jsdelivr.net/npm/quill@2.0.3/",
+  "bundledFiles": [
+    "vendor/quill.js",
+    "vendor/quill.snow.css"
+  ],
+  "sha256": {
+    "vendor/quill.js": "f6157c72ac9b3f51cdead426335688a027b12405d9d6a4daadd38a676b2d7ff2",
+    "vendor/quill.snow.css": "1c7948cd13aa92fac6390319bc1e5e461823da171519d3a768db56164f871636"
+  },
+  "note": "Only the minified UMD bundle and the Snow theme stylesheet are bundled; no network access is used at runtime."
+}

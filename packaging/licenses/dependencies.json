@@ -1,0 +1,237 @@
+[
+  {
+    "name": "PyQt6",
+    "version": "6.7.0",
+    "license": "GPL v3",
+    "project_urls": [
+      "homepage, https://www.riverbankcomputing.com/software/pyqt/"
+    ],
+    "notices": []
+  },
+  {
+    "name": "PyQt6-Qt6",
+    "version": "6.7.0",
+    "license": "LGPL v3",
+    "project_urls": [],
+    "notices": [
+      "PyQt6_Qt6-6.7.0.dist-info__LICENSE"
+    ]
+  },
+  {
+    "name": "PyQt6-WebEngine",
+    "version": "6.7.0",
+    "license": "GPL v3",
+    "project_urls": [
+      "homepage, https://www.riverbankcomputing.com/software/pyqtwebengine/"
+    ],
+    "notices": []
+  },
+  {
+    "name": "PyQt6-WebEngine-Qt6",
+    "version": "6.7.3",
+    "license": "LGPL v3",
+    "project_urls": [],
+    "notices": [
+      "PyQt6_WebEngine_Qt6-6.7.3.dist-info__LICENSE"
+    ]
+  },
+  {
+    "name": "PyQt6-WebEngineSubwheel-Qt6",
+    "version": "6.7.3",
+    "license": "LGPL v3",
+    "project_urls": [],
+    "notices": [
+      "PyQt6_WebEngineSubwheel_Qt6-6.7.3.dist-info__LICENSE"
+    ]
+  },
+  {
+    "name": "PyQt6-sip",
+    "version": "13.12.0",
+    "license": "BSD-2-Clause",
+    "project_urls": [],
+    "notices": [
+      "pyqt6_sip-13.12.0.dist-info__licenses__LICENSE"
+    ]
+  },
+  {
+    "name": "av",
+    "version": "19.0.0",
+    "license": "BSD-3-Clause",
+    "project_urls": [
+      "Bug Tracker, https://github.com/PyAV-Org/PyAV/issues",
+      "Source Code, https://github.com/PyAV-Org/PyAV",
+      "homepage, https://pyav.basswood.io"
+    ],
+    "notices": [
+      "av-19.0.0.dist-info__licenses__AUTHORS.py",
+      "av-19.0.0.dist-info__licenses__AUTHORS.rst",
+      "av-19.0.0.dist-info__licenses__LICENSE.txt"
+    ]
+  },
+  {
+    "name": "numpy",
+    "version": "2.5.3",
+    "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+    "project_urls": [
+      "homepage, https://numpy.org",
+      "documentation, https://numpy.org/doc/",
+      "source, https://github.com/numpy/numpy",
+      "download, https://pypi.org/project/numpy/#files",
+      "tracker, https://github.com/numpy/numpy/issues",
+      "release notes, https://numpy.org/doc/stable/release"
+    ],
+    "notices": [
+      "numpy-2.5.3.dist-info__licenses__LICENSE.txt",
+      "numpy-2.5.3.dist-info__licenses__numpy___core__include__numpy__libdivide__LICENSE.txt",
+      "numpy-2.5.3.dist-info__licenses__numpy___core__src__common__pythoncapi-compat__COPYING",
+      "numpy-2.5.3.dist-info__licenses__numpy___core__src__highway__LICENSE",
+      "numpy-2.5.3.dist-info__licenses__numpy___core__src__multiarray__dragon4_LICENSE.txt",
+      "numpy-2.5.3.dist-info__licenses__numpy___core__src__npysort__x86-simd-sort__LICENSE.md",
+      "numpy-2.5.3.dist-info__licenses__numpy___core__src__umath__svml__LICENSE",
+      "numpy-2.5.3.dist-info__licenses__numpy__fft__pocketfft__LICENSE.md",
+      "numpy-2.5.3.dist-info__licenses__numpy__linalg__lapack_lite__LICENSE.txt",
+      "numpy-2.5.3.dist-info__licenses__numpy__ma__LICENSE",
+      "numpy-2.5.3.dist-info__licenses__numpy__random__LICENSE.md",
+      "numpy-2.5.3.dist-info__licenses__numpy__random__src__distributions__LICENSE.md",
+      "numpy-2.5.3.dist-info__licenses__numpy__random__src__mt19937__LICENSE.md",
+      "numpy-2.5.3.dist-info__licenses__numpy__random__src__pcg64__LICENSE.md",
+      "numpy-2.5.3.dist-info__licenses__numpy__random__src__philox__LICENSE.md",
+      "numpy-2.5.3.dist-info__licenses__numpy__random__src__sfc64__LICENSE.md",
+      "numpy-2.5.3.dist-info__licenses__numpy__random__src__splitmix64__LICENSE.md",
+      "numpy___core__include__numpy__random__LICENSE.txt",
+      "numpy__ma__LICENSE",
+      "numpy__random__LICENSE.md"
+    ]
+  },
+  {
+    "name": "pillow",
+    "version": "12.3.0",
+    "license": "MIT-CMU",
+    "project_urls": [
+      "Release notes, https://pillow.readthedocs.io/en/stable/releasenotes/index.html",
+      "Changelog, https://github.com/python-pillow/Pillow/releases",
+      "Documentation, https://pillow.readthedocs.io",
+      "Funding, https://tidelift.com/subscription/pkg/pypi-pillow?utm_source=pypi-pillow&utm_medium=pypi",
+      "Homepage, https://python-pillow.github.io",
+      "Mastodon, https://fosstodon.org/@pillow",
+      "Source, https://github.com/python-pillow/Pillow"
+    ],
+    "notices": [
+      "pillow-12.3.0.dist-info__licenses__LICENSE"
+    ]
+  },
+  {
+    "name": "lxml",
+    "version": "6.1.0",
+    "license": "BSD-3-Clause",
+    "project_urls": [
+      "Source, https://github.com/lxml/lxml",
+      "Bug Tracker, https://bugs.launchpad.net/lxml"
+    ],
+    "notices": [
+      "lxml-6.1.0.dist-info__licenses__LICENSE.txt",
+      "lxml-6.1.0.dist-info__licenses__LICENSES.txt"
+    ]
+  },
+  {
+    "name": "python-docx",
+    "version": "1.2.0",
+    "license": "MIT",
+    "project_urls": [
+      "Changelog, https://github.com/python-openxml/python-docx/blob/master/HISTORY.rst",
+      "Documentation, https://python-docx.readthedocs.org/en/latest/",
+      "Homepage, https://github.com/python-openxml/python-docx",
+      "Repository, https://github.com/python-openxml/python-docx"
+    ],
+    "notices": [
+      "python_docx-1.2.0.dist-info__licenses__LICENSE"
+    ]
+  },
+  {
+    "name": "exif",
+    "version": "1.6.0",
+    "license": "UNKNOWN",
+    "project_urls": [],
+    "notices": [
+      "exif-1.6.0.dist-info__LICENSE"
+    ]
+  },
+  {
+    "name": "plum-py",
+    "version": "0.8.7",
+    "license": "MIT License; http://opensource.org/licenses/MIT",
+    "project_urls": [],
+    "notices": [
+      "plum_py-0.8.7.dist-info__LICENSE"
+    ]
+  },
+  {
+    "name": "rectangle-packer",
+    "version": "2.0.2",
+    "license": "MIT",
+    "project_urls": [],
+    "notices": [
+      "rectangle_packer-2.0.2.dist-info__LICENSE.md"
+    ]
+  },
+  {
+    "name": "OpenImageIO",
+    "version": "3.1.17.0",
+    "license": "Apache-2.0",
+    "project_urls": [
+      "Homepage, https://openimageio.org/",
+      "Source, https://github.com/AcademySoftwareFoundation/OpenImageIO",
+      "Documentation, https://docs.openimageio.org",
+      "Issues, https://github.com/AcademySoftwareFoundation/OpenImageIO/issues"
+    ],
+    "notices": [
+      "openimageio-3.1.17.0.dist-info__licenses__LICENSE.md",
+      "openimageio-3.1.17.0.dist-info__licenses__THIRD-PARTY.md"
+    ]
+  },
+  {
+    "name": "PyYAML",
+    "version": "6.0.3",
+    "license": "MIT",
+    "project_urls": [
+      "Bug Tracker, https://github.com/yaml/pyyaml/issues",
+      "CI, https://github.com/yaml/pyyaml/actions",
+      "Documentation, https://pyyaml.org/wiki/PyYAMLDocumentation",
+      "Mailing lists, http://lists.sourceforge.net/lists/listinfo/yaml-core",
+      "Source Code, https://github.com/yaml/pyyaml"
+    ],
+    "notices": [
+      "pyyaml-6.0.3.dist-info__licenses__LICENSE"
+    ]
+  },
+  {
+    "name": "charset-normalizer",
+    "version": "3.5.1",
+    "license": "MIT",
+    "project_urls": [
+      "Changelog, https://github.com/jawah/charset_normalizer/blob/master/CHANGELOG.md",
+      "Documentation, https://charset-normalizer.readthedocs.io/",
+      "Code, https://github.com/jawah/charset_normalizer",
+      "Issue tracker, https://github.com/jawah/charset_normalizer/issues"
+    ],
+    "notices": [
+      "charset_normalizer-3.5.1.dist-info__licenses__LICENSE"
+    ]
+  },
+  {
+    "name": "packaging",
+    "version": "26.3",
+    "license": "Apache-2.0 OR BSD-2-Clause",
+    "project_urls": [
+      "Documentation, https://packaging.pypa.io/",
+      "Source, https://github.com/pypa/packaging"
+    ],
+    "notices": [
+      "packaging-26.3.dist-info__licenses__LICENSE",
+      "packaging-26.3.dist-info__licenses__LICENSE.APACHE",
+      "packaging-26.3.dist-info__licenses__LICENSE.BSD",
+      "packaging__licenses____init__.py",
+      "packaging__licenses___spdx.py"
+    ]
+  }
+]

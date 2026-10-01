@@ -1,0 +1,4 @@
+# For the build action on github
+
+pyinstaller==6.22.3
+pillow==12.3.0

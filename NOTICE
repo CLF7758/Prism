@@ -1,0 +1,49 @@
+NOTICE
+======
+
+Acknowledgements
+----------------
+
+This implementation is derived from and extends code from
+rbreu/prism.
+
+- Original project: https://github.com/rbreu/prism
+- Original author: Rebecca Breu
+- Original project copyright: Copyright © 2021-2024 Rebecca Breu
+
+The original project's license headers and copyright notices are kept
+unchanged in the source files, and its name and authorship stay credited to
+Rebecca Breu.
+
+License
+-------
+
+Prism is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version (GPL-3.0-or-later). See the LICENSE file for the full license text.
+
+This project is released under the same license.
+
+This project
+------------
+
+- Maintainer: CLF7758; https://github.com/CLF7758/Prism
+- Copyright © 2026 CLF7758, released under GPL-3.0-or-later
+
+Features added in this repository:
+
+- Capture images from the browser through a companion Chrome extension.
+- Drag selected items out to other applications (Ctrl+Shift drag).
+- Tags with AND filtering and 1-5 star ratings, including batch edits and
+  undo.
+- Similar image search based on dHash perceptual hashes.
+- Batch category moves, deletion and export of the selected images.
+- Interactive glTF/GLB 3D model preview in its own window.
+- Exposure, channel and tone mapping controls for EXR/HDR sources.
+- Extended format support: WebP and SVG through Qt, plus PSD, EXR and HDR
+  through an optional OpenImageIO decoder.
+
+See README.md for the current feature status, THIRD_PARTY.md for
+the optional dependencies and their licenses, and CHANGELOG.rst for the
+project history.

@@ -1,0 +1,259 @@
+/* Styles for the Prism document editor page.
+ *
+ * The ribbon markup is generated from Python (document_panel.py) so every
+ * visible string can travel through the translation catalogue; this file only
+ * decides how things look. Colours follow the rest of the Prism chrome: a dark
+ * ribbon on top of a light "paper" surface. */
+
+:root {
+  --ribbon-bg: #252529;
+  --ribbon-pane: #35353a;
+  --ribbon-line: #45454d;
+  --ribbon-text: #eeeeee;
+  --ribbon-muted: #b6b6bd;
+  --workspace: #e9e9ea;
+  --accent: #4b7bd6;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: "Microsoft YaHei", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--workspace);
+}
+
+/* ── Ribbon ─────────────────────────────────────────────────── */
+
+#ribbon {
+  flex: 0 0 auto;
+  background: var(--ribbon-bg);
+  color: var(--ribbon-text);
+  border-bottom: 1px solid #1b1b1f;
+  user-select: none;
+}
+
+#ribbon-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px 8px 0;
+}
+
+#ribbon-tabs button {
+  background: transparent;
+  color: var(--ribbon-muted);
+  border: 0;
+  padding: 5px 16px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+}
+
+#ribbon-tabs button:hover { color: #fff; }
+
+#ribbon-tabs button.active {
+  background: var(--ribbon-pane);
+  color: #fff;
+}
+
+#ribbon-panes {
+  background: var(--ribbon-pane);
+  padding: 5px 8px;
+  min-height: 40px;
+}
+
+.pane { display: none; }
+
+.pane.active {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rgroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-right: 1px solid var(--ribbon-line);
+}
+
+.rgroup:last-child { border-right: 0; }
+button.rbtn img { display: block; margin: auto; }
+#ribbon-panes { overflow-x: auto; }
+.pane.active { min-height: 30px; }
+
+button.rbtn {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 9px;
+  background: #404046;
+  color: var(--ribbon-text);
+  border: 1px solid #4a4a50;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+button.rbtn:hover { background: #465d78; }
+
+button.rbtn.active {
+  background: var(--accent);
+  border-color: #6f9ae8;
+  color: #fff;
+}
+
+button.rbtn.bold { font-weight: 700; }
+button.rbtn.italic { font-style: italic; }
+button.rbtn.underline { text-decoration: underline; }
+
+select.rsel, input.rtext {
+  height: 30px;
+  background: #404046;
+  color: var(--ribbon-text);
+  border: 1px solid #4a4a50;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 13px;
+  padding: 0 6px;
+}
+
+select.rsel { max-width: 190px; }
+input.rtext { width: 56px; text-align: center; }
+
+/* ── Paper ──────────────────────────────────────────────────── */
+
+#workspace {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 18px 0 40px;
+}
+
+#page {
+  width: 21cm;
+  min-height: 29.7cm;
+  margin: 0 auto;
+  padding: 2.2cm 1.8cm;
+  box-sizing: border-box;
+  background: #fff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.28);
+}
+
+body.web-view #page {
+  width: auto;
+  max-width: 1100px;
+  min-height: 0;
+  padding: 24px 32px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.18);
+}
+
+#editor {
+  border: 0;
+  font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+  font-size: 11pt;
+  color: #202124;
+}
+
+.ql-container.ql-snow { border: 0; }
+
+.ql-editor {
+  padding: 0;
+  min-height: 24cm;
+  line-height: 1.6;
+  overflow: visible;
+}
+
+body.web-view .ql-editor { min-height: 60vh; }
+
+.ql-editor p { margin: 0 0 0.35em; }
+.ql-editor h1 { font-size: 22pt; margin: 0.5em 0 0.35em; }
+.ql-editor h2 { font-size: 18pt; margin: 0.5em 0 0.3em; }
+.ql-editor h3 { font-size: 15pt; margin: 0.5em 0 0.25em; }
+
+.ql-editor img {
+  max-width: 100%;
+  height: auto;
+}
+
+.ql-editor table td,
+.ql-editor table th {
+  border: 1px solid #9a9a9a;
+  padding: 4px 7px;
+  max-width: 100%;
+}
+
+.ql-editor .ql-code-block-container {
+  background: #f2f2f4;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 10pt;
+}
+
+.ql-editor a { color: #0a66c2; }
+
+/* ── Find and replace ───────────────────────────────────────── */
+
+#findbar {
+  position: fixed;
+  top: 76px;
+  right: 18px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--ribbon-bg);
+  border: 1px solid var(--ribbon-line);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+#findbar[hidden] { display: none; }
+
+#findbar input {
+  height: 28px;
+  width: 150px;
+  background: #404046;
+  color: var(--ribbon-text);
+  border: 1px solid #4a4a50;
+  border-radius: 5px;
+  padding: 0 7px;
+  font: inherit;
+  font-size: 13px;
+}
+
+#findbar button {
+  height: 28px;
+  padding: 0 10px;
+  background: #404046;
+  color: var(--ribbon-text);
+  border: 1px solid #4a4a50;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#findbar button:hover { background: #465d78; }
+
+/* ── Status line ────────────────────────────────────────────── */
+
+#status {
+  position: fixed;
+  right: 14px;
+  bottom: 8px;
+  z-index: 10;
+  color: rgba(40, 40, 45, 0.65);
+  font-size: 12px;
+  pointer-events: none;
+}

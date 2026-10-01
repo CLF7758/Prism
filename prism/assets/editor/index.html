@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prism Document</title>
+  <link rel="stylesheet" href="vendor/quill.snow.css">
+  <link rel="stylesheet" href="editor.css">
+</head>
+<body>
+  <!-- The ribbon is built by editor.js from the specification Python sends,
+       so every visible label comes from the translation catalogue instead of
+       being hard-coded in markup. -->
+  <div id="ribbon">
+    <div id="ribbon-tabs" role="tablist"></div>
+    <div id="ribbon-panes"></div>
+  </div>
+
+  <div id="workspace">
+    <div id="page">
+      <div id="editor"></div>
+    </div>
+  </div>
+
+  <div id="findbar" hidden>
+    <input id="find-text" type="text" spellcheck="false">
+    <button id="find-next" type="button"></button>
+    <input id="replace-text" type="text" spellcheck="false">
+    <button id="replace-one" type="button"></button>
+    <button id="replace-all" type="button"></button>
+    <button id="find-close" type="button">&times;</button>
+  </div>
+
+  <div id="status"></div>
+
+  <script src="vendor/quill.js"></script>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="editor.js"></script>
+</body>
+</html>

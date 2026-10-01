@@ -1,0 +1,18 @@
+# Files that the sdist must ship but that setuptools does not pick up on its
+# own. NOTICE is part of the GPL attribution and README/CONTRIBUTING point at
+# it, so it has to travel with any source distribution.
+include LICENSE
+include NOTICE
+include README.md
+include README.en.md
+include CHANGELOG.rst
+include CONTRIBUTING.rst
+include THIRD_PARTY.md
+recursive-include prism/assets *
+recursive-include packaging *.iss *.md *.ps1
+recursive-include packaging/licenses *
+recursive-include docs *.md *.png
+include tools/collect_licenses.py
+recursive-include requirements *.txt
+include Prism.spec
+global-exclude *.py[cod]

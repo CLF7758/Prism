@@ -1,0 +1,15 @@
+# Runtime versions used for the Windows release; install on Python 3.12.
+PyQt6==6.7.0
+PyQt6-Qt6==6.7.0
+PyQt6-WebEngine==6.7.0
+PyQt6-WebEngine-Qt6==6.7.3
+PyQt6-sip==13.12.0
+av==19.0.0
+numpy==2.5.3
+pillow==12.3.0
+lxml==6.1.0
+python-docx==1.2.0
+exif==1.6.0
+plum-py==0.8.7
+rectangle-packer==2.0.2
+OpenImageIO==3.1.17.0

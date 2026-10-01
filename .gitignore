@@ -1,0 +1,171 @@
+*~
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.appimage
+squashfs-root/
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# tools/ 下的临时产物
+#
+# 这些是脚本跑出来的中间输出，看过就删，不进版本库：
+#   *_run.txt        重定向的原始日志（工具只写一份，不留多轮）
+#   final*.txt       跑回归时的输出
+#   stages_v*.txt    阶段测量的中间轮次（有汇总的那份另有名字）
+#   t8_test.txt      一次性的小验证
+#
+# **注意不要按扩展名一刀切** —— tools/ 里有几份 .txt 是决策依据，
+# 必须留在版本库里：backend_compare_report.txt（后端为什么改用 PyAV）、
+# t1_cancel_errors_report.txt（取消路径验收）、t3_mammoth_report.txt
+# （DOCX 为什么不用 Mammoth）、t1_video_report.txt、t7_report.txt、
+# t3_full_report.txt、ui_inventory.txt。
+tools/*_run.txt
+tools/final*.txt
+tools/stages_v*.txt
+tools/t8_test.txt
+# 最终那份阶段数据改名叫 stages_report.txt 了 —— 上面这条只挡多轮次
+# 的中间输出（stages_v2.txt 那种），别把报告也挡了。
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
+#   However, in case of collaboration, if having platform-specific dependencies or dependencies
+#   having no cross-platform support, pipenv may install dependencies that don't work, or not
+#   install all needed dependencies.
+#Pipfile.lock
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# github pages
+Gemfile.lock
+_site
+.bundle
+
+# Build artifacts: ship these through GitHub Releases instead of the repo.
+# Prism.exe is ~48 MB and prism/assets/logo.png.bak is a stray backup; both
+# stay on disk but are no longer tracked.
+/Prism.exe
+/release/
+/output/
+/.reasonix/
+/prism-web-prototype/
+/tools/test_reports/
+/tools/ui_shots/
+prism/assets/*.bak
+# 录屏抽帧的临时图片（tools/video_review.py 的产物）
+tools/review/

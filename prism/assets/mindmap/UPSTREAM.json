@@ -1,0 +1,16 @@
+{
+  "package": "simple-mind-map",
+  "version": "0.14.0-fix.3",
+  "license": "MIT",
+  "homepage": null,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wanglin2/mind-map"
+  },
+  "source": "https://registry.npmjs.org/simple-mind-map/-/simple-mind-map-0.14.0-fix.3.tgz",
+  "bundledFiles": [
+    "vendor/simpleMindMap.esm.min.js",
+    "vendor/simpleMindMap.esm.min.css"
+  ],
+  "note": "Only the minified ESM build is bundled; the unminified builds were left out to keep the repository small."
+}

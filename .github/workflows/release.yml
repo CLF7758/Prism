@@ -1,0 +1,45 @@
+name: Windows installer
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build dependencies
+        run: |
+          python -m pip install -r requirements/windows-lock.txt -r requirements/build.txt
+          python -m pip install --no-deps -e .
+      - name: Build installer
+        shell: pwsh
+        run: |
+          python tools/collect_licenses.py
+          python -m PyInstaller --noconfirm --clean Prism.spec
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path -LiteralPath $compiler)) { throw 'Inno Setup 6 compiler is required' }
+          & $compiler packaging/Prism.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
+          Get-FileHash release/*.exe -Algorithm SHA256 | Format-List | Out-File release/SHA256.txt
+      - name: Export matching project source
+        run: git archive --format=zip --output=release/Prism-source.zip HEAD
+      - name: Save reviewable artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Prism-windows-installer
+          path: release/*
+      - name: Create draft release for review
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: release/*
+          body: |
+            Windows x64 installer with matching project source and SHA-256.
+            Review docs/RELEASE_AUDIT.md and native dependency source obligations before publishing.
