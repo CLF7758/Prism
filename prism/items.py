@@ -678,9 +678,8 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         if not self.grayscale:
             return None
         if self._grayscale_cache is None:
-            from prism.fileio.image import adjust_display_image
-            image = adjust_display_image(self.pixmap().toImage(),
-                                         exposure=0.0, channel='luminance')
+            from prism.fileio.image import qt_grayscale_image
+            image = qt_grayscale_image(self.pixmap().toImage())
             self._grayscale_cache = QtGui.QPixmap.fromImage(image)
         return self._grayscale_cache
 
@@ -712,7 +711,7 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
 
     def get_extra_save_data(self):
         data = {'filename': self.filename,
-                'opacity': self.opacity(),
+                'opacity': getattr(self, '_filter_original_opacity', self.opacity()),
                 'grayscale': self.grayscale,
                 'crop': [self.crop.topLeft().x(),
                          self.crop.topLeft().y(),
@@ -2420,7 +2419,7 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
     def get_extra_save_data(self):
         data = {
             'filename': self.filename,
-            'opacity': self.opacity(),
+            'opacity': getattr(self, '_filter_original_opacity', self.opacity()),
             'loop': self._loop,
             'mute': self._muted,
             'isReference': self._is_reference,

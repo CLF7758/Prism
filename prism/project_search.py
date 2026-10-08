@@ -38,6 +38,8 @@ def search_project(scene, service, query, panels=(), tag_expression='', page_rec
     predicate = tags.parse_query(tag_expression) if tag_expression else None
     nodes = {n['id']: n for n in service.nodes if not n.get('deletedAt')}
     by_page = {n.get('pageId'): n for n in nodes.values() if n['nodeType'] == 'page'}
+    deleted_pages = {n.get('pageId') for n in service.nodes
+                     if n.get('deletedAt') and n.get('pageId')}
     pages = {p['id']: p for p in (page_records if page_records is not None else getattr(scene, 'workspace_pages', []))}
     live = {getattr(p, 'page_id', None) or ('default-document' if hasattr(p, '_html') else 'default-mindmap'): p for p in panels}
     results = []
@@ -106,6 +108,8 @@ def search_project(scene, service, query, panels=(), tag_expression='', page_rec
             walk(content)
     for item in scene.items_for_save():
         canvas_id = getattr(item, '_canvas_id', None)
+        if canvas_id in deleted_pages:
+            continue
         node = by_page.get(canvas_id)
         title = str(getattr(item, '_title', '') or getattr(item, 'filename', '') or
                     getattr(item, 'toPlainText', lambda: '素材')())

@@ -203,7 +203,8 @@ class ChangeOpacityDialog(QtWidgets.QDialog):
         self.images = images
         self.command = commands.ChangeOpacity(images, opacity=1)
 
-        value = int(images[0].opacity() * 100) if images else 100
+        value = int(getattr(images[0], '_filter_original_opacity',
+                            images[0].opacity()) * 100) if images else 100
 
         self.setWindowTitle(_('Change Opacity:'))
         self.setWindowModality(Qt.WindowModality.WindowModal)

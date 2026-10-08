@@ -15,6 +15,8 @@
 
 # 中文翻译字典
 zh_CN = {
+    'Import assets': '导入素材',
+    'Import clipboard images': '导入剪贴板图片',
     # 菜单名称
     '&File': '文件(&F)',
     '&Edit': '编辑(&E)',

@@ -608,6 +608,7 @@ class PrismGraphicsView(MainControlsMixin,
 
     def _begin_stroke(self, scene_pos):
         """按下鼠标：开一笔。图元**这时就进场景**（需求第十三条）。"""
+        self._ensure_current_canvas()
         # 上一笔要是还挂着就先把引用收干净 —— 直接覆盖的话那半条线会
         # 留在场景里没人认领（切工具时也删不掉它了）。
         self._finish_pending_stroke()
@@ -1510,10 +1511,17 @@ class PrismGraphicsView(MainControlsMixin,
                     list(canvases.values())[:5])
         return canvases
 
+    def _ensure_current_canvas(self):
+        """A deleted last canvas stays empty until the next insertion."""
+        if self.current_canvas_id is None:
+            self.window().create_workspace_page_quietly('canvas', _('Canvas'))
+        return self.current_canvas_id
+
     def do_insert_images(self, filenames, pos=None, folder_categories=None,
                          folder_trees=None):
         if not filenames:
             return
+        self._ensure_current_canvas()
         # Centralise the extension policy before handing work to the legacy
         # loader.  Keeping unknown entries out avoids starting a worker that
         # cannot possibly produce an item, while preserving the user's order
@@ -1608,7 +1616,7 @@ class PrismGraphicsView(MainControlsMixin,
 
         if not items:
             return
-        target_canvas = page_id or self.current_canvas_id
+        target_canvas = page_id or self._ensure_current_canvas()
         active = getattr(self.category_panel, '_active_filter', None)
         inherited = active[1] if active and active[0] == 'category' else None
 
@@ -1666,6 +1674,7 @@ class PrismGraphicsView(MainControlsMixin,
         return self.mapToScene(self.viewport().rect().center())
 
     def on_action_insert_text(self):
+        self._ensure_current_canvas()
         self.cancel_active_modes()
         if self.scene.edit_item:
             self.scene.edit_item.exit_edit_mode()
@@ -2247,6 +2256,7 @@ class PrismGraphicsView(MainControlsMixin,
 
         if not frames:
             return
+        self._ensure_current_canvas()
         video_name = ''
         if source is not None:
             candidate = (getattr(source, '_title', '')

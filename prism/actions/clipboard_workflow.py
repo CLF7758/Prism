@@ -21,10 +21,12 @@ def paste(view):
     data = mime.data('prism/items') if mime is not None else None
     logger.debug('Custom data in clipboard: %s', data)
     if data and view.scene.internal_clipboard:
-        view.scene.paste_from_internal_clipboard(position)
+        view.scene.paste_from_internal_clipboard(
+            position, canvas_id=view._ensure_current_canvas())
         return
     image = clipboard.image()
     if not image.isNull():
+        view._ensure_current_canvas()
         item = PrismPixmapItem(image)
         item._canvas_id = view.current_canvas_id
         view.undo_stack.push(commands.InsertItems(
@@ -34,6 +36,7 @@ def paste(view):
         return
     text = clipboard.text()
     if text:
+        view._ensure_current_canvas()
         item = PrismTextItem(text)
         item._canvas_id = view.current_canvas_id
         item.setScale(1 / view.get_scale())

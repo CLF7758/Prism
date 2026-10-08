@@ -1,6 +1,7 @@
 """Canvas annotations and grayscale must stay local and avoid eager decoding."""
 import hashlib
 import time
+import pytest
 from unittest.mock import Mock
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -15,6 +16,113 @@ def two_canvases(window):
         {'id': name, 'kind': 'canvas', 'title': name, 'content': None}
         for name in ('A', 'B')]
     window.open_workspace_page('canvas', 'A')
+
+
+def test_toolbar_filters_legacy_canvas_with_new_pages(main_window):
+    window = main_window
+    images = []
+    for color in ('red', 'blue'):
+        image = QtGui.QImage(40, 40, QtGui.QImage.Format.Format_RGB32)
+        image.fill(QtGui.QColor(color))
+        item = PrismPixmapItem(image)
+        item.color_group = color
+        window.view.scene.addItem(item)
+        images.append(item)
+    window.create_workspace_page_quietly('canvas', 'Empty')
+    new_canvas = window.current_page_id
+    assert not any(item.isVisible() for item in images)
+    window._reload_workspace_pages()
+    assert window.current_page_id == 'default-canvas'
+    window.canvas_toolbar.gray.click()
+    assert all(item.grayscale for item in images)
+    assert window.canvas_toolbar.gray.isChecked()
+    window.canvas_toolbar.colours['red'].click()
+    assert images[0].opacity() == 1.0
+    assert images[1].opacity() == 0.3
+    window.open_workspace_page('canvas', new_canvas)
+    assert not window.canvas_toolbar.gray.isChecked()
+    assert window.color_filter._active_group is None
+    assert all(item.opacity() == 1.0 for item in images)
+    assert window.color_filter.all_chip._count == 0
+    window.open_workspace_page('canvas', 'default-canvas')
+    assert window.canvas_toolbar.gray.isChecked()
+    window.canvas_toolbar.gray.click()
+    assert all(not item.grayscale for item in images)
+
+
+def test_color_filter_only_changes_current_canvas(main_window):
+    two_canvases(main_window)
+    items = []
+    for canvas in ('A', 'B'):
+        image = QtGui.QImage(40, 40, QtGui.QImage.Format.Format_RGB32)
+        image.fill(QtGui.QColor('blue'))
+        item = PrismPixmapItem(image)
+        item._canvas_id = canvas
+        item.color_group = 'blue'
+        main_window.view.scene.addItem(item)
+        items.append(item)
+    main_window.color_filter.recount()
+    main_window.canvas_toolbar.colours['red'].click()
+    assert items[0].opacity() == 0.3
+    assert items[1].opacity() == 1.0
+    assert main_window.color_filter.all_chip._count == 1
+
+
+@pytest.mark.parametrize('previous_match_opacity', [0.3, 1.0])
+def test_saved_opacity_is_not_guessed_from_color_groups(
+        main_window, previous_match_opacity):
+    images = []
+    for color in ('red', 'blue'):
+        image = QtGui.QImage(40, 40, QtGui.QImage.Format.Format_RGB32)
+        image.fill(QtGui.QColor(color))
+        item = PrismPixmapItem(image)
+        item.color_group = color
+        item.setOpacity(previous_match_opacity if color == 'blue' else 0.3)
+        main_window.view.scene.addItem(item)
+        images.append(item)
+    main_window.color_filter.apply_filter('red')
+    assert images[0].opacity() == 0.3
+    assert images[1].opacity() == 0.3
+    assert images[0].get_extra_save_data()['opacity'] == 0.3
+    assert images[1].get_extra_save_data()['opacity'] == previous_match_opacity
+    main_window.color_filter.clear_filter()
+    assert images[0].opacity() == 0.3
+    assert images[1].opacity() == previous_match_opacity
+
+
+def test_filter_preserves_custom_opacity_when_saving(main_window):
+    image = QtGui.QImage(40, 40, QtGui.QImage.Format.Format_RGB32)
+    image.fill(QtGui.QColor('blue'))
+    item = PrismPixmapItem(image)
+    item.color_group = 'blue'
+    item.setOpacity(0.6)
+    main_window.view.scene.addItem(item)
+    main_window.color_filter.apply_filter('red')
+    assert item.opacity() == 0.3
+    assert item.get_extra_save_data()['opacity'] == 0.6
+    main_window.color_filter.clear_filter()
+    assert item.opacity() == 0.6
+
+
+def test_manual_opacity_edit_with_filter_saves_and_restores(main_window):
+    from prism.commands import ChangeOpacity
+    image = QtGui.QImage(40, 40, QtGui.QImage.Format.Format_RGB32)
+    image.fill(QtGui.QColor('red'))
+    item = PrismPixmapItem(image)
+    item.color_group = 'red'
+    main_window.view.scene.addItem(item)
+    bar = main_window.color_filter
+    bar.apply_filter('red')
+    main_window.view.undo_stack.push(ChangeOpacity([item], 0.5))
+    assert item.get_extra_save_data()['opacity'] == 0.5
+    main_window.view.undo_stack.undo()
+    assert item.get_extra_save_data()['opacity'] == 1.0
+    main_window.view.undo_stack.redo()
+    bar.apply_filter('blue')
+    bar.apply_filter('red')
+    assert item.opacity() == 0.5
+    bar.clear_filter()
+    assert item.opacity() == 0.5
 
 
 def test_annotations_stay_on_their_canvas_and_survive_filters(main_window):

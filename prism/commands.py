@@ -357,7 +357,9 @@ class ChangeOpacity(QtGui.QUndoCommand):
         self.ignore_first_redo = ignore_first_redo
         self.items = list(filter(lambda item: item.is_image, items))
         self.opacity = opacity
-        self.old_opacities = [item.opacity() for item in items]
+        self.old_opacities = [
+            getattr(item, '_filter_original_opacity', item.opacity())
+            for item in self.items]
 
     def redo(self):
         if self.ignore_first_redo:
@@ -365,10 +367,14 @@ class ChangeOpacity(QtGui.QUndoCommand):
             return
 
         for item in self.items:
+            if hasattr(item, '_filter_original_opacity'):
+                item._filter_original_opacity = self.opacity
             item.setOpacity(self.opacity)
 
     def undo(self):
         for item, opacity in zip(self.items, self.old_opacities):
+            if hasattr(item, '_filter_original_opacity'):
+                item._filter_original_opacity = opacity
             item.setOpacity(opacity)
 
 

@@ -179,6 +179,24 @@ def false_color_preview(image, exposure=0.0):
     return result.copy()
 
 
+def qt_grayscale_image(image):
+    """Match Qt's colorize effect (qGray) while preserving source alpha."""
+    import numpy as np
+
+    converted = image.convertToFormat(QtGui.QImage.Format.Format_RGBA8888)
+    width, height = converted.width(), converted.height()
+    if not width or not height:
+        return QtGui.QImage()
+    rgba = np.frombuffer(converted.bits().asstring(converted.sizeInBytes()),
+                         dtype=np.uint8).reshape(height, converted.bytesPerLine())
+    rgba = rgba[:, :width * 4].reshape(height, width, 4).copy()
+    gray = (rgba[:, :, :3].astype(np.uint16)
+            * np.array([11, 16, 5], dtype=np.uint16)).sum(axis=2) >> 5
+    rgba[:, :, :3] = gray.astype(np.uint8)[:, :, None]
+    return QtGui.QImage(rgba.data, width, height, rgba.strides[0],
+                       QtGui.QImage.Format.Format_RGBA8888).copy()
+
+
 def adjust_display_image(image, exposure=0.0, channel='rgb'):
     """Return an 8-bit non-destructive preview for an ordinary QImage."""
     import numpy as np

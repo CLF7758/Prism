@@ -19,7 +19,7 @@ APPNAME = 'Prism'
 APPNAME_FULL = f'{APPNAME} Design Inspiration Board'
 # Keep in sync with [project] version in pyproject.toml; tests/test_version.py
 # fails if the two ever drift apart again.
-VERSION = '0.3.5'
+VERSION = '0.3.6'
 WEBSITE = 'https://github.com/CLF7758/prism'
 # The credit line for the original project is kept verbatim: its license
 # headers and copyright notices stay untouched in the source files, and this

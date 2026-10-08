@@ -934,7 +934,8 @@ def test_sample_color_in_greyscale_mode(qapp, view):
     view.scene.addItem(item)
     gray = item.sample_color_at(QtCore.QPointF(2, 2))
     print(gray.red(), gray.green(), gray.blue(), gray.alpha())
-    assert gray == QtGui.QColor(130, 130, 130)
+    value = QtGui.qGray(color.rgb())
+    assert gray == QtGui.QColor(value, value, value)
 
 
 def test_sample_color_at_returns_none_when_transparent(qapp, view):

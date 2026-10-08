@@ -401,15 +401,15 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         .prism keeps its canvas, mind map and document reachable.
         """
         pages = list(getattr(self.scene, 'workspace_pages', []))
-        kinds = {page.get('kind') for page in pages}
-        if 'canvas' not in kinds and self._canvas_item_count('default-canvas'):
+        page_ids = {page.get('id') for page in pages}
+        if 'default-canvas' not in page_ids and self._canvas_item_count('default-canvas'):
             pages.insert(0, {'id': 'default-canvas', 'kind': 'canvas',
                              'title': '默认画布', 'tags': [],
                              'permanent': True})
-        if 'mindmap' not in kinds and getattr(self.scene, 'mindmap_tree', None):
+        if 'default-mindmap' not in page_ids and getattr(self.scene, 'mindmap_tree', None):
             pages.append({'id': 'default-mindmap', 'kind': 'mindmap',
                           'title': '默认脑图', 'tags': [], 'permanent': True})
-        if 'document' not in kinds and getattr(self.scene, 'note_html', ''):
+        if 'default-document' not in page_ids and getattr(self.scene, 'note_html', ''):
             pages.append({'id': 'default-document', 'kind': 'document',
                           'title': '默认文档', 'tags': [], 'permanent': True})
         return pages

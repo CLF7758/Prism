@@ -87,9 +87,11 @@ class SceneExporterBase(ExporterBase):
         # Selection outlines/handles will be rendered to the exported
         # image, so deselect first. (Alternatively, pass an attribute
         # to paint functions to not paint them?)
-        rect = self.scene.itemsBoundingRect()
+        self.items = [item for item in self.scene.items_for_save() if item.isVisible()]
+        rect = self.scene.itemsBoundingRect(items=self.items)
+        self.source_rect = rect
         logger.trace(f'Items bounding rect: {rect}')
-        size = QtCore.QSize(int(rect.width()), int(rect.height()))
+        size = QtCore.QSize(max(1, int(rect.width())), max(1, int(rect.height())))
         logger.trace(f'Export size without margins: {size}')
         self.margin = max(size.width(), size.height()) * 0.03
         self.default_size = size.grownBy(
@@ -143,7 +145,7 @@ class SceneToPixmapExporter(SceneExporterBase):
             self.size.height() - 2 * margin)
         logger.trace(f'Final export target_rect: {target_rect}')
         self.scene.render(painter,
-                          source=self.scene.itemsBoundingRect(),
+                          source=self.source_rect,
                           target=target_rect)
         painter.end()
         return image
@@ -204,11 +206,13 @@ class SceneToSVGExporter(SceneExporterBase):
                     'xmlns:xlink': 'http://www.w3.org/1999/xlink',
                     })
 
-        rect = self.scene.itemsBoundingRect()
+        rect = self.source_rect
         offset = rect.topLeft() - QtCore.QPointF(self.margin, self.margin)
 
-        for i, item in enumerate(sorted(self.scene.items(),
+        for i, item in enumerate(sorted(self.items,
                                         key=lambda x: x.zValue())):
+            if item.TYPE not in ('text', 'pixmap'):
+                continue
             # z order in SVG specified via the order of elements in the tree
             pos = item.pos() - offset
             anchor = pos

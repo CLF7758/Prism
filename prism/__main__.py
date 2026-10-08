@@ -613,10 +613,7 @@ class PrismMainWindow(QtWidgets.QMainWindow):
             self.open_workspace_page(*successor)
             return
         # 一个页面都不剩了：回画布，别停在一个已经不存在的页上。
-        self.current_page_kind = 'canvas'
-        self.current_page_id = self._first_canvas_id()
-        self.view.current_canvas_id = self.current_page_id
-        self.tabs.setCurrentWidget(self.canvas_page)
+        self.open_workspace_page('canvas', self._first_canvas_id())
 
     def _show_trash_toast(self, text, undo_ids):
         """「已移到回收站」+「撤销」，8 秒内点了就能回来（§7.6 / §505）。"""
@@ -766,6 +763,21 @@ class PrismMainWindow(QtWidgets.QMainWindow):
         scene.workspace_pages = [page for page in
                                  (scene.workspace_pages or [])
                                  if page['id'] not in page_ids]
+        for item in list(scene.items_for_save()):
+            if getattr(item, 'canvas_id', None) in page_ids:
+                scene.removeItem(item)
+        # Purging is irreversible: old commands must not resurrect its items.
+        self.view.undo_stack.clear()
+        if 'default-document' in page_ids:
+            scene.note_html = ''
+            self.document_panel.load_from_scene()
+        if 'default-mindmap' in page_ids:
+            scene.mindmap_tree = None
+            self.mindmap_panel.load_from_scene()
+        self._sync_page_panels()
+        self.view.category_panel.rebuild_workspace_tree()
+        if self.current_page_id in page_ids:
+            self.open_workspace_page('canvas', self._first_canvas_id())
         self.view.mark_content_dirty()
 
     def _export_resource_item(self, section, node_id):
@@ -981,9 +993,13 @@ class PrismMainWindow(QtWidgets.QMainWindow):
         """The canvas to show after loading a project."""
         library = getattr(self.view, 'category_panel', None)
         if library is not None:
+            deleted = {node.get('pageId') for node in library.resource_service.nodes
+                       if node.get('deletedAt') and node.get('pageId')}
             for page in library._pages_with_implicit_defaults():
-                if page.get('kind') == 'canvas':
+                if page.get('kind') == 'canvas' and page['id'] not in deleted:
                     return page['id']
+            if 'default-canvas' in deleted:
+                return None
         return 'default-canvas'
 
     def open_workspace_page(self, kind, page_id):
@@ -997,6 +1013,8 @@ class PrismMainWindow(QtWidgets.QMainWindow):
             self.tabs.setCurrentWidget(self.canvas_page)
             self.view.category_panel._apply_filter()
             self.filter_popover.color_host.sync_canvas()
+            self.color_filter.recount()
+            self.canvas_toolbar.refresh()
             self._refresh_filter_bar()
             self.view.on_action_fit_scene()
         else:

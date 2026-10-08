@@ -138,6 +138,49 @@ def test_items_without_a_known_canvas_keep_showing(two_canvases):
     assert orphan.isVisible(), '页面已经不在了，那就照旧显示'
 
 
+def test_legacy_default_canvas_is_kept_when_new_canvases_exist(main_window):
+    window = main_window
+    item = image_item(window.view.scene, 'default-canvas')
+    window.create_workspace_page_quietly('canvas', 'New canvas')
+    panel = window.view.category_panel
+    panel.rebuild_workspace_tree()
+    assert 'default-canvas' in {p['id'] for p in panel._pages_with_implicit_defaults()}
+    assert not item.isVisible()
+    assert window._first_canvas_id() == 'default-canvas'
+    window.open_workspace_page('canvas', 'default-canvas')
+    assert item.isVisible()
+    target = next(p['id'] for p in window.view.scene.workspace_pages
+                  if p.get('kind') == 'canvas')
+    assert panel.move_items_to_canvas([item], target)
+    assert not item.isVisible()
+    window.open_workspace_page('canvas', target)
+    assert item.isVisible()
+
+
+def test_mouse_drag_from_canvas_to_sidebar(two_canvases, qapp):
+    window, panel = two_canvases
+    view = window.view
+    item = image_item(view.scene, 'canvas-a')
+    view.centerOn(item)
+    qapp.processEvents()
+    start = view.mapFromScene(item.sceneBoundingRect().center())
+    drop, global_pos = drop_geometry(panel, view, 'canvas-b')
+    for kind, position, global_position, button, buttons in (
+            (QtCore.QEvent.Type.MouseButtonPress, start,
+             view.viewport().mapToGlobal(start), QtCore.Qt.MouseButton.LeftButton,
+             QtCore.Qt.MouseButton.LeftButton),
+            (QtCore.QEvent.Type.MouseMove, drop, global_pos,
+             QtCore.Qt.MouseButton.NoButton, QtCore.Qt.MouseButton.LeftButton),
+            (QtCore.QEvent.Type.MouseButtonRelease, drop, global_pos,
+             QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.MouseButton.NoButton)):
+        event = QtGui.QMouseEvent(kind, QtCore.QPointF(position),
+                                 QtCore.QPointF(global_position), button, buttons,
+                                 QtCore.Qt.KeyboardModifier.NoModifier)
+        qapp.sendEvent(view.viewport(), event)
+    assert item.canvas_id == 'canvas-b'
+    assert not item.isVisible()
+
+
 class _Release:
     """`_canvas_drop_target` 需要的最小事件替身：视口坐标 + 全局坐标。"""
 

@@ -138,10 +138,12 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         for item in self.selectedItems(user_only=True):
             self.internal_clipboard.append(item)
 
-    def paste_from_internal_clipboard(self, position):
+    def paste_from_internal_clipboard(self, position, canvas_id=None):
         copies = []
         for item in self.internal_clipboard:
             copy = item.create_copy()
+            if canvas_id is not None:
+                copy.canvas_id = canvas_id
             copies.append(copy)
         self.undo_stack.push(commands.InsertItems(self, copies, position))
 
@@ -564,7 +566,7 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
 
         if selection_only:
             base = filter_user_items(self.selectedItems())
-        elif items:
+        elif items is not None:
             base = items
         else:
             base = filter_user_items(self.items())

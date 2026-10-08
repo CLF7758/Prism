@@ -58,10 +58,10 @@ Format support depends on file contents and the available decoder. PSD support d
 
 ## Windows installation
 
-**[Download Windows x64 installer (0.3.5, about 489 MB)](https://github.com/CLF7758/Prism/releases/download/v0.3.5/Prism-Setup-0.3.5-windows-x64.exe)** · [Release page](https://github.com/CLF7758/Prism/releases/tag/v0.3.5) · [SHA-256 checksums](https://github.com/CLF7758/Prism/releases/download/v0.3.5/SHA256.txt)
+**[Download Windows x64 installer (0.3.6, about 489 MB)](https://github.com/CLF7758/Prism/releases/download/v0.3.6/Prism-Setup-0.3.6-windows-x64.exe)** · [Release page](https://github.com/CLF7758/Prism/releases/tag/v0.3.6) · [SHA-256 checksums](https://github.com/CLF7758/Prism/releases/download/v0.3.6/SHA256.txt)
 
-1. Open this repository's [Releases page](https://github.com/CLF7758/Prism/releases/tag/v0.3.5).
-2. Download [Prism-Setup-0.3.5-windows-x64.exe](https://github.com/CLF7758/Prism/releases/download/v0.3.5/Prism-Setup-0.3.5-windows-x64.exe).
+1. Open this repository's [Releases page](https://github.com/CLF7758/Prism/releases/tag/v0.3.6).
+2. Download [Prism-Setup-0.3.6-windows-x64.exe](https://github.com/CLF7758/Prism/releases/download/v0.3.6/Prism-Setup-0.3.6-windows-x64.exe).
 3. Run the installer and choose an installation directory. A desktop shortcut is optional.
 4. Launch Prism from the Start menu or open a `.prism` project.
 

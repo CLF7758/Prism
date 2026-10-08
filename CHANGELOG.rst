@@ -1,3 +1,18 @@
+0.3.6 (2026-10-08)
+==================
+
+Fixed
+-----
+
+* Keep canvas navigation and search consistent with the recycle bin.
+* Remove canvas items when their canvas is permanently deleted.
+* Export only visible canvas content, with matching image and SVG bounds.
+* Match grayscale display, color sampling, and exported pixels.
+* Preserve intentional opacity and manual edits while filtering colors.
+* Create a live canvas for new content after the last canvas is trashed.
+* Paste copied items into the destination canvas.
+* Add the missing Chinese import translations.
+
 0.3.5 (2026-10-08)
 ==================
 
