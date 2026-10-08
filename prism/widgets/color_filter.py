@@ -205,7 +205,7 @@ class ColorFilterBar(QtWidgets.QWidget):
         if getattr(self.view.scene, '_interaction_in_progress', False):
             return
         deadline = time.perf_counter() + 0.002
-        for _ in range(8):
+        for analysis_index in range(8):
             if not self._analysis_pending:
                 break
             key = next(iter(self._analysis_pending))
