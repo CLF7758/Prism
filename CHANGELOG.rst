@@ -1,3 +1,12 @@
+0.3.7 (2026-10-08)
+==================
+
+Fixed
+-----
+
+* Read the interpreter version without parsing vendor-specific sys.version
+  strings, so startup diagnostics cannot crash Anaconda-based installations.
+
 0.3.6 (2026-10-08)
 ==================
 

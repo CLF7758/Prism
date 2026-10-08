@@ -1484,7 +1484,7 @@ def main():
 
     logger.info(f'Starting {constants.APPNAME} version {constants.VERSION}')
     logger.debug('System: %s', ' '.join(platform.uname()))
-    logger.debug('Python: %s', platform.python_version())
+    logger.debug('Python: %d.%d.%d', *sys.version_info[:3])
     logger.debug('LD_LIBRARY_PATH: %s', os.environ.get('LD_LIBRARY_PATH'))
     settings = PrismSettings()
     logger.info(f'Using settings: {settings.fileName()}')

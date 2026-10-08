@@ -78,9 +78,12 @@ def test_main(startup_mock, args_mock, app_mock, qapp):
     args_mock.return_value.loglevel = 'WARN'
     args_mock.return_value.debug_raise_error = ''
 
-    with patch.object(qapp, 'exec') as exec_mock:
+    with patch.object(qapp, 'exec') as exec_mock, \
+            patch('prism.__main__.platform.python_version',
+                  side_effect=ValueError('failed to parse vendor sys.version')) as version_parser:
         main()
         exec_mock.assert_called_once_with()
+        version_parser.assert_not_called()
 
     args_mock.assert_called_once_with(with_check=True)
     startup_mock.assert_called()

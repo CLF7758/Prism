@@ -1,4 +1,4 @@
-#define AppVersion "0.3.6"
+#define AppVersion "0.3.7"
 [Setup]
 AppId={{39EAF694-2BE4-45C5-B565-559B153C0EC7}
 AppName=Prism

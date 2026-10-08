@@ -11,7 +11,7 @@ include = ["prism*"]
 
 [project]
 name = "Prism"
-version = "0.3.6"
+version = "0.3.7"
 description = "A local creative workspace for reference images, documents and mind maps"
 readme = "README.md"
 license = {file = "LICENSE"}
