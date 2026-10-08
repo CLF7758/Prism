@@ -541,7 +541,9 @@ def test_sqliteio_write_canceled(tmpfile, view):
     io.write()
     worker.begin_processing.emit.assert_called_once_with(2)
     worker.progress.emit.assert_called_once_with(0)
-    worker.finished.emit.assert_called_once_with(tmpfile, [])
+    worker.finished.emit.assert_called_once_with(
+        tmpfile, ['Saving was canceled. Unsaved items remain on the canvas.'])
+    assert item.save_id is None or io.fetchone('SELECT COUNT(*) FROM items')[0] == 1
 
 
 def test_sqliteio_read_reads_readonly_text_item(tmpfile, view):

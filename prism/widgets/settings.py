@@ -246,6 +246,60 @@ class SettingsDialog(QtWidgets.QDialog):
         clipboard_layout.addWidget(ClipboardMaxItemsWidget(), 1, 0)
         tabs.addTab(clipboard, _('&Clipboard'))
 
+        # AI 服务
+        ai_tab = QtWidgets.QWidget()
+        ai_layout = QtWidgets.QVBoxLayout(ai_tab)
+        
+        # API Key
+        ai_layout.addWidget(QtWidgets.QLabel("DeepSeek API Key:"))
+        self.api_key_input = QtWidgets.QLineEdit()
+        self.api_key_input.setPlaceholderText("sk-...")
+        ai_layout.addWidget(self.api_key_input)
+        
+        # Base URL
+        ai_layout.addWidget(QtWidgets.QLabel("API Base URL:"))
+        self.base_url_input = QtWidgets.QLineEdit()
+        self.base_url_input.setPlaceholderText("https://api.deepseek.com")
+        ai_layout.addWidget(self.base_url_input)
+        
+        # 模型名
+        ai_layout.addWidget(QtWidgets.QLabel("模型名:"))
+        self.model_input = QtWidgets.QLineEdit()
+        self.model_input.setPlaceholderText("deepseek-chat")
+        ai_layout.addWidget(self.model_input)
+        
+        # 开关
+        self.translate_checkbox = QtWidgets.QCheckBox("启用标签翻译（英文→中文）")
+        ai_layout.addWidget(self.translate_checkbox)
+        
+        self.title_checkbox = QtWidgets.QCheckBox("启用自动标题生成")
+        ai_layout.addWidget(self.title_checkbox)
+        
+        self.category_checkbox = QtWidgets.QCheckBox("启用自动分类归纳")
+        ai_layout.addWidget(self.category_checkbox)
+        
+        self.local_only_checkbox = QtWidgets.QCheckBox("纯本地模式（不调用 API）")
+        ai_layout.addWidget(self.local_only_checkbox)
+        
+        # 加载当前配置
+        from prism.ai_client import get_client
+        client = get_client()
+        self.api_key_input.setText(client.get_api_key())
+        self.base_url_input.setText(client.get_base_url())
+        self.model_input.setText(client.get_model())
+        self.translate_checkbox.setChecked(client.is_translate_enabled())
+        self.title_checkbox.setChecked(client.is_title_enabled())
+        self.category_checkbox.setChecked(client.is_category_enabled())
+        self.local_only_checkbox.setChecked(client.is_local_only_mode())
+        
+        # 保存按钮
+        save_btn = QtWidgets.QPushButton("保存 AI 配置")
+        save_btn.clicked.connect(self.save_ai_settings)
+        ai_layout.addWidget(save_btn)
+        
+        ai_layout.addStretch()
+        tabs.addTab(ai_tab, "AI 服务")
+
         layout = QtWidgets.QVBoxLayout()
         self.setLayout(layout)
         layout.addWidget(tabs)
@@ -273,3 +327,23 @@ class SettingsDialog(QtWidgets.QDialog):
 
         if reply == QtWidgets.QMessageBox.StandardButton.Yes:
             PrismSettings().restore_defaults()
+    
+    def save_ai_settings(self):
+        """保存 AI 服务配置"""
+        from prism.ai_client import (
+            SETTINGS_KEY_API_KEY, SETTINGS_KEY_BASE_URL, SETTINGS_KEY_MODEL,
+            SETTINGS_KEY_TRANSLATE_ENABLED, SETTINGS_KEY_TITLE_ENABLED,
+            SETTINGS_KEY_CATEGORY_ENABLED, SETTINGS_KEY_LOCAL_ONLY
+        )
+        
+        settings = self.settings
+        settings.setValue(SETTINGS_KEY_API_KEY, self.api_key_input.text().strip())
+        settings.setValue(SETTINGS_KEY_BASE_URL, self.base_url_input.text().strip())
+        settings.setValue(SETTINGS_KEY_MODEL, self.model_input.text().strip())
+        settings.setValue(SETTINGS_KEY_TRANSLATE_ENABLED, self.translate_checkbox.isChecked())
+        settings.setValue(SETTINGS_KEY_TITLE_ENABLED, self.title_checkbox.isChecked())
+        settings.setValue(SETTINGS_KEY_CATEGORY_ENABLED, self.category_checkbox.isChecked())
+        settings.setValue(SETTINGS_KEY_LOCAL_ONLY, self.local_only_checkbox.isChecked())
+        
+        QtWidgets.QMessageBox.information(
+            self, "保存成功", "AI 服务配置已保存。")

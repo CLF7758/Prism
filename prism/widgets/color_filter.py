@@ -17,6 +17,8 @@
 don't belong to the selected colour group."""
 
 import logging
+import time
+import weakref
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt
@@ -114,6 +116,10 @@ class ColorFilterBar(QtWidgets.QWidget):
         self._saved_opacities = {}
         self._grayscale_chip = None
         self._grayscale_active = False
+        self._analysis_pending = {}
+        self._analysis_timer = QtCore.QTimer(self)
+        self._analysis_timer.setInterval(32)
+        self._analysis_timer.timeout.connect(self._analyze_pending)
         self.setObjectName('colorFilterBar')
         self._build_ui()
 
@@ -165,15 +171,19 @@ class ColorFilterBar(QtWidgets.QWidget):
             is_video = isinstance(item, PrismVideoItem)
             if not (is_pixmap or is_video):
                 continue
-            # Lazy-analyze color group if not yet set (pixmap only)
+            total += 1
+            # Count immediately; classify available previews in short idle slices.
+            # A recount must never decode archived originals on the GUI thread.
             if is_pixmap and not item.color_group:
-                item.analyze_color_group()
+                preview = getattr(item, '_preview_pixmap', None)
+                if (preview is not None and not preview.isNull()) or item.has_full_pixmap():
+                    self._analysis_pending.setdefault(id(item), weakref.ref(item))
             if is_pixmap and item.grayscale:
                 grayscale_count += 1
             gid = getattr(item, 'color_group', None)
             if gid and gid in counts:
                 counts[gid] += 1
-                total += 1
+        self._color_counts = counts
         for gid, chip in self.chips.items():
             c = counts[gid]
             chip.set_count(c)
@@ -181,8 +191,46 @@ class ColorFilterBar(QtWidgets.QWidget):
         self.all_chip.set_count(total)
         if self._grayscale_chip:
             self._grayscale_chip.set_count(grayscale_count)
+        if self._analysis_pending and not self._analysis_timer.isActive():
+            self._analysis_timer.start()
+
+    def _analyze_pending(self):
+        from PyQt6 import sip
+        if sip.isdeleted(self.view) or sip.isdeleted(self.view.scene):
+            self._analysis_pending.clear()
+            self._analysis_timer.stop()
+            return
+        if getattr(self.view.scene, '_interaction_in_progress', False):
+            return
+        deadline = time.perf_counter() + 0.002
+        for _ in range(8):
+            if not self._analysis_pending:
+                break
+            key = next(iter(self._analysis_pending))
+            item = self._analysis_pending.pop(key)()
+            if item is not None and not sip.isdeleted(item) and item.scene() is self.view.scene:
+                if not item.color_group:
+                    preview = getattr(item, '_preview_pixmap', None)
+                    if (preview is None or preview.isNull()) and not item.has_full_pixmap():
+                        continue
+                    item.analyze_color_group()
+                    gid = item.color_group
+                    if gid in self.chips:
+                        self._color_counts[gid] += 1
+                        self.chips[gid].set_count(self._color_counts[gid])
+                    if self._active_group:
+                        opacity = (self._saved_opacities.get(key, 1.0)
+                                   if gid == self._active_group else DIM_OPACITY)
+                        item.setOpacity(opacity)
+            if time.perf_counter() >= deadline:
+                break
+        if not self._analysis_pending:
+            self._analysis_timer.stop()
+            self.filter_changed.emit()
 
     def clear_filter(self):
+        for item in self._current_images():
+            item.grayscale = False
         self._restore_opacities()
         self._active_group = None
         self._grayscale_active = False
@@ -231,14 +279,24 @@ class ColorFilterBar(QtWidgets.QWidget):
         else:
             self.apply_filter(group_id)
 
-    def _toggle_grayscale(self):
-        """Toggle grayscale on all pixmap items."""
-        self._grayscale_active = not self._grayscale_active
-        for item in self.view.scene.items():
-            if isinstance(item, PrismPixmapItem) and hasattr(item, 'grayscale'):
-                item.grayscale = self._grayscale_active
+    def _current_images(self):
+        canvas = getattr(self.view, 'current_canvas_id', 'default-canvas')
+        return [item for item in self.view.scene.items_for_save()
+                if isinstance(item, PrismPixmapItem) and item._canvas_id == canvas]
+
+    def sync_canvas(self):
+        images = self._current_images()
+        self._grayscale_active = bool(images) and all(item.grayscale for item in images)
         if self._grayscale_chip:
             self._grayscale_chip.set_active(self._grayscale_active)
+
+    def _toggle_grayscale(self):
+        """Toggle only the current canvas, without materializing originals."""
+        self.sync_canvas()
+        enabled = not self._grayscale_active
+        for item in self._current_images():
+            item.grayscale = enabled
+        self.sync_canvas()
         self.filter_changed.emit()
 
     def _save_opacities(self):

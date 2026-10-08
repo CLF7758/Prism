@@ -1,0 +1,9 @@
+{
+  "repository": "SmilingWolf/wd-v1-4-swinv2-tagger-v2",
+  "release_tag": "v0.3.5",
+  "release_asset": "Prism-wd14-model.onnx",
+  "filename": "model.onnx",
+  "size": 455409152,
+  "sha256": "04ec04fdf7db74b4fed7f4b52f52e04dec4dbad9e4d88d2d178f334079a29fde",
+  "source_url": "https://huggingface.co/SmilingWolf/wd-v1-4-swinv2-tagger-v2/resolve/main/model.onnx"
+}

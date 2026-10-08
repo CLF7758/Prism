@@ -168,6 +168,7 @@ class ExportService:
         with_bytes = 0
         for item in items:
             getter = getattr(item, 'original_bytes', None)
+            already_resident = getattr(item, '_source_blob', None) is not None
             try:
                 payload = getter() if callable(getter) else None
             except Exception:                       # noqa: BLE001
@@ -176,6 +177,10 @@ class ExportService:
                 payload = None
             if payload:
                 with_bytes += 1
+            if (not already_resident and
+                    (getattr(item, '_source_path', None) or
+                     getattr(item, '_prism_source', None))):
+                item._source_blob = None
         return OriginalReadiness(
             total=len(items),
             with_bytes=with_bytes,

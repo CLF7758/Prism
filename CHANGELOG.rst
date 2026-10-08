@@ -1,3 +1,16 @@
+0.3.5 (2026-10-08)
+==================
+
+Fixed
+-----
+
+* Fixed the image-import deadlock and moved canvas source decoding off-thread.
+* Automatically arrange folder, external-file and clipboard image batches.
+* Keep drawings and text on their owning canvas, including after reopening.
+* Restore saved brush strokes when loading projects.
+* Avoid eager full-image decoding when switching the current canvas to grayscale.
+* Keep grayscale effects on the GUI thread and preserve original export bytes.
+
 0.3.4-dev (unreleased)
 ======================
 

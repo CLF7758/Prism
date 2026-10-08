@@ -332,6 +332,7 @@ class DetailPanel(QtWidgets.QWidget):
     # ── Public API ──────────────────────────────────────────────
 
     def _show_empty(self):
+        self._visual_key = None
         self._item = None
         self._preview_label.setText('\u672a\u9009\u4e2d\u7d20\u6750')
         self._title_edit.setEnabled(False)
@@ -555,7 +556,6 @@ class DetailPanel(QtWidgets.QWidget):
                 commands.ChangeMetadata(changed, 'tags', values))
 
     def _refresh(self):
-        self._rebuild_tag_checks()
         self._on_selection_changed()
 
     @staticmethod
@@ -569,6 +569,14 @@ class DetailPanel(QtWidgets.QWidget):
             return '\u2014'
         suffix = os.path.splitext(str(name))[1].lstrip('.').upper()
         return suffix or '\u2014'
+
+    @staticmethod
+    def _inspection_pixmap(item):
+        if isinstance(item, PrismPixmapItem) and not item._preview_adjusted:
+            preview = item._preview_pixmap
+            if preview is not None and not preview.isNull():
+                return preview
+        return getattr(item, 'pixmap', lambda: None)()
 
     def _refresh_item(self, item):
         changed_item = self._item is not item
@@ -590,7 +598,7 @@ class DetailPanel(QtWidgets.QWidget):
                 item.set_preview_pixmap(source, adjusted=False)
 
         # Preview
-        pm = getattr(item, 'pixmap', lambda: None)()
+        pm = self._inspection_pixmap(item)
         if pm and not pm.isNull():
             scaled = pm.scaled(
                 max(200, self.width() - 40), 145,
@@ -613,7 +621,8 @@ class DetailPanel(QtWidgets.QWidget):
         notes = getattr(item, '_notes', '')
         self._notes_edit.setEnabled(True)
         self._notes_edit.blockSignals(True)
-        self._notes_edit.setPlainText(notes)
+        if self._notes_edit.toPlainText() != notes:
+            self._notes_edit.setPlainText(notes)
         self._notes_edit.blockSignals(False)
 
         # Category dropdown
@@ -641,7 +650,7 @@ class DetailPanel(QtWidgets.QWidget):
             self._type_label.setText('\u56fe\u7247')
             if pm and not pm.isNull():
                 self._dims_label.setText(
-                    f'{pm.width()} \u00d7 {pm.height()}')
+                    f'{item._image_size.width()} \u00d7 {item._image_size.height()}')
             else:
                 self._dims_label.setText('\u672a\u77e5')
         elif isinstance(item, PrismVideoItem):
@@ -680,9 +689,14 @@ class DetailPanel(QtWidgets.QWidget):
             self._date_label.setText('\u672a\u77e5')
             self._path_label.setText(fn or '\u672a\u77e5')
 
-        # Color distribution (only for images)
+        visual_key = (id(item), pm.cacheKey() if pm is not None else None,
+                      getattr(item, '_preview_adjusted', False))
+        visuals_changed = visual_key != getattr(self, '_visual_key', None)
+        self._visual_key = visual_key
+        # Text and tag edits must not recalculate the same image statistics.
         if isinstance(item, PrismPixmapItem):
-            self._build_color_distribution(item)
+            if visuals_changed:
+                self._build_color_distribution(item)
         else:
             while hasattr(self, '_cd_layout') and self._cd_layout.count():
                 w = self._cd_layout.takeAt(0).widget()
@@ -691,8 +705,8 @@ class DetailPanel(QtWidgets.QWidget):
 
         # Histogram (only for images)
         if isinstance(item, PrismPixmapItem):
-            pm = item.pixmap()
-            self._hist_widget.update_from_pixmap(pm)
+            if visuals_changed:
+                self._hist_widget.update_from_pixmap(pm)
         else:
             self._hist_widget.clear()
 
@@ -710,7 +724,7 @@ class DetailPanel(QtWidgets.QWidget):
             if w:
                 w.deleteLater()
 
-        pm = item.pixmap()
+        pm = self._inspection_pixmap(item)
         if pm is None or pm.isNull():
             return
 
@@ -726,25 +740,21 @@ class DetailPanel(QtWidgets.QWidget):
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.FastTransformation)
 
-        weights = {}
-        for g in COLOR_GROUPS:
-            weights[g['id']] = 0.0
-        for y in range(img.height()):
-            for x in range(img.width()):
-                c = img.pixelColor(x, y)
-                if c.alpha() < 180:
-                    continue
-                r, g, b = c.red(), c.green(), c.blue()
-                gid = _color_group_from_rgb(r, g, b)
-                # Unpack with real names: a bare '_' here would shadow the
-                # i18n _() helper used further down in this function.
-                _hue, sv, _light = _rgb_to_hsl(r, g, b)
-                wt = 1.0
-                if gid in ('black', 'white', 'gray'):
-                    wt *= 0.72
-                if sv > 0.5:
-                    wt *= 1.9
-                weights[gid] = weights.get(gid, 0.0) + wt
+        import numpy as np
+        from prism.items import (_qimage_to_rgba, _hsl_arrays,
+                                 _color_group_indices, _COLOR_INDEX)
+        sample = _qimage_to_rgba(img)
+        if sample is None:
+            return
+        hue, saturation, lightness = _hsl_arrays(
+            sample[:, :, 0], sample[:, :, 1], sample[:, :, 2])
+        indices = _color_group_indices(hue, saturation, lightness)
+        amounts = (sample[:, :, 3] >= 180).astype(np.float64)
+        neutral = np.isin(indices, [_COLOR_INDEX[name] for name in ('black', 'white', 'gray')])
+        amounts *= np.where(neutral, 0.72, 1.0)
+        amounts *= np.where(saturation > 0.5, 1.9, 1.0)
+        totals = np.bincount(indices.ravel(), weights=amounts.ravel(), minlength=len(COLOR_GROUPS))
+        weights = {group['id']: float(totals[index]) for index, group in enumerate(COLOR_GROUPS)}
         total = sum(weights.values())
         if total < 1:
             return
@@ -881,8 +891,6 @@ class DetailPanel(QtWidgets.QWidget):
         if available:
             hdr = self._hdr_source_available(item)
             self._tonemap_row_widget.setVisible(hdr)
-            if not hasattr(item, '_display_source_pixmap'):
-                item._display_source_pixmap = QtGui.QPixmap(item.pixmap())
             self._hdr_hint.setText(
                 '仅改变预览，原始素材保持不变；导出时可选择原图或调整后图片。')
         return available
@@ -924,7 +932,10 @@ class DetailPanel(QtWidgets.QWidget):
                 self._hdr_hint.setText(f'预览更新失败，已保留原图：{exc}')
                 return
         else:
-            source = getattr(item, '_display_source_pixmap', item.pixmap())
+            source = getattr(item, '_display_source_pixmap', None)
+            if source is None:
+                source = QtGui.QPixmap(item.pixmap())
+                item._display_source_pixmap = source
             if is_default_preview and hasattr(item, '_display_source_pixmap'):
                 # Resetting the controls should restore the original display
                 # pixels, while the imported source bytes remain untouched.
@@ -1003,28 +1014,22 @@ class _HistogramWidget(QtWidgets.QWidget):
                 max(1, int(w * scale)), max(1, int(h * scale)),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.FastTransformation)
-        lum = [0] * 256
-        r_bins = [0] * 256
-        g_bins = [0] * 256
-        b_bins = [0] * 256
-        total_pixels = 0
-        sum_l = 0.0
-        sum_l2 = 0.0
-        for y in range(img.height()):
-            for x in range(img.width()):
-                c = img.pixelColor(x, y)
-                if c.alpha() < 180:
-                    continue
-                rv, gv, bv = c.red(), c.green(), c.blue()
-                lv = int(0.299 * rv + 0.587 * gv + 0.114 * bv)
-                lv = min(255, max(0, lv))
-                lum[lv] += 1
-                r_bins[min(255, rv)] += 1
-                g_bins[min(255, gv)] += 1
-                b_bins[min(255, bv)] += 1
-                total_pixels += 1
-                sum_l += lv
-                sum_l2 += lv * lv
+        import numpy as np
+        from prism.items import _qimage_to_rgba
+        sample = _qimage_to_rgba(img)
+        if sample is None:
+            self.clear()
+            return
+        visible = sample[sample[:, :, 3] >= 180]
+        channels = visible[:, :3].astype(np.float64)
+        levels = (0.299 * channels[:, 0] + 0.587 * channels[:, 1] +
+                  0.114 * channels[:, 2]).astype(np.int64)
+        lum = np.bincount(levels, minlength=256).tolist()
+        r_bins, g_bins, b_bins = [np.bincount(visible[:, channel], minlength=256).tolist()
+                                for channel in range(3)]
+        total_pixels = len(visible)
+        sum_l = float(levels.sum())
+        sum_l2 = float((levels.astype(np.float64) ** 2).sum())
         self._bins = (lum, r_bins, g_bins, b_bins)
         if total_pixels > 0:
             mean = sum_l / total_pixels

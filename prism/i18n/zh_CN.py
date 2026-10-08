@@ -445,6 +445,8 @@ zh_CN = {
     '<p>Problem writing file %s</p><p>%s</p>': '<p>写入文件 %s 时出错</p><p>%s</p>',
     'Image captured from browser': '从浏览器采集的图片',
     'No exportable files selected': '没有选中可导出的文件',
+    'Export Selected &Images...': '导出选中图片(&I)...',
+    'Saving was canceled. Unsaved items remain on the canvas.': '保存已取消，尚未保存的素材仍在画布上。',
     'Insert link': '插入链接',
     'Insert table': '插入表格',
     'Text color': '文字颜色',

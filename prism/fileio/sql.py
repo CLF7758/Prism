@@ -33,7 +33,7 @@ import tempfile
 import time
 import uuid
 
-from PyQt6 import QtGui
+from PyQt6 import QtCore, QtGui
 from PyQt6.QtCore import QUrl
 
 from prism import constants
@@ -111,6 +111,13 @@ class SQLiteIO:
                 'Unreadable file kept as %s before rebuilding', backup)
         except OSError:
             logger.exception('Could not back up %s', self.filename)
+            raise
+        sources = set(self.scene.items_for_save())
+        sources.update(self.scene._prism_archive_items)
+        for item in sources:
+            source = getattr(item, '_prism_source', None)
+            if source and pathlib.Path(source[0]).resolve() == pathlib.Path(self.filename).resolve():
+                item._prism_source = (backup, source[1])
 
     def _remove_with_retry(self):
         """Delete the file we are about to rebuild, waiting out a stale lock.
@@ -265,27 +272,35 @@ class SQLiteIO:
             self.scene.category_names = legacy if isinstance(legacy, list) else []
         rows = self.fetchall(
             'SELECT items.id, type, x, y, z, scale, rotation, flip, '
-            'items.data, sqlar.data '
-            'FROM sqlar JOIN items on sqlar.item_id = items.id')
+            'items.data '
+            'FROM items '
+            'WHERE items.type = "pixmap" AND items.id IN '
+            ' (SELECT item_id FROM sqlar)')
         # Avoid OUTER JOIN for performance reasons; fetch text items
         # and referenced video items separately
         rows.extend(self.fetchall(
             'SELECT items.id, type, x, y, z, scale, rotation, flip, '
-            ' items.data, null as data '
+            ' items.data '
             'FROM items '
-            'WHERE items.type = "text" '
+            'WHERE items.type IN ("text", "path") '
             'UNION ALL '
             'SELECT items.id, type, x, y, z, scale, rotation, flip, '
-            ' items.data, null as data '
+            ' items.data '
             'FROM items '
-            'WHERE items.type = "video" AND items.id NOT IN '
-            ' (SELECT item_id FROM sqlar) '
+            'WHERE items.type = "video" '
             'UNION ALL '
             'SELECT items.id, type, x, y, z, scale, rotation, flip, '
-            ' items.data, null as data '
+            ' items.data '
             'FROM items '
-            'WHERE items.type = "glb" AND items.id NOT IN '
-            ' (SELECT item_id FROM sqlar)'))
+            'WHERE items.type = "glb"'))
+        # Video and GLB blobs are small in count; load them separately
+        # so the pixmap query stays blob-free.
+        media_blobs = {}
+        for blob_row in self.fetchall(
+                'SELECT item_id, data FROM sqlar '
+                'WHERE item_id IN (SELECT id FROM items '
+                '  WHERE type IN ("video", "glb"))'):
+            media_blobs[blob_row[0]] = blob_row[1]
         if self.worker:
             self.worker.begin_processing.emit(len(rows))
 
@@ -304,7 +319,24 @@ class SQLiteIO:
 
             if data['type'] == 'pixmap':
                 item = PrismPixmapItem(QtGui.QImage())
-                if not item.load_stored_image(row[9]):
+                self.scene._prism_archive_items.add(item)
+                # Deferred blob loading: the original bytes stay in the
+                # .prism archive until save/export/painting needs them.
+                item._prism_source = (self.filename, row[0])
+                img_w = data['data'].get('imageWidth', 0)
+                img_h = data['data'].get('imageHeight', 0)
+                loaded = True
+                if img_w and img_h:
+                    item._image_size = QtCore.QSize(img_w, img_h)
+                    item.reset_crop()
+                else:
+                    # Legacy files have no dimensions. Read one image at a
+                    # time for a preview, then release the original bytes.
+                    blob = item.original_bytes()
+                    loaded = bool(blob) and item.load_stored_image(blob)
+                    if loaded:
+                        item.release_source_blob()
+                if not loaded:
                     # 说清是**哪一个**素材。以前这里拼的是 `item.filename`，
                     # 而加载失败时那个字段常常是空的 —— 画布上就只有
                     # "Image could not be loaded: None"，看不出是谁。
@@ -319,13 +351,10 @@ class SQLiteIO:
                         f'(item {row[0]})\n'
                         + IMG_LOADING_ERROR_MSG)
                     data['type'] = PrismErrorItem.TYPE
-                else:
-                    if 'colorGroup' not in data['data']:
-                        item.analyze_color_group()
                 data['item'] = item
 
             elif data['type'] == 'video':
-                blob = row[9]
+                blob = media_blobs.get(row[0])
                 vdata = data['data']
                 if blob:
                     # Embedded video: materialize a temp file for
@@ -360,7 +389,7 @@ class SQLiteIO:
                     data['type'] = PrismErrorItem.TYPE
 
             elif data['type'] == 'glb':
-                blob = row[9]
+                blob = media_blobs.get(row[0])
                 gdata = data['data']
                 if blob:
                     # Embedded model: parsed straight from the bytes, no
@@ -430,6 +459,16 @@ class SQLiteIO:
                 self.write()
 
     def write_data(self):
+        self._batch_write = True
+        try:
+            self._write_data_batch()
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            self._batch_write = False
+
+    def _write_data_batch(self):
         self.ex('CREATE TABLE IF NOT EXISTS prism_metadata (key TEXT PRIMARY KEY, value TEXT)')
         names = list(self.scene.category_names)
         for item in self.scene.items_for_save():
@@ -460,11 +499,13 @@ class SQLiteIO:
         to_delete = to_delete - keep
 
         to_save = list(self.scene.items_for_save())
+        saved = []
+        existing_ids = set(to_delete)
         if self.worker:
             self.worker.begin_processing.emit(len(to_save))
         for i, item in enumerate(to_save):
             logger.debug(f'Saving {item} with id {item.save_id}')
-            if item.save_id:
+            if item.save_id in existing_ids:
                 self.update_item(item)
                 # `discard` 而不是 `remove`：同一个 save_id 出现两次
                 # （比如复制的图元带着原件的 id 过来）时，第二次 remove
@@ -473,20 +514,51 @@ class SQLiteIO:
                 to_delete.discard(item.save_id)
             else:
                 self.insert_item(item)
+            saved.append(item)
+            if (getattr(item, 'TYPE', None) == 'pixmap'
+                    and (item._source_path or item._prism_source)):
+                item._source_blob = None
             if self.worker:
                 self.worker.progress.emit(i)
                 if self.worker.canceled:
                     break
+        if self.worker and self.worker.canceled:
+            self.connection.commit()
+            for item in saved:
+                if getattr(item, 'TYPE', None) == 'pixmap':
+                    item._prism_source = (str(self.filename), item.save_id)
+                    item._source_path = None
+                    item._source_blob = None
+            self.worker.finished.emit(self.filename, [
+                _('Saving was canceled. Unsaved items remain on the canvas.')])
+            return
         self.delete_items(to_delete)
         self.write_board_extras()
+        self.connection.commit()
         self.ex('VACUUM')
         self.connection.commit()
+        for item in saved:
+            if getattr(item, 'TYPE', None) == 'pixmap' and item.save_id:
+                item._prism_source = (str(self.filename), item.save_id)
+                item._source_path = None
+                item._source_blob = None
         # Newly written images get their previews built in the background
         thumbnail_cache.start_background_build()
         if self.worker:
             self.worker.finished.emit(self.filename, [])
 
     def delete_items(self, to_delete):
+        deleting = set(to_delete)
+        from prism.source_store import retain_bytes
+        for item in list(self.scene._prism_archive_items):
+            source = item._prism_source
+            if (source and source[1] in deleting
+                    and pathlib.Path(source[0]).resolve() == pathlib.Path(self.filename).resolve()
+                    and not item._source_path):
+                blob = item.original_bytes()
+                if blob:
+                    item._source_path = retain_bytes(blob, '.' + (item.original_format() or 'png'))
+                    item._source_blob = None
         to_delete = [(pk,) for pk in to_delete]
         self.exmany('DELETE FROM items WHERE id=?', to_delete)
         self.exmany('DELETE FROM sqlar WHERE item_id=?', to_delete)
@@ -666,6 +738,8 @@ class SQLiteIO:
              item.scale(), item.rotation(), item.flip(),
              json.dumps(item.get_extra_save_data())))
         item.save_id = self.cursor.lastrowid
+        if getattr(item, 'TYPE', None) == 'pixmap':
+            self.scene._prism_archive_items.add(item)
 
         if hasattr(item, 'TYPE') and item.TYPE == 'video':
             # Video items: embed blob in sqlar, or reference-only (skip)
@@ -707,7 +781,8 @@ class SQLiteIO:
             # that opening this project next time does not decode it.
             thumbnail_cache.defer_preview(
                 thumbnail_cache.digest(pixmap), pixmap)
-        self.connection.commit()
+        if not getattr(self, '_batch_write', False):
+            self.connection.commit()
 
     def update_item(self, item):
         """Update item data.
@@ -723,4 +798,5 @@ class SQLiteIO:
              item.rotation(), item.flip(),
              json.dumps(item.get_extra_save_data()),
              item.save_id))
-        self.connection.commit()
+        if not getattr(self, '_batch_write', False):
+            self.connection.commit()

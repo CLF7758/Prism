@@ -34,6 +34,7 @@ them costs seconds the first time, while one file is looked at once.
 """
 
 import hashlib
+import io
 import logging
 import os
 import sqlite3
@@ -61,7 +62,7 @@ logger = logging.getLogger(__name__)
 PREVIEW_MAX_SIDE = 192
 
 #: Bump to invalidate old caches when the preview format changes.
-CACHE_VERSION = 'v2'
+CACHE_VERSION = 'v3'
 
 #: Default cap for the whole cache.
 DEFAULT_MAX_BYTES = 512 * 1024 * 1024
@@ -145,36 +146,12 @@ def decode_preview_image(blob, max_side=PREVIEW_MAX_SIDE):
     pixels) and then scales *while decoding*, so a 6000x4000 photo costs
     a 256 pixel image instead of ninety megapixels.
     """
-    buffer = QtCore.QBuffer()
-    buffer.setData(QtCore.QByteArray(blob))
-    if not buffer.open(QtCore.QIODevice.OpenModeFlag.ReadOnly):
+    from prism.image_decode import decode
+    try:
+        return decode(blob=blob, max_side=max_side) or (None, None)
+    except OSError:
+        logger.debug('Could not decode preview', exc_info=True)
         return None, None
-
-    reader = QtGui.QImageReader(buffer)
-    size = reader.size()
-    if size.isValid() and not size.isEmpty():
-        # Qt 的 QSize.scaled() 在有框时会放大，而这里只该缩小：小图
-        # 保持原样，别为了一张 40x30 的小图铺 256x192 的内存。
-        if max(size.width(), size.height()) > max_side:
-            reader.setScaledSize(size.scaled(
-                max_side, max_side,
-                QtCore.Qt.AspectRatioMode.KeepAspectRatio))
-        image = reader.read()
-        if image.isNull():
-            return None, None
-        if max(image.width(), image.height()) > max_side:
-            # The plugin ignored setScaledSize (uncommon or animated
-            # formats); shrink what came back rather than keep it.
-            image = make_preview(image, max_side)
-        return image, size
-
-    # This format cannot be sized from the header alone, so the only way
-    # to learn the size is to decode.  Do it, then shrink immediately.
-    image = reader.read()
-    if image.isNull():
-        return None, None
-    size = image.size()
-    return make_preview(image, max_side), size
 
 
 class Preview:
@@ -437,6 +414,11 @@ _build_thread = None
 def defer_preview(key, blob):
     """Remember an image whose preview still has to be built."""
     with _pending_lock:
+        if len(blob) > 16 * 1024 * 1024:
+            return
+        while _pending and (len(_pending) >= 16 or
+                            sum(len(data) for _, data in _pending) + len(blob) > 16 * 1024 * 1024):
+            _pending.pop(0)
         _pending.append((key, blob))
 
 
@@ -483,18 +465,22 @@ def _build_previews(entries):
     while True:
         for key, blob in entries:
             try:
-                # 这里刻意只用 QImage。QImageReader/QBuffer 在后台线程
-                # 还在跑、进程开始退出时会踩到正在销毁的全局状态，让一个
-                # 测试全过的进程以 0xC0000005 收场（run_tests_safe.py 就会
-                # 把 9 passed 报成 FAIL）。前台路径 load_stored_image 可以
-                # 用 decode_preview_image 换速度 —— 它在 GUI 线程里，也不会
-                # 活到进程退出之后；后台这条不行。
-                image = QtGui.QImage()
-                image.loadFromData(blob)
-                if image.isNull():
-                    continue
-                preview = make_preview(image)
-                if cache_.store(key, preview, image.width(), image.height()):
+                # Decode outside Qt's image plugins in this background
+                # thread, and keep EXIF orientation consistent with imports.
+                from PIL import Image, ImageOps
+                with Image.open(io.BytesIO(blob)) as image:
+                    width, height = image.size
+                    if image.getexif().get(274) in (5, 6, 7, 8):
+                        width, height = height, width
+                    image.draft('RGB', (PREVIEW_MAX_SIDE, PREVIEW_MAX_SIDE))
+                    small = ImageOps.exif_transpose(image)
+                    small.thumbnail((PREVIEW_MAX_SIDE, PREVIEW_MAX_SIDE))
+                    small = small.convert('RGBA')
+                    pixels = small.tobytes()
+                    preview = QtGui.QImage(
+                        pixels, small.width, small.height, small.width * 4,
+                        QtGui.QImage.Format.Format_RGBA8888).copy()
+                if cache_.store(key, preview, width, height):
                     built += 1
             except Exception:
                 # Caching is an optimisation; never let it break a session

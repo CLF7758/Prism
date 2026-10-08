@@ -218,12 +218,19 @@ def _stripped_a_top_folder(directory, staging):
         os.path.normpath(str(staging))
 
 
-def _drop_staging(staging):
+def _drop_staging(staging, view=None):
     """解压出来的临时目录：整条导入链路走完了才删。
 
     ``TemporaryDirectory`` 不能用 —— 对象一旦没人引用目录就没了，而
     素材是另一条线程异步读的。
+
+    删之前先把延迟读取的原始字节收进来 —— 导入时只记了文件路径，
+    临时目录一删就读不到了。
     """
+    if staging and view is not None:
+        for item in view.scene.items_for_save():
+            if hasattr(item, 'materialize_source'):
+                item.materialize_source()
     if staging:
         shutil.rmtree(str(staging), ignore_errors=True)
 
@@ -391,10 +398,12 @@ def _import_assets(view, plan, outcome, staging):
     files = list(plan.asset_files)
     if not files:
         _finish_import(view, plan, outcome)
-        _drop_staging(staging)
+        _drop_staging(staging, view)
         return
     before = {id(item) for item in view.scene.items_for_save()}
     pos = view.get_view_center()
+    view.undo_stack.beginMacro(_('Import assets'))
+    view._import_in_progress = True
     view.worker = fileio.ThreadedIO(fileio.load_media, files,
                                     view.mapToScene(pos), view.scene)
     view.worker.progress.connect(view.on_items_loaded)
@@ -408,9 +417,20 @@ def _import_assets(view, plan, outcome, staging):
 
 def _on_assets_loaded(view, plan, outcome, before_ids, errors, staging):
     outcome.errors.extend(errors)
-    _assign_new_assets(view, before_ids, outcome.asset_targets)
+    try:
+        # The last progress signal precedes the last queued item. Flush it
+        # before assigning canvases or measuring the batch for packing.
+        view.scene.add_queued_items()
+        _assign_new_assets(view, before_ids, outcome.asset_targets)
+        inserted = [item for item in view.scene.items_for_save()
+                    if id(item) not in before_ids]
+        view._arrange_imported_items(inserted)
+    finally:
+        view.undo_stack.endMacro()
+        view._import_in_progress = False
+        view.viewport().update()
     _finish_import(view, plan, outcome)
-    _drop_staging(staging)
+    _drop_staging(staging, view)
 
 
 def _assign_new_assets(view, before_ids, asset_targets):

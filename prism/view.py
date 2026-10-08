@@ -68,6 +68,11 @@ class PrismGraphicsView(MainControlsMixin,
         self.app = app
         self.parent = parent
         self.settings = PrismSettings()
+        self._cached_scene_bounds = None
+        self._interaction_timer = QtCore.QTimer(self)
+        self._interaction_timer.setSingleShot(True)
+        self._interaction_timer.setInterval(120)
+        self._interaction_timer.timeout.connect(self._end_interaction)
         self.keyboard_settings = KeyboardSettings()
         self.welcome_overlay = widgets.welcome_overlay.WelcomeOverlay(self)
 
@@ -118,6 +123,14 @@ class PrismGraphicsView(MainControlsMixin,
         self.undo_stack.canRedoChanged.connect(self.on_can_redo_changed)
         self.undo_stack.canUndoChanged.connect(self.on_can_undo_changed)
         self.undo_stack.cleanChanged.connect(self.on_undo_clean_changed)
+
+        # Debounce recalc_scene_rect: batch operations (import, load)
+        # fire scene.changed hundreds of times; the timer coalesces
+        # them into a single recalculation.
+        self._recalc_timer = QtCore.QTimer(self)
+        self._recalc_timer.setSingleShot(True)
+        self._recalc_timer.setInterval(0)
+        self._recalc_timer.timeout.connect(self.recalc_scene_rect)
 
         self._content_dirty = False
         self.current_canvas_id = 'default-canvas'
@@ -235,6 +248,7 @@ class PrismGraphicsView(MainControlsMixin,
             self.parent._title_bar.update_title(title)
 
     def on_scene_changed(self, region):
+        self._cached_scene_bounds = None
         if not self.scene.items():
             logger.debug('No items in scene')
             self.setTransform(QtGui.QTransform())
@@ -243,11 +257,14 @@ class PrismGraphicsView(MainControlsMixin,
             self.welcome_overlay.show()
             self.actiongroup_set_enabled('active_when_items_in_scene', False)
         else:
-            self.setFocus()
+            if self.welcome_overlay.isVisible():
+                self.setFocus()
             self.welcome_overlay.clearFocus()
             self.welcome_overlay.hide()
             self.actiongroup_set_enabled('active_when_items_in_scene', True)
-        self.recalc_scene_rect()
+        # Debounce: batch operations fire this hundreds of times;
+        # the timer coalesces into a single recalculation.
+        self._recalc_timer.start()
 
     def on_can_redo_changed(self, can_redo):
         self.actiongroup_set_enabled('active_when_can_redo', can_redo)
@@ -278,7 +295,8 @@ class PrismGraphicsView(MainControlsMixin,
     def _remove_dynamic_menu_items(self):
         """Remove all dynamically injected menu items."""
         for attr in ('_cat_menu_action', '_reset_cam_action',
-                     '_draw_menu_action', '_canvas_sep_action'):
+                     '_draw_menu_action', '_canvas_sep_action',
+                     '_ai_tag_action'):
             action = getattr(self, attr, None)
             if action:
                 self.context_menu.removeAction(action)
@@ -304,6 +322,12 @@ class PrismGraphicsView(MainControlsMixin,
         self._draw_menu_action = self.context_menu.addAction(
             "\u7ed8\u5236\u5de5\u5177")
         self._draw_menu_action.triggered.connect(self.start_draw_mode)
+
+        # AI 打标签（仅当有选中素材时显示）
+        if self.scene.selectedItems(user_only=True):
+            ai_tag_action = self.context_menu.addAction("AI 打标签")
+            ai_tag_action.triggered.connect(self.on_action_ai_tag_selected)
+            self._ai_tag_action = ai_tag_action
 
     def pick_pen_colour(self):
         """选画笔颜色（右键菜单里那项）。"""
@@ -602,6 +626,7 @@ class PrismGraphicsView(MainControlsMixin,
             # 箭头只对直线有意义；画笔画出来的是手绘轨迹，带箭头很怪
             arrow=self._arrow if is_line else ARROW_NONE,
             line_style=self._line_style)
+        self._draw_item._canvas_id = self.current_canvas_id
         self._draw_item.setZValue(9999)
         self.scene.addItem(self._draw_item)
 
@@ -666,6 +691,7 @@ class PrismGraphicsView(MainControlsMixin,
 
         logger.debug(f'Fit view: {rect}')
         self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self._recalc_timer.stop()
         self.recalc_scene_rect()
         # It seems to be more reliable when we fit a second time
         # Sometimes a changing scene rect can mess up the fitting
@@ -732,6 +758,7 @@ class PrismGraphicsView(MainControlsMixin,
         target = 1.0 / item_scale
         self.scale(target, target)
         self.centerOn(rect.center())
+        self._recalc_timer.stop()
         self.recalc_scene_rect()
         logger.debug('Actual size: view at %.1f%%, item scale %.2f',
                      target * 100.0, item_scale)
@@ -1143,6 +1170,86 @@ class PrismGraphicsView(MainControlsMixin,
         from prism.actions.export_workflow import export_images
         export_images(self, selected_only)
 
+    def on_action_export_selected_images(self):
+        from prism.actions.export_workflow import export_images
+        export_images(self, selected_only=True)
+
+    def on_action_ai_tag_selected(self):
+        """对选中的图片进行 AI 打标签"""
+        logger.info("=" * 60)
+        logger.info("AI 打标签功能启动")
+        
+        try:
+            from prism import wd14_tagger, fileio
+            from prism.widgets import PrismProgressDialog
+            logger.debug("模块导入成功")
+        except Exception as e:
+            logger.error(f"模块导入失败: {e}", exc_info=True)
+            QtWidgets.QMessageBox.critical(self, "错误", f"模块导入失败：{e}")
+            return
+        
+        # 获取选中的图片素材
+        selected = self.scene.selectedItems(user_only=True)
+        logger.info(f"选中素材总数: {len(selected)}")
+        
+        if not selected:
+            QtWidgets.QMessageBox.information(
+                self, "提示", "请先选中要打标签的图片。")
+            return
+        
+        # 过滤出有 filename 的素材（即图片）
+        image_items = [item for item in selected
+                       if getattr(item, 'TYPE', None) == 'pixmap']
+        logger.info(f"图片素材数量: {len(image_items)}")
+        
+        if not image_items:
+            QtWidgets.QMessageBox.information(
+                self, "提示", "选中的素材中没有图片。")
+            return
+        
+        # 检查模型是否可用
+        logger.info("检查 AI 模型可用性...")
+        try:
+            model_available = wd14_tagger.is_model_available()
+            logger.info(f"模型可用性: {model_available}")
+        except Exception as e:
+            logger.error(f"检查模型可用性时出错: {e}", exc_info=True)
+            model_available = False
+        
+        if not model_available:
+            logger.error("AI 模型不可用：内置模型文件缺失")
+            QtWidgets.QMessageBox.critical(
+                self, "AI 模型缺失",
+                "AI 打标签功能需要模型文件，但模型文件缺失。\n"
+                "请检查 prism/assets/ai/ 目录下是否有 model.onnx 和 selected_tags.csv 文件。")
+            return
+        
+        # 模型已存在，直接开始打标签
+        self._start_ai_tagging(image_items)
+    
+    def _on_model_download_finished(self, success):
+        """模型下载完成回调"""
+        if not success:
+            QtWidgets.QMessageBox.critical(
+                self, "下载失败",
+                "模型下载失败，请检查网络连接或手动下载。")
+            return
+        
+        # 下载成功，获取选中的图片并开始打标签
+        selected = self.scene.selectedItems(user_only=True)
+        image_items = [item for item in selected
+                       if getattr(item, 'TYPE', None) == 'pixmap']
+        if image_items:
+            self._start_ai_tagging(image_items)
+    
+    def _start_ai_tagging(self, image_items):
+        from prism.actions.ai_tag_workflow import start_tagging
+        start_tagging(self, image_items)
+
+    def _on_ai_tag_finished(self, results):
+        from prism.actions.ai_tag_workflow import apply_results
+        apply_results(self, results)
+
     def on_export_images_file_exists(self, filename):
         dlg = widgets.ExportImagesFileExistsDialog(self, filename)
         if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
@@ -1179,6 +1286,35 @@ class PrismGraphicsView(MainControlsMixin,
 
     def on_action_debuglog(self):
         widgets.DebugLogDialog(self)
+
+    def _arrange_imported_items(self, items):
+        """Pack each imported batch and keep it clear of existing content."""
+        if not items:
+            return
+        imported = set(items)
+        existing = {}
+        for item in self.scene.items_for_save():
+            if item not in imported:
+                existing.setdefault(item._canvas_id, []).append(item)
+        by_canvas = {}
+        for item in items:
+            by_canvas.setdefault(item._canvas_id, []).append(item)
+        for canvas_id, group in by_canvas.items():
+            if len(group) > 200:
+                # Keep very large imports responsive using the linear grid.
+                self.scene.arrange_square(items=group)
+            elif len(group) >= 2:
+                # Import placement is always compact, independently of the
+                # user's preferred manual arrangement command.
+                self.scene.arrange_optimal(items=group)
+            occupied = existing.get(canvas_id)
+            if occupied:
+                bounds = self.scene.itemsBoundingRect(items=group)
+                obstacles = self.scene.itemsBoundingRect(items=occupied)
+                gap = max(16, self.settings.valueOrDefault('Items/arrange_gap'))
+                if bounds.adjusted(-gap, -gap, gap, gap).intersects(obstacles):
+                    delta = QtCore.QPointF(obstacles.right() + gap - bounds.left(), 0)
+                    self.undo_stack.push(commands.MoveItemsBy(group, delta))
 
     def on_insert_images_finished(self, new_scene, filename, errors):
         """Callback for when loading of images is finished.
@@ -1226,8 +1362,14 @@ class PrismGraphicsView(MainControlsMixin,
                 self, _('Image captured from browser'))
         self._active_capture_metadata = None
         if len(new_items) <= 200:
-            for item in new_items:
-                item.setSelected(True)
+            blocked = self.scene.blockSignals(True)
+            try:
+                for item in new_items:
+                    item.setSelected(True)
+            finally:
+                self.scene.blockSignals(blocked)
+            if not blocked:
+                self.scene.selectionChanged.emit()
 
         # 拖进来的文件夹结构 → 画布结构。
         # 放在分类那段之前：那一段用完 `_existing_item_ids` 就把它清空了，
@@ -1261,13 +1403,17 @@ class PrismGraphicsView(MainControlsMixin,
             self.scene.metadata_changed.emit()
             self.category_panel.update_counts()
             self._pending_folder_categories = None
-            self._existing_item_ids = set()
-        # Skip auto-arrange for large imports to avoid freeze
-        if len(self.scene.items()) <= 200:
-            self.scene.arrange_default()
+        # 只排这次新插入的素材，不排全场（避免大图库卡死）
+        existing_ids = getattr(self, '_existing_item_ids', set())
+        newly_inserted = [i for i in self.scene.items()
+                          if hasattr(i, 'save_id') and id(i) not in existing_ids]
+        self._arrange_imported_items(newly_inserted)
+        self._existing_item_ids = set()
         self.undo_stack.endMacro()
         if new_scene:
             self.on_action_fit_scene()
+        self._import_in_progress = False
+        self.viewport().update()
         QtCore.QTimer.singleShot(0, self._process_browser_capture_queue)
 
     def enqueue_browser_capture(self, url, title='', tags=None):
@@ -1407,6 +1553,7 @@ class PrismGraphicsView(MainControlsMixin,
             filenames,
             self.mapToScene(pos),
             self.scene)
+        self._import_in_progress = True
         self.worker.progress.connect(self.on_items_loaded)
         new_scene = not self.scene.items()
         self.worker.finished.connect(
@@ -1489,9 +1636,14 @@ class PrismGraphicsView(MainControlsMixin,
             return
 
         self.scene.deselect_all_items()
-        origin = QtCore.QPointF(self.get_view_center())
-        self.undo_stack.push(
-            commands.InsertItems(self.scene, created, origin))
+        origin = self.mapToScene(self.get_view_center())
+        self.undo_stack.beginMacro(_('Import clipboard images'))
+        try:
+            self.undo_stack.push(
+                commands.InsertItems(self.scene, created, origin))
+            self._arrange_imported_items(created)
+        finally:
+            self.undo_stack.endMacro()
         for item in created:
             item.setSelected(True)
         self.scene.metadata_changed.emit()
@@ -1579,7 +1731,7 @@ class PrismGraphicsView(MainControlsMixin,
             item = self.scene.selectedItems(user_only=True)[0]
             grayscale = getattr(item, 'grayscale', False)
             actions.actions['grayscale'].qaction.setChecked(grayscale)
-        self.viewport().repaint()
+        self.viewport().update()
 
     def on_cursor_changed(self, cursor):
         if self.active_mode is None:
@@ -1588,6 +1740,28 @@ class PrismGraphicsView(MainControlsMixin,
     def on_cursor_cleared(self):
         if self.active_mode is None:
             self.viewport().unsetCursor()
+
+    @property
+    def _import_in_progress(self):
+        return getattr(self, '_import_progress_flag', False)
+
+    @_import_in_progress.setter
+    def _import_in_progress(self, value):
+        self._import_progress_flag = bool(value)
+        self.scene._import_in_progress = bool(value)
+
+    def _begin_interaction(self):
+        self.scene._interaction_in_progress = True
+        self._interaction_timer.start()
+
+    def _end_interaction(self):
+        self.scene._interaction_in_progress = False
+        self.viewport().update()
+
+    def _content_bounds(self):
+        if self._cached_scene_bounds is None:
+            self._cached_scene_bounds = self.scene.itemsBoundingRect()
+        return self._cached_scene_bounds
 
     def recalc_scene_rect(self):
         """Resize the scene rectangle so that it is always one view width
@@ -1602,7 +1776,7 @@ class PrismGraphicsView(MainControlsMixin,
             # 包围盒只算一次。itemsBoundingRect() 要遍历场景里每一项，
             # 而剖析显示这个函数在打开工程期间被调 172 次、累计 0.62 秒
             # —— 其中一半是拿同一个包围盒去取第二个角点。
-            bounds = self.scene.itemsBoundingRect()
+            bounds = self._content_bounds()
             topleft = self.mapFromScene(bounds.topLeft())
             topleft = self.mapToScene(QtCore.QPoint(
                 topleft.x() - self.size().width(),
@@ -1628,22 +1802,23 @@ class PrismGraphicsView(MainControlsMixin,
             arguments and turns it into a number, for ex. ``min`` or ``max``.
         """
 
-        topleft = self.mapFromScene(
-            self.scene.itemsBoundingRect().topLeft())
-        bottomright = self.mapFromScene(
-            self.scene.itemsBoundingRect().bottomRight())
+        bounds = self._content_bounds()
+        topleft = self.mapFromScene(bounds.topLeft())
+        bottomright = self.mapFromScene(bounds.bottomRight())
         return func(bottomright.x() - topleft.x(),
                     bottomright.y() - topleft.y())
 
     def scale(self, *args, **kwargs):
         super().scale(*args, **kwargs)
         self.scene.on_view_scale_change()
+        self._recalc_timer.stop()
         self.recalc_scene_rect()
 
     def get_scale(self):
         return self.transform().m11()
 
     def pan(self, delta):
+        self._begin_interaction()
         if not self.scene.items():
             logger.debug('No items in scene; ignore pan')
             return
@@ -1654,6 +1829,7 @@ class PrismGraphicsView(MainControlsMixin,
         vscroll.setValue(int(vscroll.value() + delta.y()))
 
     def zoom(self, delta, anchor):
+        self._begin_interaction()
         if not self.scene.items():
             logger.debug('No items in scene; ignore zoom')
             return
@@ -1805,6 +1981,8 @@ class PrismGraphicsView(MainControlsMixin,
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if event.buttons() != Qt.MouseButton.NoButton:
+            self._begin_interaction()
         self._last_canvas_pos = event.position().toPoint()
         if (self._external_drag_start is not None
                 and event.buttons() & Qt.MouseButton.LeftButton):
@@ -1997,6 +2175,7 @@ class PrismGraphicsView(MainControlsMixin,
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._recalc_timer.stop()
         self.recalc_scene_rect()
         self.welcome_overlay.resize(self.size())
         # 需求：窗口缩放或尺寸变化时工具条要重新居中。工具条不属于场景，

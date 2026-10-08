@@ -9,7 +9,7 @@ OUT = ROOT / 'packaging/licenses'
 NAMES = ['PyQt6', 'PyQt6-Qt6', 'PyQt6-WebEngine', 'PyQt6-WebEngine-Qt6',
          'PyQt6-WebEngineSubwheel-Qt6', 'PyQt6-sip', 'av', 'numpy', 'pillow',
          'lxml', 'python-docx', 'exif', 'plum-py', 'rectangle-packer',
-         'OpenImageIO', 'PyYAML', 'charset-normalizer', 'packaging']
+         'OpenImageIO', 'onnxruntime', 'PyYAML', 'charset-normalizer', 'packaging']
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)

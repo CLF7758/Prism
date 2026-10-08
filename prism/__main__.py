@@ -313,7 +313,9 @@ class PrismMainWindow(QtWidgets.QMainWindow):
         self._recovery_timer.setInterval(15000)
         self._recovery_timer.timeout.connect(self._write_recovery_snapshot)
         self._recovery_timer.start()
-        QtCore.QTimer.singleShot(0, self._offer_recovery_snapshot)
+        # 移除自动恢复弹窗：恢复功能只支持文档/脑图文字，不支持画布图片，
+        # 弹出后点 Yes 也不能真正恢复用户工作，反而造成困惑。
+        # QtCore.QTimer.singleShot(0, self._offer_recovery_snapshot)
 
         # Autosave writes the project back to its own file, so a crash or a
         # forgotten Ctrl+S costs at most one interval of work.  Projects that
@@ -994,6 +996,8 @@ class PrismMainWindow(QtWidgets.QMainWindow):
             self.view.current_canvas_id = page_id
             self.tabs.setCurrentWidget(self.canvas_page)
             self.view.category_panel._apply_filter()
+            self.filter_popover.color_host.sync_canvas()
+            self._refresh_filter_bar()
             self.view.on_action_fit_scene()
         else:
             if page_id == 'default-document':
@@ -1448,6 +1452,18 @@ def _register_file_association():
 
 
 def main():
+    if '--ai-inference-worker' in sys.argv:
+        from prism.ai_inference_worker import main as inference_main
+        return inference_main()
+    # 启用 faulthandler：ONNX / Qt 原生崩溃（segfault）时把 Python 栈写到日志
+    import faulthandler
+    _log_path = logfile_name()
+    try:
+        _fault_fd = open(_log_path, 'a', encoding='utf-8')
+        faulthandler.enable(file=_fault_fd, all_threads=True)
+    except Exception:
+        faulthandler.enable()  # fallback: 写 stderr
+
     logger.info(f'Starting {constants.APPNAME} version {constants.VERSION}')
     logger.debug('System: %s', ' '.join(platform.uname()))
     logger.debug('Python: %s', platform.python_version())

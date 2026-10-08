@@ -18,6 +18,7 @@ import logging
 import math
 from queue import Queue
 import uuid
+import weakref
 
 from PyQt6 import QtCore, QtWidgets, QtGui
 from PyQt6.QtCore import Qt
@@ -26,7 +27,7 @@ import rpack
 
 from prism import commands
 from prism.config import PrismSettings
-from prism.items import item_registry, PrismErrorItem, sort_by_filename
+from prism.items import item_registry, PrismErrorItem, PrismPixmapItem, sort_by_filename
 from prism.selection import MultiSelectItem, RubberbandItem
 from prism.tags import name_index, tag_system
 
@@ -53,6 +54,11 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         self.selectionChanged.connect(self.on_selection_change)
         self.changed.connect(self.on_change)
         self.items_to_add = Queue()
+        # Removed items can remain in the undo stack. Keep weak references so
+        # saving a deletion can preserve their deferred original bytes.
+        self._prism_archive_items = weakref.WeakSet()
+        self._import_in_progress = False
+        self._interaction_in_progress = False
         self.edit_item = None
         self.crop_item = None
         self.settings = PrismSettings()
@@ -82,17 +88,26 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         self.edit_item = None
         self.crop_item = None
         self._clear_ongoing = True
+        self._invalidate_view_bounds()
         super().clear()
         self.internal_clipboard = []
         self.rubberband_item = RubberbandItem()
         self.multi_select_item = MultiSelectItem()
         self._clear_ongoing = False
 
+    def _invalidate_view_bounds(self):
+        for view in self.views():
+            view._cached_scene_bounds = None
+
     def addItem(self, item):
         logger.debug(f'Adding item {item}')
+        self._invalidate_view_bounds()
         super().addItem(item)
+        if isinstance(item, PrismPixmapItem):
+            item._sync_grayscale_effect()
 
     def removeItem(self, item):
+        self._invalidate_view_bounds()
         logger.debug(f'Removing item {item}')
         if self.edit_item is item:
             item.exit_edit_mode(commit=False)
@@ -208,7 +223,7 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         self.undo_stack.push(
             commands.NormalizeItems(items, scale_factors))
 
-    def arrange_default(self):
+    def arrange_default(self, items=None):
         default = self.settings.valueOrDefault('Items/arrange_default')
         MAPPING = {
             'optimal': self.arrange_optimal,
@@ -217,19 +232,25 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
             'square': self.arrange_square,
         }
 
-        MAPPING[default]()
+        if items is None:
+            MAPPING[default]()
+        else:
+            MAPPING[default](items=items)
 
-    def arrange(self, vertical=False):
+    def arrange(self, vertical=False, items=None):
         """Arrange items in a line (horizontally or vertically)."""
 
         self.cancel_active_modes()
 
-        items = sort_by_filename(self.selectedItems(user_only=True))
+        if items is None:
+            items = sort_by_filename(self.selectedItems(user_only=True))
+        else:
+            items = sort_by_filename(items)
         if len(items) < 2:
             return
 
         gap = self.settings.valueOrDefault('Items/arrange_gap')
-        center = self.get_selection_center()
+        center = self.itemsBoundingRect(items=items).center()
         positions = []
         rects = []
         for item in items:
@@ -262,10 +283,11 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
                                   [r['item'] for r in rects],
                                   positions))
 
-    def arrange_optimal(self):
+    def arrange_optimal(self, items=None):
         self.cancel_active_modes()
 
-        items = self.selectedItems(user_only=True)
+        if items is None:
+            items = self.selectedItems(user_only=True)
         if len(items) < 2:
             return
 
@@ -292,19 +314,23 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
 
         # We want the items to center around the selection's center,
         # not (0, 0)
-        center = self.get_selection_center()
+        center = self.itemsBoundingRect(items=items).center()
         bounds = rpack.bbox_size(sizes, positions)
         diff = center - QtCore.QPointF(bounds[0]/2, bounds[1]/2)
         positions = [QtCore.QPointF(*pos) + diff for pos in positions]
 
         self.undo_stack.push(commands.ArrangeItems(self, items, positions))
 
-    def arrange_square(self):
+    def arrange_square(self, items=None):
         self.cancel_active_modes()
         max_width = 0
         max_height = 0
         gap = self.settings.valueOrDefault('Items/arrange_gap')
-        items = sort_by_filename(self.selectedItems(user_only=True))
+
+        if items is None:
+            items = sort_by_filename(self.selectedItems(user_only=True))
+        else:
+            items = sort_by_filename(items)
 
         if len(items) < 2:
             return
@@ -317,7 +343,7 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         # We want the items to center around the selection's center,
         # not (0, 0)
         num_rows = math.ceil(math.sqrt(len(items)))
-        center = self.get_selection_center()
+        center = self.itemsBoundingRect(items=items).center()
         diff = center - num_rows/2 * QtCore.QPointF(max_width, max_height)
 
         iter_items = iter(items)
@@ -684,23 +710,66 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         self.items_to_add.put((itemdata, selected))
 
     def add_queued_items(self):
-        """Adds items added via ``add_item_later``"""
+        """Adds items added via ``add_item_later``
 
+        All scene mutations are batched: signals are blocked and
+        viewport updates disabled during the loop so that the expensive
+        cascades (recalc_scene_rect, selection handlers) fire at most
+        once at the end instead of per-item.
+        """
+        if self.items_to_add.empty():
+            return
+
+        collected = []
         while not self.items_to_add.empty():
-            data, selected = self.items_to_add.get()
-            typ = data.pop('type')
-            cls = item_registry.get(typ)
-            if not cls:
-                # Just in case we add new item types in future versions
-                logger.warning(f'Encountered item of unknown type: {typ}')
-                cls = PrismErrorItem
-                data['data'] = {'text': f'Item of unknown type: {typ}'}
-            item = cls.create_from_data(**data)
-            # Set the values common to all item types:
-            item.update_from_data(**data)
-            self.addItem(item)
-            # Force recalculation of min/max z values:
-            item.setZValue(item.zValue())
-            if selected:
-                item.setSelected(True)
-                item.bring_to_front()
+            collected.append(self.items_to_add.get())
+        if not collected:
+            return
+
+        # Suppress per-item signal cascades during batch insertion.
+        was_blocked = self.blockSignals(True)
+        vp = None
+        updates_enabled = True
+        try:
+            views = self.views()
+            vp = views[0].viewport() if views else None
+        except Exception:
+            pass
+        if vp is not None:
+            updates_enabled = vp.updatesEnabled()
+            vp.setUpdatesEnabled(False)
+        try:
+            created = []
+            for data, selected in collected:
+                typ = data.pop('type')
+                cls = item_registry.get(typ)
+                if not cls:
+                    logger.warning(
+                        f'Encountered item of unknown type: {typ}')
+                    cls = PrismErrorItem
+                    data['data'] = {'text': f'Item of unknown type: {typ}'}
+                item = cls.create_from_data(**data)
+                item.update_from_data(**data)
+                self.addItem(item)
+                created.append((item, selected))
+
+            # Single z-value pass: update max_z/min_z from existing
+            # items, then bring selected items to front in order.
+            for item, _selected in created:
+                zv = item.zValue()
+                if zv > self.max_z:
+                    self.max_z = zv
+                if zv < self.min_z:
+                    self.min_z = zv
+            for item, selected in created:
+                if selected:
+                    self.max_z += self.Z_STEP
+                    item.setZValue(self.max_z)
+                    item.setSelected(True)
+        finally:
+            self.blockSignals(was_blocked)
+            if vp is not None:
+                vp.setUpdatesEnabled(updates_enabled)
+            if not was_blocked:
+                self.selectionChanged.emit()
+                self.changed.emit([QtCore.QRectF()])

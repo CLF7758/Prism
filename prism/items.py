@@ -21,6 +21,8 @@ from collections import defaultdict
 from functools import cached_property
 import logging
 import os
+from pathlib import Path
+import sqlite3
 import tempfile
 import time
 
@@ -52,7 +54,7 @@ _configure_media_backend()
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QVideoSink
 
 from prism import commands
-from prism import thumbnail_cache
+from prism import thumbnail_cache, image_decode
 from prism.config import PrismSettings
 from prism.constants import COLORS
 from prism.glb_preview import (FAST_QUALITY_TRIANGLES, GLBError,
@@ -303,6 +305,7 @@ class PrismItemMixin(SelectableMixin):
 
     def on_selected_change(self, value):
         if (value and self.scene()
+                and not self.scene().signalsBlocked()
                 and not self.scene().has_selection()
                 and not self.scene().active_mode is None):
             self.bring_to_front()
@@ -462,6 +465,11 @@ def release_stale_pixmaps(scene, budget_pixels=LOADED_PIXEL_BUDGET,
     have the compressed original to decode from again.  Whatever the
     user looked at last is kept, so scrolling back and forth does not
     turn into repeated decoding.
+
+    A second pass releases the compressed source bytes for items whose
+    preview is in hand and whose blob can be re-read from disk or from
+    the .prism archive.  This bounds memory for projects with tens of
+    thousands of images.
     """
     if scene is None:
         return 0
@@ -470,7 +478,7 @@ def release_stale_pixmaps(scene, budget_pixels=LOADED_PIXEL_BUDGET,
     for item in scene.items():
         if not isinstance(item, PrismPixmapItem):
             continue
-        if item.grayscale or item._source_blob is None:
+        if not item.has_original_source():
             continue
         if not item.has_full_pixmap():
             continue
@@ -478,20 +486,32 @@ def release_stale_pixmaps(scene, budget_pixels=LOADED_PIXEL_BUDGET,
         pixels = max(1, size.width() * size.height())
         loaded.append((getattr(item, '_last_painted', 0.0), pixels, item))
         total += pixels
-    if total <= budget_pixels:
-        return 0
-    loaded.sort(key=lambda entry: entry[0])
     released = 0
-    for _stamp, pixels, item in loaded[:max(0, len(loaded) - keep_recent)]:
-        if total <= budget_pixels:
-            break
-        if item.release_full_pixmap():
-            total -= pixels
-            released += 1
+    if total > budget_pixels:
+        loaded.sort(key=lambda entry: entry[0])
+        for _stamp, pixels, item in loaded[:max(0, len(loaded) - keep_recent)]:
+            if total <= budget_pixels:
+                break
+            if item.release_full_pixmap():
+                total -= pixels
+                released += 1
+    # Second pass: release compressed source bytes for items that
+    # already dropped their full pixmap and can re-read the blob
+    # on demand (via _source_path or _prism_source).
+    blob_released = 0
+    for item in scene.items():
+        if not isinstance(item, PrismPixmapItem):
+            continue
+        if item.has_full_pixmap():
+            continue
+        if item.release_source_blob():
+            blob_released += 1
     if released:
         logger.debug('Released %d full size images (%d megapixels left)',
                      released, total // (1024 * 1024))
-    return released
+    if blob_released:
+        logger.debug('Released %d source blobs', blob_released)
+    return released + blob_released
 
 
 def _schedule_budget_check(scene):
@@ -546,6 +566,13 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
 
     TYPE = 'pixmap'
     CROP_HANDLE_SIZE = 15
+    _shared_settings = None
+
+    @classmethod
+    def _get_settings(cls):
+        if cls._shared_settings is None:
+            cls._shared_settings = PrismSettings()
+        return cls._shared_settings
 
     def __init__(self, image, filename=None, **kwargs):
         super().__init__(QtGui.QPixmap.fromImage(image))
@@ -559,8 +586,12 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         # original and therefore the one piece of geometry that is
         # always valid.
         self._preview_pixmap = None
+        self._display_decode_request = None
+        self._display_decode_failed = False
         self._source_blob = None
         self._source_format = None
+        self._source_path = None
+        self._prism_source = None
         # A display adjustment is a derived preview only.  Keeping this
         # state separate from the pixmap is what lets exports distinguish
         # the untouched source from the currently visible pixels.
@@ -574,7 +605,6 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         self.is_image = True
         self.crop_mode = False
         self.init_selectable()
-        self.settings = PrismSettings()
         self.grayscale = False
         self.color_group = None
         self.dominant_color = None
@@ -618,59 +648,45 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
 
     @grayscale.setter
     def grayscale(self, value):
-        logger.trace('Setting grayscale for %s to %s', self, value)
-        if value is True and getattr(self, '_grayscale', None) is True:
-            # Already converted: rebuilding the preview walks every pixel -
-            # over a second on a 24-megapixel image - so keep the cached one.
-            # Only the True case is short-circuited; turning grayscale off
-            # still has to drop the preview.
+        value = bool(value)
+        if value == getattr(self, '_grayscale', None):
             return
         self._grayscale = value
-        if value is True:
-            # Using the grayscale image format to convert to grayscale
-            # loses an image's tranparency. So the straightworward
-            # following method gives us an ugly black replacement:
-            # img = img.convertToFormat(QtGui.QImage.Format.Format_Grayscale8)
-
-            # Instead, we will fill the background with the current
-            # canvas colour, so the issue is only visible if the image
-            # overlaps other images. The way we do it here only works
-            # as long as the canvas colour is itself grayscale,
-            # though.
-            #
-            # The painting is done into an ARGB image and converted
-            # afterwards: painting straight onto Format_Grayscale8 was
-            # observed to crash with an access violation once enough
-            # items had been created in one process, which is why the
-            # full test suite used to die in the middle of a run.
-            # Keep an alpha-bearing 32-bit buffer throughout. Converting a
-            # painted premultiplied image to Format_Grayscale8 has triggered
-            # native Qt access violations on Windows in long sessions.
-            from prism.fileio.image import adjust_display_image
-            img = adjust_display_image(
-                self.pixmap().toImage(), exposure=0.0,
-                channel='luminance')
-            self._grayscale_pixmap = QtGui.QPixmap.fromImage(img)
-
-            # Alternative methods that have their own issues:
-            #
-            # 1. Use setAlphaChannel of the resulting grayscale
-            # image. How do we get the original alpha channel? Using
-            # the whole original image also takes color values into
-            # account, not just their alpha values.
-            #
-            # 2. QtWidgets.QGraphicsColorizeEffect() with black colour
-            # on the GraphicsItem. This applys to everything the paint
-            # method does, so the selection outline/handles will also
-            # be gray. setGraphicsEffect is only available on some
-            # widgets, so we can't apply it selectively.
-            #
-            # 3. Going through every pixel and doing it manually — bad
-            # performance.
-        else:
-            self._grayscale_pixmap = None
-
+        self._grayscale_cache = None
+        app = QtWidgets.QApplication.instance()
+        if app is not None and QtCore.QThread.currentThread() == app.thread():
+            self._sync_grayscale_effect()
         self.update()
+
+    def _sync_grayscale_effect(self):
+        # Qt converts the pixels actually drawn at the current view scale.
+        # No full-resolution decode or NumPy conversion during a UI toggle.
+        # A saved image can be loaded on the IO thread. Install its QObject
+        # effect when the GUI thread adds the item to the scene.
+        current = self.graphicsEffect()
+        if self.grayscale and not isinstance(current, QtWidgets.QGraphicsColorizeEffect):
+            effect = QtWidgets.QGraphicsColorizeEffect()
+            effect.setColor(QtGui.QColor('black'))
+            effect.setStrength(1.0)
+            self.setGraphicsEffect(effect)
+        elif not self.grayscale and isinstance(current, QtWidgets.QGraphicsColorizeEffect):
+            self.setGraphicsEffect(None)
+
+    @property
+    def _grayscale_pixmap(self):
+        """Full-resolution grayscale pixels only for explicit export/sample."""
+        if not self.grayscale:
+            return None
+        if self._grayscale_cache is None:
+            from prism.fileio.image import adjust_display_image
+            image = adjust_display_image(self.pixmap().toImage(),
+                                         exposure=0.0, channel='luminance')
+            self._grayscale_cache = QtGui.QPixmap.fromImage(image)
+        return self._grayscale_cache
+
+    @_grayscale_pixmap.setter
+    def _grayscale_pixmap(self, pixmap):
+        self._grayscale_cache = pixmap
 
     def sample_color_at(self, pos):
         ipos = self.mapFromScene(pos)
@@ -701,7 +717,9 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
                 'crop': [self.crop.topLeft().x(),
                          self.crop.topLeft().y(),
                          self.crop.width(),
-                         self.crop.height()]}
+                         self.crop.height()],
+                'imageWidth': self._image_size.width(),
+                'imageHeight': self._image_size.height()}
         if self.color_group:
             data['colorGroup'] = self.color_group
         if self.dominant_color:
@@ -710,7 +728,7 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
             data['sourceFormat'] = self._source_format
         # Kept in the file so that looking for duplicates does not have to
         # hash every image again - it is the same picture either way.
-        hash_value = self.perceptual_hash
+        hash_value = self._perceptual_hash
         if hash_value is not None:
             data['hash'] = hash_value
         data.update(self.get_metadata_save_data())
@@ -740,7 +758,8 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
     def get_imgformat(self, img):
         """Determines the format for storing this image."""
 
-        formt = self.settings.valueOrDefault('Items/image_storage_format')
+        formt = self._get_settings().valueOrDefault(
+            'Items/image_storage_format')
 
         if formt == 'best':
             # Images with alpha channel and small images are stored as png
@@ -796,9 +815,14 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         preview controls change.  It is also intentionally independent of
         the current storage-format preference.
         """
+        self._grayscale_cache = None
+        self._display_decode_request = None
+        self._display_decode_failed = False
         if blob is None:
             self._source_blob = None
             self._source_format = None
+            self._source_path = None
+            self._prism_source = None
             self._preview_adjusted = False
             return
         self._source_blob = bytes(blob)
@@ -823,14 +847,72 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         return None
 
     def original_bytes(self):
-        """Return the imported bytes, or ``None`` for generated images."""
-        return self._source_blob
+        """Return the imported bytes, or ``None`` for generated images.
+
+        When the source blob was deferred (only the file path or the
+        .prism archive reference was kept during import/load), read the
+        original bytes from disk on demand.  This keeps import memory
+        usage low while still preserving the exact original file bytes
+        when saving.
+        """
+        if self._source_blob is not None:
+            return self._source_blob
+        if self._source_path and os.path.isfile(self._source_path):
+            try:
+                with open(self._source_path, 'rb') as f:
+                    self._source_blob = f.read()
+                if self._source_format is None:
+                    self._source_format = (
+                        self._format_from_filename(self._source_path)
+                        or self._format_from_bytes(self._source_blob)
+                        or 'png')
+                return self._source_blob
+            except (OSError, TypeError):
+                logger.debug('Could not read deferred source %s',
+                             self._source_path, exc_info=True)
+        if self._prism_source:
+            prism_path, item_id = self._prism_source
+            try:
+                import sqlite3
+                conn = sqlite3.connect(
+                    Path(prism_path).resolve().as_uri() + '?mode=ro', uri=True)
+                try:
+                    row = conn.execute(
+                        'SELECT data FROM sqlar WHERE item_id = ?',
+                        (item_id,)).fetchone()
+                finally:
+                    conn.close()
+                if row and row[0]:
+                    self._source_blob = row[0]
+                    if self._source_format is None:
+                        self._source_format = (
+                            self._format_from_bytes(self._source_blob)
+                            or 'png')
+                    return self._source_blob
+            except Exception:
+                logger.debug('Could not read deferred source from %s',
+                             prism_path, exc_info=True)
+        return None
 
     def original_format(self):
         return self._source_format or self._format_from_filename(self.filename)
 
     def has_original_source(self):
-        return bool(self._source_blob)
+        return bool(self._source_blob) or (
+            self._source_path and os.path.isfile(self._source_path)) or (
+            self._prism_source is not None)
+
+    def materialize_source(self):
+        """Force deferred source bytes into memory.
+
+        Call before the source file might disappear (e.g. staging
+        directory cleanup in zip imports).  After this call the blob
+        lives in ``_source_blob`` regardless of whether the file still
+        exists.
+        """
+        if self._source_blob is not None:
+            return
+        self.original_bytes()
 
     def set_preview_pixmap(self, pixmap, adjusted=True):
         """Replace display pixels without throwing away the original.
@@ -839,6 +921,9 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         destructive operation for callers that intentionally replace an
         image's contents.
         """
+        self._grayscale_cache = None
+        self._display_decode_request = None
+        self._display_decode_failed = False
         QtWidgets.QGraphicsPixmapItem.setPixmap(self, pixmap)
         if not pixmap.isNull() and self._source_blob is None:
             self._image_size = pixmap.size()
@@ -854,16 +939,30 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         preview until the image is shown large.
         """
         pixmap = QtWidgets.QGraphicsPixmapItem.pixmap(self)
-        if pixmap.isNull() and self._source_blob is not None:
+        if pixmap.isNull() and self.has_original_source():
             self._decode_source_blob()
             pixmap = QtWidgets.QGraphicsPixmapItem.pixmap(self)
         return pixmap
 
     def _decode_source_blob(self):
         """Decode the stored original; the crop is deliberately kept."""
-        pixmap = QtGui.QPixmap()
-        if not pixmap.loadFromData(self._source_blob):
+        self._grayscale_cache = None
+        self._display_decode_request = None
+        try:
+            result = image_decode.decode(*image_decode.source_snapshot(self))
+        except (OSError, sqlite3.Error):
+            logger.debug('Could not decode original image', exc_info=True)
             return False
+        if result is None:
+            return False
+        image, _size = result
+        self._display_decode_failed = False
+        pixmap = QtGui.QPixmap.fromImage(image)
+        if self._image_size != pixmap.size():
+            self.prepareGeometryChange()
+            self._image_size = pixmap.size()
+            if self.crop.isEmpty():
+                self.reset_crop()
         QtWidgets.QGraphicsPixmapItem.setPixmap(self, pixmap)
         # Decoding images is what fills up memory, so this is where the
         # budget is worth looking at.
@@ -884,16 +983,33 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         screen does not need to sit in RAM at full resolution, and can
         be decoded again when the view comes back to it.
         """
-        if self._source_blob is None or self._preview_pixmap is None:
+        if not self.has_original_source() or self._preview_pixmap is None:
             # Nothing to fall back to, or nothing was loaded from a file
-            return False
-        if self.grayscale:
-            # The grayscale image is full size as well; keep both or
-            # the item would flicker between grayscale and colour.
             return False
         if QtWidgets.QGraphicsPixmapItem.pixmap(self).isNull():
             return False
+        self._grayscale_cache = None
         QtWidgets.QGraphicsPixmapItem.setPixmap(self, QtGui.QPixmap())
+        return True
+
+    def release_source_blob(self):
+        """Drop the compressed source bytes if they can be re-read later.
+
+        Keeps the preview pixmap for painting.  The blob can be
+        re-fetched on demand via :meth:`original_bytes` from either
+        ``_source_path`` (imported from a file) or ``_prism_source``
+        (loaded from a .prism archive).
+        """
+        if self._source_blob is None:
+            return False
+        if self._preview_pixmap is None:
+            return False
+        can_reread = (
+            (self._source_path and os.path.isfile(self._source_path))
+            or self._prism_source is not None)
+        if not can_reread:
+            return False
+        self._source_blob = None
         return True
 
     def load_stored_image(self, blob):
@@ -902,7 +1018,15 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         Uses the preview cache to avoid decoding the original: what the
         canvas shows on opening is a small image anyway, and the full
         resolution one is only decoded once it is needed.
+
+        When *blob* is ``None`` the item is set up for deferred loading:
+        the caller must have set ``_prism_source`` so that
+        :meth:`original_bytes` can fetch the bytes on demand.
         """
+        if blob is None:
+            # Deferred: blob will be read from .prism archive on demand
+            # via _prism_source (set by the caller in sql.py).
+            return True
         self.set_source_blob(blob, self._source_format)
         key = thumbnail_cache.digest(blob)
         preview = thumbnail_cache.cache().load(key)
@@ -931,6 +1055,9 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         self.reset_crop()
 
     def setPixmap(self, pixmap):
+        self._grayscale_cache = None
+        self._display_decode_request = None
+        self._display_decode_failed = False
         QtWidgets.QGraphicsPixmapItem.setPixmap(self, pixmap)
         if not pixmap.isNull():
             # A new image is the full one now; any preview is stale, and
@@ -939,6 +1066,9 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
             self._preview_pixmap = None
             self._source_blob = None
             self._source_format = None
+            self._source_path = None
+            self._prism_source = None
+            self._perceptual_hash = None
             self._preview_adjusted = False
         self.reset_crop()
 
@@ -957,28 +1087,37 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         decoded, which is what makes zooming in on a big project load
         only the images that are actually looked at.
         """
-        if self.grayscale and self._grayscale_pixmap is not None:
-            return self._grayscale_pixmap, QtCore.QRectF(self.crop)
         pixmap = QtWidgets.QGraphicsPixmapItem.pixmap(self)
-        if pixmap.isNull() and self._preview_pixmap is not None:
-            preview = self._preview_pixmap
+        if not pixmap.isNull():
+            return pixmap, QtCore.QRectF(self.crop)
+        preview = self._preview_pixmap
+        if preview is not None:
             if not self._preview_is_detailed_enough(painter, preview):
-                self._decode_source_blob()
-                pixmap = QtWidgets.QGraphicsPixmapItem.pixmap(self)
-            if pixmap.isNull():
-                return preview, self._preview_source_rect(preview)
+                image_decode.request_display(self)
+            return preview, self._preview_source_rect(preview)
+        scene = self.scene()
+        busy = scene and (scene._import_in_progress or scene._interaction_in_progress)
+        if not busy and (self._source_blob or self._source_path or self._prism_source):
+            # Painting only queues immutable source references. File reads and
+            # decoding run off-thread; QPixmap creation returns to the GUI.
+            image_decode.request_display(self, thumbnail_cache.PREVIEW_MAX_SIDE)
         return pixmap, QtCore.QRectF(self.crop)
 
     def _preview_is_detailed_enough(self, painter, preview):
-        if self._source_blob is None:
-            # Nothing to fall back to, so there is no point deciding
+        scene = self.scene()
+        if scene and (scene._import_in_progress or scene._interaction_in_progress):
             return True
         size = self._image_size
         longest = max(size.width(), size.height())
         if longest <= 0:
             return True
-        shown = longest * abs(painter.combinedTransform().m11())
-        return shown <= max(preview.width(), preview.height())
+        transform = painter.combinedTransform()
+        shown = longest * (transform.m11() ** 2 + transform.m12() ** 2) ** 0.5
+        if shown <= max(preview.width(), preview.height()):
+            return True
+        # Painting must never stat a source file. A stored reference is
+        # enough to attempt rehydration; the actual read handles missing files.
+        return not (self._source_blob or self._source_path or self._prism_source)
 
     def _preview_source_rect(self, preview):
         size = self._image_size
@@ -1270,7 +1409,9 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
             # We want image smoothing, but only for images where we
             # are not zoomed in a lot. This is to ensure that for
             # example icons and pixel sprites can be viewed correctly.
-            painter.setRenderHint(painter.RenderHint.SmoothPixmapTransform)
+            scene = self.scene()
+            painter.setRenderHint(painter.RenderHint.SmoothPixmapTransform,
+                                  not (scene and scene._interaction_in_progress))
 
         if self.crop_mode:
             self.paint_debug(painter, option, widget)

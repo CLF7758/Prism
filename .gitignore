@@ -169,3 +169,8 @@ _site
 prism/assets/*.bak
 # 录屏抽帧的临时图片（tools/video_review.py 的产物）
 tools/review/
+
+/Prism-Setup-*-windows-x64.exe
+/Prism-*-source.zip
+/SHA256-*.txt
+/prism/assets/ai/model.onnx

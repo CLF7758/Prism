@@ -154,17 +154,12 @@ def _larger_than_editor_draws(blob):
     """
     if not blob:
         return False
-    # The buffer gets its own copy of the bytes.  Constructing a QBuffer from
-    # a QByteArray only borrows it, and a temporary that is collected before
-    # the reader runs takes the whole process down with it - no traceback.
-    buffer = QtCore.QBuffer()
-    buffer.setData(blob)
-    if not buffer.open(QtCore.QIODevice.OpenModeFlag.ReadOnly):
-        return False
+    from prism.image_decode import native_reader
     try:
-        size = QtGui.QImageReader(buffer).size()
-    finally:
-        buffer.close()
+        with native_reader(blob=blob) as reader:
+            size = reader.size()
+    except OSError:
+        return False
     if not size.isValid():
         return False
     return max(size.width(), size.height()) > MAX_ATTACHMENT_EDGE

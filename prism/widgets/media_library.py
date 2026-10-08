@@ -555,18 +555,13 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         changes = []
         visible = 0
         for item in self.scene.items_for_save():
-            # 标注（画笔线、文字）不参与素材筛选，也不进素材计数 ——
-            # 它们没有分类 / 标签 / 评分 / 文件名，按下面的规则算永远
-            # 是"不匹配"，开着任何筛选时会被整条藏起来。用户报的
-            # 「划线就消失」就是这么来的（见 ANNOTATION_TYPES 的说明）。
-            # 要是它已经被藏过（旧版本藏下的），这次重算就见一次放一次。
-            # （画布归属这条**不**管标注：那是绘制方向的领地，动它要
-            # 先跟他们打招呼。）
+            # Annotations ignore media filters, but still belong to one canvas.
             if getattr(item, 'TYPE', '') in ANNOTATION_TYPES:
-                if not item.isVisible():
-                    changes.append((item, True))
+                canvas = self._item_canvas(item) or 'default-canvas'
+                show = canvas == current_canvas
+                if item.isVisible() != show:
+                    changes.append((item, show))
                 continue
-            # 素材的第一步：它属不属于当前这个画布。
             show = True
             canvas = self._item_canvas(item)
             if canvas is not None and canvas in known_canvases:

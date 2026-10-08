@@ -16,7 +16,7 @@
 import logging
 import os.path
 
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 from prism import commands
 from prism.config import PrismSettings
@@ -77,6 +77,45 @@ def save_prism(filename, scene, create_new=False, worker=None):
     logger.info('End save')
 
 
+def _load_image_item(filename):
+    local = filename if isinstance(filename, str) else (
+        filename.toLocalFile() if filename.isLocalFile() else None)
+    if local and os.path.isfile(local):
+        from prism.source_store import retain_file
+        from prism.thumbnail_cache import PREVIEW_MAX_SIDE
+        try:
+            retained = retain_file(local)
+        except OSError:
+            logger.exception('Could not preserve imported source %s', local)
+            return None
+        reader = QtGui.QImageReader(retained)
+        reader.setAutoTransform(True)
+        size = reader.size()
+        if size.isValid() and not size.isEmpty():
+            rotation = bool(reader.transformation().value & 4)
+            if max(size.width(), size.height()) > PREVIEW_MAX_SIDE:
+                reader.setScaledSize(size.scaled(
+                    PREVIEW_MAX_SIDE, PREVIEW_MAX_SIDE,
+                    QtCore.Qt.AspectRatioMode.KeepAspectRatio))
+            image = reader.read()
+            if not image.isNull():
+                if rotation:
+                    size.transpose()
+                item = PrismPixmapItem(QtGui.QImage(), os.path.normpath(local))
+                item._preview_pixmap = QtGui.QPixmap.fromImage(image)
+                item._image_size = size
+                item._source_path = retained
+                item.reset_crop()
+                return item
+    image, name = load_image(filename)
+    if image.isNull():
+        return None
+    item = PrismPixmapItem(image, name)
+    if local and os.path.isfile(local):
+        item._source_path = retained
+    return item
+
+
 def load_images(filenames, pos, scene, worker):
     """Add images to existing scene."""
 
@@ -85,18 +124,16 @@ def load_images(filenames, pos, scene, worker):
     worker.begin_processing.emit(len(filenames))
     for i, filename in enumerate(filenames):
         logger.info(f'Loading image from file {filename}')
-        img, filename = load_image(filename)
+        item = _load_image_item(filename)
         worker.progress.emit(i)
-        if img.isNull():
+        if item is None:
             logger.info(f'Could not load file {filename}')
             errors.append(filename)
             continue
 
-        item = PrismPixmapItem(img, filename)
-        item.set_source_blob(_read_local_source(filename))
-        item.analyze_color_group()
         item.set_pos_center(pos)
-        scene.add_item_later({'item': item, 'type': 'pixmap'}, selected=True)
+        scene.add_item_later({'item': item, 'type': 'pixmap'},
+                             selected=len(filenames) <= 200)
         items.append(item)
         if worker.canceled:
             break
@@ -181,7 +218,7 @@ def load_media(filenames, pos, scene, worker):
             item._is_reference = not embed
             item.set_pos_center(pos)
             scene.add_item_later(
-                {'item': item, 'type': 'video'}, selected=True)
+                {'item': item, 'type': 'video'}, selected=len(filenames) <= 200)
             items.append(item)
         elif ext in GLB_EXTENSIONS:
             logger.info(f'Loading 3D model from file {local_path}')
@@ -191,25 +228,24 @@ def load_media(filenames, pos, scene, worker):
                 continue
             item.set_pos_center(pos)
             scene.add_item_later(
-                {'item': item, 'type': 'glb'}, selected=True)
+                {'item': item, 'type': 'glb'}, selected=len(filenames) <= 200)
             items.append(item)
         else:
             logger.info(f'Loading image from file {filename}')
-            img, fn = load_image(filename)
-            if img.isNull():
+            item = _load_image_item(filename)
+            if item is None:
                 logger.info(f'Could not load file {filename}')
                 errors.append(str(filename))
                 continue
-            item = PrismPixmapItem(img, fn)
-            item.set_source_blob(_read_local_source(local_path))
             item.set_pos_center(pos)
             scene.add_item_later(
-                {'item': item, 'type': 'pixmap'}, selected=True)
+                {'item': item, 'type': 'pixmap'}, selected=len(filenames) <= 200)
             items.append(item)
 
         if worker.canceled:
             break
-        worker.msleep(20)
+        if (i + 1) % 50 == 0:
+            worker.msleep(20)
 
     scene.undo_stack.push(
         commands.InsertItems(scene, items, ignore_first_redo=True))

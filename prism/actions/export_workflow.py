@@ -135,14 +135,18 @@ def export_images(view, selected_only=False):
     这个函数只做界面该做的三件事：问用户、照计划执行、显示进度。
     「导哪些、用哪个导出器、会不会重新编码」都问 `ExportService`。
     """
+    service = view.export_service
+    items = [item for item in service.items_for(selected_only=selected_only)
+             if getattr(item, 'TYPE', None) == 'pixmap']
+    if not items:
+        widgets.PrismNotification(view, _('No exportable files selected'))
+        return
     mode = view._ask_export_mode()
     if mode is None:
         return
 
     target = (ExportTarget.ADJUSTED if mode == 'adjusted'
               else ExportTarget.ORIGINAL)
-    service = view.export_service
-    items = service.items_for(selected_only=selected_only)
 
     try:
         plan = service.plan(target, items=items)

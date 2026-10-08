@@ -23,6 +23,17 @@ jobs:
         run: |
           python -m pip install -r requirements/windows-lock.txt -r requirements/build.txt
           python -m pip install --no-deps -e .
+      - name: Restore pinned bundled AI model
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $manifest = Get-Content prism/assets/ai/model-manifest.json -Raw | ConvertFrom-Json
+          gh release download $manifest.release_tag --repo $env:GITHUB_REPOSITORY --pattern $manifest.release_asset --dir prism/assets/ai
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled model download failed' }
+          Move-Item -LiteralPath "prism/assets/ai/$($manifest.release_asset)" -Destination "prism/assets/ai/$($manifest.filename)"
+          $actual = (Get-FileHash "prism/assets/ai/$($manifest.filename)" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $manifest.sha256) { throw 'Bundled model checksum mismatch' }
       - name: Build installer
         shell: pwsh
         run: |

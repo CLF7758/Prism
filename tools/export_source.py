@@ -11,7 +11,7 @@ FILES = ['README.md', 'README.en.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY.md',
          'codecov.yml', '启动Prism源码版.bat']
 
 def main():
-    out = ROOT / 'release/Prism-0.3.4-source.zip'
+    out = ROOT / 'release/Prism-0.3.5-source.zip'
     out.parent.mkdir(exist_ok=True)
     paths = [ROOT / name for name in FILES]
     for directory in DIRECTORIES:

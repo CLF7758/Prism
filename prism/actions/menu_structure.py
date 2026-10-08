@@ -31,6 +31,7 @@ menu_structure = [
             'save',
             'save_as',
             'export_images',
+            'export_selected_images',
             'import_document',
             'import_mindmap',
             'clipboard_inbox',

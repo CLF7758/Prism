@@ -190,32 +190,12 @@
     ]
   },
   {
-    "name": "PyYAML",
-    "version": "6.0.3",
-    "license": "MIT",
-    "project_urls": [
-      "Bug Tracker, https://github.com/yaml/pyyaml/issues",
-      "CI, https://github.com/yaml/pyyaml/actions",
-      "Documentation, https://pyyaml.org/wiki/PyYAMLDocumentation",
-      "Mailing lists, http://lists.sourceforge.net/lists/listinfo/yaml-core",
-      "Source Code, https://github.com/yaml/pyyaml"
-    ],
+    "name": "onnxruntime",
+    "version": "1.19.2",
+    "license": "MIT License",
+    "project_urls": [],
     "notices": [
-      "pyyaml-6.0.3.dist-info__licenses__LICENSE"
-    ]
-  },
-  {
-    "name": "charset-normalizer",
-    "version": "3.5.1",
-    "license": "MIT",
-    "project_urls": [
-      "Changelog, https://github.com/jawah/charset_normalizer/blob/master/CHANGELOG.md",
-      "Documentation, https://charset-normalizer.readthedocs.io/",
-      "Code, https://github.com/jawah/charset_normalizer",
-      "Issue tracker, https://github.com/jawah/charset_normalizer/issues"
-    ],
-    "notices": [
-      "charset_normalizer-3.5.1.dist-info__licenses__LICENSE"
+      "onnxruntime__LICENSE"
     ]
   },
   {

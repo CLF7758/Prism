@@ -387,6 +387,9 @@ class ImagesToDirectoryExporter(ExporterBase):
                 self.handle_export_error(path, e, worker)
                 return
 
+            if getattr(item, '_source_path', None) or getattr(item, '_prism_source', None):
+                item._source_blob = None
+
             self.emit_progress(worker, i)
 
         self.emit_finished(worker, self.dirname, [])
