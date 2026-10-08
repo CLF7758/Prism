@@ -59,7 +59,7 @@ Format support depends on file contents and the available decoder. PSD support d
 ## Windows installation
 
 1. Open this repository's **Releases** page.
-2. Download `Prism-Setup-0.3.4-windows-x64.exe`.
+2. Download `Prism-Setup-0.3.5-windows-x64.exe`.
 3. Run the installer and choose an installation directory. A desktop shortcut is optional.
 4. Launch Prism from the Start menu or open a `.prism` project.
 

@@ -44,6 +44,24 @@ jobs:
           & $compiler packaging/Prism.iss
           if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
           Get-FileHash release/*.exe -Algorithm SHA256 | Format-List | Out-File release/SHA256.txt
+      - name: Validate packaged application
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          $smokeDir = Join-Path $env:RUNNER_TEMP 'prism-exe-smoke'
+          New-Item -ItemType Directory -Path $smokeDir -Force | Out-Null
+          $exe = (Resolve-Path 'dist/Prism/Prism.exe').Path
+          $process = Start-Process -FilePath $exe -ArgumentList @('--settings-dir', $smokeDir) -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 10
+          if ($process.HasExited) { throw "Packaged application exited during startup: $($process.ExitCode)" }
+          Stop-Process -Id $process.Id
+          $logs = Get-ChildItem $smokeDir -Filter '*.log' -Recurse
+          if (!$logs) { throw 'Packaged application did not create a startup log' }
+          $bad = $logs | Select-String -Pattern 'Unhandled exception|Traceback|ModuleNotFoundError'
+          if ($bad) { throw "Packaged startup errors: $bad" }
+          $model = 'dist/Prism/_internal/prism/assets/ai/model.onnx'
+          $expected = (Get-Content prism/assets/ai/model-manifest.json -Raw | ConvertFrom-Json).sha256
+          if ((Get-FileHash $model -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Packaged model checksum mismatch' }
       - name: Export matching project source
         run: git archive --format=zip --output=release/Prism-source.zip HEAD
       - name: Save reviewable artifacts

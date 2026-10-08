@@ -59,7 +59,7 @@ Prism 是面向插画、设计、建模和内容创作的桌面工作空间。�
 ## Windows 安装
 
 1. 打开本仓库的 **Releases** 页面。
-2. 下载 `Prism-Setup-0.3.4-windows-x64.exe`。
+2. 下载 `Prism-Setup-0.3.5-windows-x64.exe`。
 3. 双击安装，选择安装目录；可选创建桌面快捷方式。
 4. 从开始菜单启动 Prism，或双击 `.prism` 项目文件。
 
