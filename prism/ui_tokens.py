@@ -88,6 +88,11 @@ TREE_PADDING = 8
 # ── §5.1 默认深色主题 ────────────────────────────────────────────────
 
 COLOURS_DARK = {
+    'sidebar-bg': '#20262F',
+    'sidebar-input': '#192129',
+    'sidebar-border': '#35414D',
+    'sidebar-selected': '#3B424E',
+    'sidebar-muted': '#929AA6',
     'app-bg': '#191A1D',                # 应用底色、画布工作台
     'panel-bg': '#222327',              # 左右栏
     'toolbar-bg': '#25262B',            # 头部、工具栏
@@ -123,6 +128,11 @@ COLOURS_DARK = {
 # 纸张 Token 不变；primary-* 与深色一致。
 
 COLOURS_LIGHT = {
+    'sidebar-bg': '#F1F4F7',
+    'sidebar-input': '#FFFFFF',
+    'sidebar-border': '#D7DCE4',
+    'sidebar-selected': '#DDE4EE',
+    'sidebar-muted': '#5F6878',
     'app-bg': '#F1F2F5',
     'panel-bg': '#F7F8FA',
     'toolbar-bg': '#FAFBFC',

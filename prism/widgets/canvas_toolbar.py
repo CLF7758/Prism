@@ -6,6 +6,28 @@ from prism.items import COLOR_GROUPS, ARROW_END, ARROW_NONE
 from prism.widgets.components.icons import icon
 
 
+class ReadableComboBox(QtWidgets.QComboBox):
+    """Popup width is measured independently from the compact closed control."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        popup = QtWidgets.QListView()
+        popup.setTextElideMode(Qt.TextElideMode.ElideNone)
+        popup.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setView(popup)
+        popup.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.setItemDelegate(QtWidgets.QStyledItemDelegate(self))
+        self.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToContents)
+
+    def showPopup(self):
+        metrics = self.fontMetrics()
+        width = max(self.width(), max((metrics.horizontalAdvance(self.itemText(i)) for i in range(self.count())), default=0) + 48)
+        self.view().setMinimumWidth(width)
+        super().showPopup()
+        self.view().setTextElideMode(Qt.TextElideMode.ElideNone)
+        frame = self.view().window()
+        frame.resize(max(frame.width(), width + 8), frame.height())
+
+
 class ToolScrollArea(QtWidgets.QScrollArea):
     def wheelEvent(self, event):
         bar = self.horizontalScrollBar()
@@ -78,16 +100,16 @@ class CanvasToolbar(QtWidgets.QWidget):
         self.swatch = self.button(row, '笔触颜色', view.pick_pen_colour)
         self.swatch.setObjectName('strokeSwatch')
         self.swatch.setFixedSize(26, 26)
-        self.width_combo = QtWidgets.QComboBox()
+        self.width_combo = ReadableComboBox()
         self.width_combo.setToolTip('笔触宽度（0.5–50 px）')
-        self.width_combo.setFixedWidth(58)
+        self.width_combo.setFixedWidth(96)
         for width in (1, 2, 4, 8, 16, 24):
             self.width_combo.addItem(f'{width} px', float(width))
         self.width_combo.addItem('自定义…', None)
         self.width_combo.activated.connect(self.choose_width)
         row.addWidget(self.width_combo)
-        self.style_combo = QtWidgets.QComboBox()
-        self.style_combo.setFixedWidth(58)
+        self.style_combo = ReadableComboBox()
+        self.style_combo.setFixedWidth(80)
         self.style_combo.setToolTip('线型')
         for label, value in [('实线', 'solid'), ('虚线', 'dashed'), ('点线', 'dotted')]:
             self.style_combo.addItem(label, value)

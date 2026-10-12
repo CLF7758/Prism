@@ -208,7 +208,11 @@ class ExportService:
                 chosen = picker()
             return [i for i in chosen if hasattr(i, 'save_id')]
         getter = getattr(self._scene, 'items_for_save', None)
-        return list(getter()) if callable(getter) else []
+        if not callable(getter):
+            return []
+        # 回收站里的素材不导出（方案 §7：软删除的素材对导出不可见）。
+        return [i for i in getter()
+                if getattr(i, '_deleted_at', None) is None]
 
     # ── 出计划 ─────────────────────────────────────────────────
 

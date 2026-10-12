@@ -311,7 +311,8 @@ def collect_sources(scene, scope, current_canvas_id=None, selected=(),
     from prism.items import PrismPixmapItem
 
     everything = [item for item in scene.items_for_save()
-                  if isinstance(item, PrismPixmapItem)]
+                  if isinstance(item, PrismPixmapItem)
+                  and getattr(item, '_deleted_at', None) is None]
 
     if scope == ScanScope.SELECTION:
         chosen = [item for item in selected

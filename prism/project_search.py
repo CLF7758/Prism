@@ -107,6 +107,9 @@ def search_project(scene, service, query, panels=(), tag_expression='', page_rec
                     walk(child, indices + (index,))
             walk(content)
     for item in scene.items_for_save():
+        # 回收站里的素材不进搜索结果（方案 §7：软删除的素材对搜索不可见）。
+        if getattr(item, '_deleted_at', None) is not None:
+            continue
         canvas_id = getattr(item, '_canvas_id', None)
         if canvas_id in deleted_pages:
             continue

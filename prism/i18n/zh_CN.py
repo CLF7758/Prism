@@ -199,6 +199,11 @@ zh_CN = {
     'Insert items': '插入项目',
     'Delete items': '删除项目',
     'Move items': '移动项目',
+    # 阶段 C 回收站软删除新增的 undo 文案 / 确认框，补中文翻译。
+    'Move items to trash': '把素材移入回收站',
+    'Restore items from trash': '从回收站还原素材',
+    'Move the {count} selected photo(s) to the trash?':
+        '把选中的 {count} 张图片移入回收站？',
     'Scale items': '缩放项目',
     'Rotate items': '旋转项目',
     'Normalize items': '标准化项目',

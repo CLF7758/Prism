@@ -453,7 +453,14 @@ actions = ActionList([
         id='show_titlebar',
         text=_('Show &Title Bar'),
         checkable=True,
-        checked=True,
+        # 需求 4 / 方案 §9：默认无边框（PureRef 那种没有系统白条的观感）。
+        # 这里必须 checked=False —— 之前是 True，会在启动时触发
+        # on_action_show_titlebar(True) 把系统原生标题栏（那条白条）放回来，
+        # 还会 destroy/create 窗口句柄。改成 False 后新建 QAction 状态不变、
+        # 不再触发回调，白色标题栏就不会出现。无边框外壳由 window_shell 的
+        # WM_NCCALCSIZE 实现，保留原生缩放/贴靠/阴影。此动作没有进任何菜单
+        # （menu_structure 里没有它），仅作代码内的开关保留。
+        checked=False,
         callback='on_action_show_titlebar',
     ),
     Action(

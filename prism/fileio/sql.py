@@ -114,6 +114,10 @@ class SQLiteIO:
             raise
         sources = set(self.scene.items_for_save())
         sources.update(self.scene._prism_archive_items)
+        for error in self.scene.items_by_type(PrismErrorItem.TYPE):
+            source = getattr(error, '_asset_source', None)
+            if source and pathlib.Path(source[0]).resolve() == pathlib.Path(self.filename).resolve():
+                error._asset_source = (backup, source[1])
         for item in sources:
             source = getattr(item, '_prism_source', None)
             if source and pathlib.Path(source[0]).resolve() == pathlib.Path(self.filename).resolve():
@@ -351,6 +355,7 @@ class SQLiteIO:
                         f'(item {row[0]})\n'
                         + IMG_LOADING_ERROR_MSG)
                     data['type'] = PrismErrorItem.TYPE
+                    data['data']['_asset_source'] = (self.filename, row[0])
                 data['item'] = item
 
             elif data['type'] == 'video':
@@ -470,6 +475,8 @@ class SQLiteIO:
 
     def _write_data_batch(self):
         self.ex('CREATE TABLE IF NOT EXISTS prism_metadata (key TEXT PRIMARY KEY, value TEXT)')
+        self.ex('INSERT OR REPLACE INTO prism_metadata VALUES (?, ?)',
+                ('library_queries', json.dumps(getattr(self.scene, 'library_queries', []), ensure_ascii=False)))
         names = list(self.scene.category_names)
         for item in self.scene.items_for_save():
             for name in getattr(item, '_categories', []):
@@ -491,6 +498,32 @@ class SQLiteIO:
                 ('tag_system', json.dumps(
                     tag_system(self.scene).to_dict(), ensure_ascii=False)))
         self.connection.commit()
+        for error in self.scene.items_by_type(PrismErrorItem.TYPE):
+            source = getattr(error, '_asset_source', None)
+            if not source:
+                continue
+            row = self.fetchone('SELECT id FROM items WHERE id=?', (error.original_save_id,))
+            same_archive = pathlib.Path(source[0]).resolve() == pathlib.Path(self.filename).resolve()
+            if same_archive and row:
+                target_id = error.original_save_id
+            else:
+                with sqlite3.connect('file:' + pathlib.Path(source[0]).resolve().as_posix() + '?mode=ro', uri=True) as original:
+                    record = original.execute('SELECT type,x,y,z,scale,rotation,flip,data FROM items WHERE id=?', (source[1],)).fetchone()
+                    blob = original.execute('SELECT name,mode,mtime,sz,data FROM sqlar WHERE item_id=?', (source[1],)).fetchone()
+                if not record or not blob:
+                    raise ValueError('Cannot preserve damaged asset: original archive record is missing')
+                self.ex('INSERT INTO items(type,x,y,z,scale,rotation,flip,data) VALUES (?,?,?,?,?,?,?,?)', record)
+                target_id = self._cursor.lastrowid
+                self.ex('INSERT INTO sqlar(name,item_id,mode,mtime,sz,data) VALUES (?,?,?,?,?,?)',
+                        (f'{target_id}-' + (blob[0] or 'damaged-image'), target_id, *blob[1:]))
+                error.original_save_id = target_id
+                error._asset_source = (self.filename, target_id)
+            metadata = dict(error._original_asset_metadata)
+            metadata.pop('deletedAt', None)
+            metadata.pop('_asset_source', None)
+            metadata.pop('text', None)
+            metadata.update(error.get_metadata_save_data())
+            self.ex('UPDATE items SET data=? WHERE id=?', (json.dumps(metadata), target_id))
         to_delete = {row[0] for row in self.fetchall('SELECT id from ITEMS')}
         # We don't want to touch existing items that are displayed as errors:
         keep = {item.original_save_id
@@ -572,6 +605,17 @@ class SQLiteIO:
         single self contained file: dragging an image into the note embeds
         it here instead of pointing at a path on disk.
         """
+        self.scene.library_queries = []
+        try:
+            row = self.fetchone("SELECT value FROM prism_metadata WHERE key='library_queries'")
+            value = json.loads(row[0]) if row and row[0] else []
+            if isinstance(value, list):
+                self.scene.library_queries = [q for q in value if isinstance(q, dict) and isinstance(q.get('title'), str)
+                    and isinstance(q.get('text', ''), str) and isinstance(q.get('tag_expression', ''), str)
+                    and isinstance(q.get('rating', 0), int) and 0 <= q.get('rating', 0) <= 5]
+        except (sqlite3.OperationalError, ValueError, TypeError):
+            pass
+
         self.scene.note_html = ''
         self.scene.attachments = {}
         self.scene.mindmap_tree = None

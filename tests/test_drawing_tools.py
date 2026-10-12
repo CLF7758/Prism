@@ -21,6 +21,11 @@ def view(qapp):
 
     host = QtWidgets.QMainWindow()
     result = PrismGraphicsView(qapp, host)
+    # 显式把宿主窗口显示出来。以前这里靠「show_titlebar 动作在初始化时
+    # 副作用调用 parent.show()」碰巧让 host 可见；需求 4 把该动作默认值
+    # 改成 unchecked 后副作用消失，fixture 必须自己建立"窗口已显示"这个
+    # 前提，isVisible() 断言才有意义。
+    host.show()
     yield result
     host.close()
 

@@ -41,7 +41,9 @@ def test_filter_and_sidebar_remain_accessible_when_narrow(main_window, qapp):
     window._apply_responsive_panels()
     bar = window.canvas_toolbar
     assert bar.rect().contains(bar.filter_button.geometry())
-    assert window._edge_handles['right'].isVisible()
+    assert window._right_column.isVisible()
+    assert window._window_controls.parentWidget() is window._right_header
+    assert not hasattr(window, '_edge_handles')
     bar.filter_button.click()
     assert window.filter_popover.isVisible()
     QtTest.QTest.keyClick(window, QtCore.Qt.Key.Key_Escape)
@@ -75,3 +77,60 @@ def test_non_canvas_has_own_chrome_and_no_material_inspector(main_window, qapp):
     qapp.processEvents()
     assert window.canvas_toolbar.isVisible()
     assert window.view._detail_panel.isVisible()
+
+
+def test_canvas_toolbar_is_top_row_and_popups_show_full_labels(main_window, qapp):
+    from PyQt6 import QtWidgets
+    w = main_window
+    w.resize(1440, 900)
+    w.show()
+    qapp.processEvents()
+    bar = w.canvas_toolbar
+    assert w.filter_bar.isHidden()
+    assert w._eagle_header_stack.currentWidget() is bar
+    assert bar.mapTo(w._centre_column, QtCore.QPoint()).y() == 0
+    for combo in (bar.width_combo, bar.style_combo):
+        combo.showPopup()
+        qapp.processEvents()
+        assert combo.view().textElideMode() == QtCore.Qt.TextElideMode.ElideNone
+        text_width = max(combo.fontMetrics().horizontalAdvance(combo.itemText(i)) for i in range(combo.count()))
+        assert combo.view().viewport().width() >= text_width + 28
+        assert combo.style().subControlRect(QtWidgets.QStyle.ComplexControl.CC_ComboBox, _combo_option(combo), QtWidgets.QStyle.SubControl.SC_ComboBoxEditField, combo).width() >= combo.fontMetrics().horizontalAdvance(combo.currentText())
+        combo.hidePopup()
+
+
+def _combo_option(combo):
+    from PyQt6 import QtWidgets
+    option = QtWidgets.QStyleOptionComboBox()
+    combo.initStyleOption(option)
+    return option
+
+
+def test_left_sidebar_has_no_removed_controls_and_empty_rows(main_window):
+    from prism.widgets.resource_tree_model import NODE_TYPE_ROLE
+    panel = main_window.view.category_panel
+    assert 'random' not in panel._nav_buttons
+    assert not hasattr(panel, 'smart_folders')
+    assert panel.filter_button.isHidden()
+    model = panel.resource_tree.model()
+    for row in range(model.rowCount()):
+        section = model.index(row, 0)
+        for child in range(model.rowCount(section)):
+            index = model.index(child, 0, section)
+            if index.data(NODE_TYPE_ROLE) == 'blank':
+                assert panel.resource_tree.isRowHidden(child, section)
+        real_children = [model.index(child, 0, section) for child in range(model.rowCount(section)) if model.index(child, 0, section).data(NODE_TYPE_ROLE) != 'blank']
+        assert model.hasChildren(section) == bool(real_children)
+
+
+def test_recent_files_are_in_hamburger_menu(main_window, tmp_path):
+    path = tmp_path / 'example.prism'
+    path.write_bytes(b'project')
+    main_window.view.settings.update_recent_files(str(path))
+    menu = main_window._eagle_menu()
+    recent = menu.actions()[0].menu()
+    assert recent is main_window.view._recent_files_submenu
+    assert [a.text() for a in recent.actions()] == ['example.prism']
+    overlay = main_window.view.welcome_overlay
+    overlay.show()
+    assert overlay.files_widget.isHidden()

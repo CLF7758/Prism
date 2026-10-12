@@ -118,6 +118,22 @@ QMenuBar::item:pressed {
     background-color: #79AEFF;
 }
 
+/* ── 无边框标题栏控制按钮（方案 §9）─────────────────────── */
+/* 复用深色菜单栏右上角，放最小化 / 最大化-还原 / 关闭三个按钮。 */
+QWidget#titleBarCorner { background: transparent; }
+QToolButton#titleBarMin, QToolButton#titleBarMax, QToolButton#titleBarClose {
+    background: transparent; border: none; border-radius: 0px;
+    color: #E7E9ED; font-size: 13px;
+}
+QToolButton#titleBarMin:hover, QToolButton#titleBarMax:hover {
+    background-color: #30333A;
+}
+QToolButton#titleBarClose:hover {
+    background-color: #E81123; color: #FFFFFF;
+}
+QToolButton#titleBarMin:pressed, QToolButton#titleBarMax:pressed,
+QToolButton#titleBarClose:pressed { background-color: #79AEFF; }
+
 /* ── Menus ──────────────────────────────────────────────── */
 QMenu {
     background-color: #2A2C32;
@@ -811,8 +827,106 @@ QToolButton[uiRole="rating"]:hover { background: #30333A; }
 QStatusBar { background: #25262B; padding: 0 8px; }
 QFrame#inspectorHeader { background: #222327; border-bottom: 1px solid #363940; }
 QFrame#inspectorHeader QLabel { background: transparent; }
-QWidget#inspectorBody { background: #222327; }
 QFrame#inspectorHeader QLabel[uiRole="sectionTitle"] { font-size: 14px; font-weight: 600; }
+QWidget#inspectorBody { background: #222327; }
 QWidget#prismInspector QLabel#inspectorPreview { border-radius: 6px; background: #191A1D; }
+
+/* Eagle-inspired library and inspector. Scoped to keep the canvas intact. */
+QWidget#prismSidebar, QWidget#prismInspector, QWidget#inspectorBody {
+    background: #20262F;
+}
+QFrame#inspectorHeader {
+    background: transparent; border: none;
+}
+QWidget#prismSidebar QLabel[uiRole="treeSection"] {
+    color: #929AA6; font-size: 12px; font-weight: 400;
+    padding: 10px 6px 0px 6px;
+}
+QWidget#prismSidebar QLineEdit, QWidget#prismInspector QLineEdit,
+QWidget#prismInspector QTextEdit {
+    background: #192129; border: 1px solid #35414D;
+    border-radius: 5px; padding: 6px 9px; color: #E7E9ED;
+    selection-background-color: #263E5A;
+}
+QWidget#prismSidebar QLineEdit:focus, QWidget#prismInspector QLineEdit:focus,
+QWidget#prismInspector QTextEdit:focus { border: 1px solid #79AEFF; }
+QWidget#prismSidebar QLineEdit:disabled, QWidget#prismInspector QLineEdit:disabled,
+QWidget#prismInspector QTextEdit:disabled { color: #727883; }
+QToolButton#libraryNav {
+    background: transparent; border: none; border-radius: 4px;
+    text-align: left; padding: 2px 7px; font-size: 13px;
+}
+QToolButton#libraryNav:hover { background: #30333A; }
+QToolButton#libraryNav:checked { background: #3B424E; color: #E7E9ED; }
+QToolButton#sidebarFilter {
+    background: #192129; border: 1px solid #35414D;
+    border-radius: 5px; text-align: left; padding: 4px 8px;
+    color: #929AA6;
+}
+QToolButton#sidebarFilter:hover, QToolButton#sidebarFilter:checked { color: #E7E9ED; background: #30333A; }
+QTreeView#resourceTree {
+    background: transparent; border: none; font-size: 13px;
+    outline: none; show-decoration-selected: 1;
+}
+QTreeView#resourceTree::item { padding: 2px 4px; border: none; border-radius: 4px; }
+QTreeView#resourceTree::item:hover { background: #30333A; }
+QTreeView#resourceTree::item:selected { background: #3B424E; color: #E7E9ED; }
+QFrame#inspectorHeader QLabel[uiRole="sectionTitle"] {
+    color: #929AA6; font-size: 12px; font-weight: 400;
+}
+QWidget#prismInspector QLabel[uiRole="inspectorSection"] {
+    border-top: 1px solid #35414D; padding-top: 14px;
+    padding-bottom: 3px; color: #929AA6; font-weight: 400;
+}
+QWidget#prismInspector QLabel#inspectorPreview { background: transparent; border: none; }
+QWidget#prismInspector QCheckBox#inspectorTagChip {
+    background: #192129; border: 1px solid #35414D;
+    border-radius: 5px; padding: 3px 7px; spacing: 5px; font-size: 12px;
+}
+QWidget#prismInspector QCheckBox#inspectorTagChip:checked { background: #263E5A; border-color: #35414D; }
+QWidget#prismInspector QCheckBox#inspectorTagChip:hover { border-color: #79AEFF; }
+QWidget#inspectorTagHeader { border-top: 1px solid #35414D; padding-top: 10px; }
+QWidget#inspectorTagHeader QLabel[uiRole="inspectorSection"] { border: none; padding-top: 10px; }
+QWidget#prismInspector QCheckBox#inspectorTagChip::indicator {
+    width: 12px; height: 12px; border: none; background: transparent;
+}
+QWidget#prismInspector QCheckBox#inspectorTagChip::indicator:checked { image: url(assets/icons/close.svg); }
+QWidget#prismInspector QCheckBox#inspectorTagChip::indicator:unchecked { image: url(assets/icons/plus.svg); }
+QWidget#prismInspector QCheckBox#inspectorTagChip::indicator:indeterminate { image: url(assets/icons/radio-dot.svg); }
+QToolButton#inspectorFolder { background: #3B424E; border: 1px solid #35414D; border-radius: 5px; padding: 5px 8px; }
+QToolButton#inspectorFolder:hover { border-color: #79AEFF; }
+QToolButton#inspectorSourceCopy { background: #192129; border: 1px solid #35414D; border-radius: 5px; }
+QToolButton#inspectorSourceCopy:hover { background: #30333A; }
 QToolButton#shellEdgeHandle { background: #2A2C32; color: #AAB0BB; border: 1px solid #565D69; padding: 0; border-radius: 5px; }
 QToolButton#shellEdgeHandle:hover { background: #383C45; color: #E7E9ED; }
+
+/* Compact library shell; original canvas controls are preserved. */
+QFrame#eagleChrome { background: #212123; border-bottom: 1px solid #303033; }
+QFrame#eagleChrome QLabel { background: transparent; color: #B9BDC3; font-size: 12px; }
+QFrame#assetBrowserToolbar { background: transparent; border: none; }
+QFrame#assetBrowserToolbar QLabel { background: transparent; color: #C8CBD1; font-size: 12px; }
+QFrame#assetBrowserToolbar QLineEdit { background: #18181A; border: 1px solid #36363A; border-radius: 5px; padding: 4px 8px; }
+QWidget#assetBrowser, QListView#assetGrid { background: #1B1B1D; border: none; outline: none; }
+QLabel#assetBrowserSummary { background: #1B1B1D; color: #878B93; padding: 4px 12px; font-size: 11px; }
+QLabel#assetEmpty { background: #1B1B1D; color: #92969D; font-size: 15px; }
+QWidget#prismSidebar, QWidget#prismInspector, QWidget#inspectorBody, QWidget#inspectorCollection { background: #242426; }
+QWidget#prismSidebar QToolButton#libraryNav { background: transparent; font-size: 12px; padding-left: 6px; }
+QWidget#prismSidebar QToolButton#libraryNav:checked { background: #3B3B3F; }
+QWidget#prismSidebar QToolButton#libraryNav:hover { background: #323235; }
+QWidget#prismSidebar QLineEdit, QWidget#prismInspector QLineEdit, QWidget#prismInspector QTextEdit { background: #1E1E20; border-color: #38383C; }
+QWidget#prismSidebar QLabel[uiRole="secondary"] { color: #95989E; font-size: 11px; }
+QListWidget#smartFolders { background: transparent; border: none; font-size: 12px; }
+QListWidget#smartFolders::item { padding: 5px; border-radius: 4px; }
+QListWidget#smartFolders::item:selected { background: #3B3B3F; }
+QWidget#prismSidebar QTreeView#resourceTree::item:selected { background: #3B3B3F; }
+QWidget#prismSidebar QLabel[uiRole="treeSection"] { color: #92959B; }
+QWidget#prismInspector QLabel[uiRole="inspectorSection"] { color: #95989E; border-color: #37373B; }
+QWidget#prismInspector QCheckBox#inspectorTagChip { background: #28282C; border-color: #424248; }
+
+/* Three independent columns: each header belongs to its own pane. */
+QFrame#eagleLeftColumn, QFrame#eagleRightColumn { background: #242426; border: none; }
+QFrame#eagleCentreColumn { background: #1B1B1D; border: none; }
+QWidget#eagleLeftHeader, QWidget#eagleRightHeader { background: #242426; border: none; }
+QWidget#eagleCentreHeader { background: #1B1B1D; border: none; }
+QWidget#eagleLeftHeader QToolButton, QWidget#eagleRightHeader QToolButton, QWidget#eagleCentreHeader QToolButton { background: transparent; }
+QWidget#eagleLeftHeader QToolButton:hover, QWidget#eagleRightHeader QToolButton:hover, QWidget#eagleCentreHeader QToolButton:hover { background: #363639; }

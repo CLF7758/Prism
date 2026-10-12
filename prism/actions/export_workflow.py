@@ -329,6 +329,8 @@ def _canvas_assets(view, page_id):
     """
     items = []
     for item in view.scene.items_for_save():
+        if getattr(item, '_deleted_at', None) is not None:
+            continue
         canvas = getattr(item, '_canvas_id', None) or 'default-canvas'
         if canvas == page_id:
             items.append(item)

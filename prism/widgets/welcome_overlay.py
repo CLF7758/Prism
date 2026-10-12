@@ -125,11 +125,7 @@ class WelcomeOverlay(MainControlsMixin, QtWidgets.QWidget):
         self.setLayout(self.layout)
 
     def show(self):
-        files = PrismSettings().get_recent_files(existing_only=True)
-        self.files_view.update_files(files)
-        if files and self.layout.indexOf(self.files_widget) < 0:
-            self.layout.insertWidget(0, self.files_widget)
-            self.files_widget.show()
+        self.files_widget.hide()
         super().show()
 
     def disable_mouse_events(self):

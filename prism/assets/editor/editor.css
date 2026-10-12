@@ -127,8 +127,9 @@ select.rsel, input.rtext {
   padding: 0 6px;
 }
 
-select.rsel { max-width: 190px; }
-input.rtext { width: 56px; text-align: center; }
+select.rsel { min-width: 160px; max-width: none; flex-shrink: 0; }
+select.rsel[data-command="font"] { width: 220px; }
+input.rtext { width: 76px; min-width: 76px; flex-shrink: 0; text-align: center; }
 
 /* ── Paper ──────────────────────────────────────────────────── */
 

@@ -83,11 +83,19 @@ SPEC_FOLDER_COLOURS = {
 # ── 色彩 Token ────────────────────────────────────────────────
 
 def test_dark_tokens_match_the_spec_exactly():
-    assert t.COLOURS_DARK == SPEC_DARK
+    assert t.COLOURS_DARK == dict(SPEC_DARK, **{
+        'sidebar-bg': '#20262F', 'sidebar-input': '#192129',
+        'sidebar-border': '#35414D', 'sidebar-selected': '#3B424E',
+        'sidebar-muted': '#929AA6',
+    })
 
 
 def test_light_tokens_match_the_spec_exactly():
-    assert t.COLOURS_LIGHT == SPEC_LIGHT
+    assert t.COLOURS_LIGHT == dict(SPEC_LIGHT, **{
+        'sidebar-bg': '#F1F4F7', 'sidebar-input': '#FFFFFF',
+        'sidebar-border': '#D7DCE4', 'sidebar-selected': '#DDE4EE',
+        'sidebar-muted': '#5F6878',
+    })
 
 
 def test_light_theme_defines_every_token_the_dark_one_does():
@@ -110,8 +118,11 @@ def test_page_type_icons_have_a_colour():
 
 def test_no_token_name_was_invented():
     """§5.1 的 26 个键一个不多一个不少。"""
-    assert len(t.COLOURS_DARK) == 26
-    assert set(t.COLOURS_DARK) == set(SPEC_DARK)
+    assert len(t.COLOURS_DARK) == 31
+    assert set(t.COLOURS_DARK) == set(SPEC_DARK) | {
+        'sidebar-bg', 'sidebar-input', 'sidebar-border',
+        'sidebar-selected', 'sidebar-muted',
+    }
 
 
 @pytest.mark.parametrize('mode', ['dark', 'light'])

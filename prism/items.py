@@ -387,13 +387,16 @@ class PrismItemMixin(SelectableMixin):
             self._title = ''
         if not hasattr(self, '_canvas_id'):
             self._canvas_id = 'default-canvas'
+        if not hasattr(self, '_deleted_at'):
+            self._deleted_at = None
 
     def _notify_metadata_changed(self):
         if self.scene() and hasattr(self.scene(), 'metadata_changed'):
             self.scene().metadata_changed.emit()
 
     def get_metadata_save_data(self):
-        return {'categories': list(self._categories),
+        data = {'categories': list(self._categories),
+                'lastUsed': getattr(self, '_last_used', ''),
                 'tags': list(self._tags),
                 'rating': self._rating,
                 'notes': self._notes,
@@ -401,8 +404,15 @@ class PrismItemMixin(SelectableMixin):
                 'canvasId': self._canvas_id,
                 'groupId': self._group_id,
                 'groupNote': self._group_note}
+        # 软删除标记只有素材被丢进回收站时才存在；正常素材不写这个键，
+        # 老文件读进来也不受影响。
+        deleted_at = getattr(self, '_deleted_at', None)
+        if deleted_at is not None:
+            data['deletedAt'] = deleted_at
+        return data
 
     def load_metadata_from_data(self, data):
+        self._last_used = data.get('lastUsed', '')
         self._group_id = data.get('groupId')
         self._group_note = data.get('groupNote', '')
         self._categories = list(data.get('categories', []))
@@ -411,6 +421,22 @@ class PrismItemMixin(SelectableMixin):
         self._notes = data.get('notes', '')
         self._title = data.get('title', '')
         self._canvas_id = data.get('canvasId', 'default-canvas')
+        self._deleted_at = data.get('deletedAt')
+
+    def apply_deleted_state(self):
+        """按 `_deleted_at` 把素材显示成"在回收站里"或"正常"。
+
+        软删除的素材留在场景里（这样 `items_for_save()` 还会保存它、
+        sqlar 字节不会被清），但必须隐藏、不可选中，各类统计/搜索/导出
+        靠 `_deleted_at` 过滤它。打开工程时 `update_from_data()` 会调它，
+        保证上次删掉的素材这次打开还是删掉的样子。
+        """
+        selectable = QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        if getattr(self, '_deleted_at', None) is not None:
+            if self.isSelected():
+                self.setSelected(False)
+            self.setFlag(selectable, False)
+            self.setVisible(False)
 
     def update_from_data(self, **kwargs):
         self.save_id = kwargs.get('save_id', self.save_id)
@@ -433,6 +459,7 @@ class PrismItemMixin(SelectableMixin):
             self.do_flip()
         data = kwargs.get('data', {})
         self.load_metadata_from_data(data)
+        self.apply_deleted_state()
 
 
 def _small_image(source, max_side):
@@ -2024,6 +2051,9 @@ class PrismErrorItem(PrismItemMixin, QtWidgets.QGraphicsTextItem):
     def __init__(self, text=None, **kwargs):
         super().__init__(text or "Text")
         self.original_save_id = None
+        self._asset_source = kwargs.get('_asset_source')
+        self._original_asset_metadata = dict(kwargs) if self._asset_source else {}
+        self.filename = kwargs.get('filename', '')
         logger.trace('Initialized %s', self)
         self.is_image = False
         self.init_selectable()
@@ -2056,6 +2086,9 @@ class PrismErrorItem(PrismItemMixin, QtWidgets.QGraphicsTextItem):
 
     def update_from_data(self, **kwargs):
         self.original_save_id = kwargs.get('save_id', self.original_save_id)
+        if self._asset_source:
+            self.load_metadata_from_data(kwargs.get('data', {}))
+            self.apply_deleted_state()
         self.setPos(kwargs.get('x', self.pos().x()),
                     kwargs.get('y', self.pos().y()))
         self.setZValue(kwargs.get('z', self.zValue()))

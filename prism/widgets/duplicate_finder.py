@@ -333,13 +333,14 @@ class DuplicateFinderDialog(QtWidgets.QDialog):
         count = len(items)
         answer = QtWidgets.QMessageBox.question(
             self, _('Delete Photos'),
-            _('Delete the {count} selected photo(s) from the canvas?')
+            _('Move the {count} selected photo(s) to the trash?')
             .format(count=count))
         if answer != QtWidgets.QMessageBox.StandardButton.Yes:
             return
 
         self.view.scene.deselect_all_items()
-        self.view.undo_stack.push(commands.DeleteItems(self.view.scene, items))
+        # 查重删的是素材，走软删除进回收站（可恢复），和画布上按 Delete 一致。
+        self.view.undo_stack.push(commands.TrashItems(self.view.scene, items))
         removed = set(id(item) for item in items)
 
         # Drop the deleted photos from the results and forget empty groups.

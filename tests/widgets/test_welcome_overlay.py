@@ -69,7 +69,8 @@ def test_welcome_overlay_when_recent_files(qapp):
     view = PrismGraphicsView(qapp, parent)
     overlay = WelcomeOverlay(view)
     overlay.show()
-    assert overlay.layout.indexOf(overlay.files_widget) == 0
+    assert overlay.layout.indexOf(overlay.files_widget) < 0
+    assert overlay.files_widget.isHidden()
 
 
 @patch('PyQt6.QtWidgets.QGraphicsView.mousePressEvent')

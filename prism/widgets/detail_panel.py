@@ -21,6 +21,7 @@ from prism.items import (PrismPixmapItem, PrismVideoItem, COLOR_GROUPS,
 from prism.widgets.tag_panel import tag_signals
 from prism.widgets import components
 from prism.widgets.components.icons import icon
+from prism.widgets.components.flow_layout import FlowLayout
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class DetailPanel(QtWidgets.QWidget):
 
     def _setup_ui(self):
         self.setObjectName('prismInspector')
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setMinimumWidth(260)
         self.setMaximumWidth(16777215)
 
@@ -60,7 +62,7 @@ class DetailPanel(QtWidgets.QWidget):
         outer.setSpacing(0)
         header = QtWidgets.QFrame()
         header.setObjectName('inspectorHeader')
-        header.setFixedHeight(48)
+        header.setFixedHeight(34)
         header_row = QtWidgets.QHBoxLayout(header)
         header_row.setContentsMargins(16, 0, 16, 0)
         header_row.addWidget(components.RoleLabel('素材检查器', role='sectionTitle'))
@@ -74,26 +76,45 @@ class DetailPanel(QtWidgets.QWidget):
         scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         scroll.setStyleSheet(
             'QScrollArea { border: none; background: transparent; }')
+        self._scroll = scroll
         outer.addWidget(scroll, stretch=1)
+        self._collection = QtWidgets.QWidget()
+        self._collection.setObjectName('inspectorCollection')
+        collection_layout = QtWidgets.QVBoxLayout(self._collection)
+        collection_layout.setContentsMargins(14, 14, 14, 14)
+        self._collection_title = components.LineEdit()
+        self._collection_title.setReadOnly(True)
+        collection_layout.addWidget(self._collection_title)
+        collection_layout.addWidget(components.RoleLabel('基本信息', role='inspectorSection'))
+        self._collection_count = components.RoleLabel()
+        collection_layout.addWidget(self._collection_count)
+        self._collection_size = components.RoleLabel()
+        collection_layout.addWidget(self._collection_size)
+        collection_layout.addStretch()
+        outer.addWidget(self._collection, 1)
+        self._collection.hide()
 
         body = QtWidgets.QWidget()
         body.setObjectName('inspectorBody')
         self._body_layout = QtWidgets.QVBoxLayout(body)
-        self._body_layout.setContentsMargins(16, 16, 16, 16)
-        self._body_layout.setSpacing(12)
+        self._body_layout.setContentsMargins(12, 12, 12, 16)
+        self._body_layout.setSpacing(8)
         scroll.setWidget(body)
 
         # Preview thumbnail
         self._preview_label = QtWidgets.QLabel()
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview_label.setFixedHeight(160)
+        self._preview_label.setFixedHeight(176)
         self._preview_label.setObjectName('inspectorPreview')
         self._body_layout.addWidget(self._preview_label)
 
         # Title
         lbl_title = components.RoleLabel('\u6807\u9898', role='inspectorSection')
         self._body_layout.addWidget(lbl_title)
+        lbl_title.hide()
         self._title_edit = components.LineEdit()
+        self._title_edit.setPlaceholderText('素材名称')
+        self._title_edit.setAccessibleName('素材名称')
         self._title_edit.editingFinished.connect(
             lambda: self._on_title_changed(self._title_edit.text()))
         self._body_layout.addWidget(self._title_edit)
@@ -101,11 +122,32 @@ class DetailPanel(QtWidgets.QWidget):
         # Notes
         lbl_notes = components.RoleLabel('\u5907\u6ce8', role='inspectorSection')
         self._body_layout.addWidget(lbl_notes)
+        lbl_notes.hide()
         self._notes_edit = components.TextEdit()
         self._notes_edit.setPlaceholderText('\u6dfb\u52a0\u5907\u6ce8\u2026')
-        self._notes_edit.setFixedHeight(100)
+        self._notes_edit.setFixedHeight(128)
+        self._notes_edit.setAccessibleName('素材备注')
         self._notes_edit.textChanged.connect(self._on_notes_changed)
         self._body_layout.addWidget(self._notes_edit)
+
+        self._source_row = QtWidgets.QWidget()
+        source_layout = QtWidgets.QHBoxLayout(self._source_row)
+        source_layout.setContentsMargins(0, 0, 0, 0)
+        source_layout.setSpacing(0)
+        self._source_edit = components.LineEdit()
+        self._source_edit.setReadOnly(True)
+        self._source_edit.setPlaceholderText('文件路径')
+        self._source_edit.setAccessibleName('素材文件路径')
+        source_layout.addWidget(self._source_edit, 1)
+        self._copy_source = QtWidgets.QToolButton()
+        self._copy_source.setObjectName('inspectorSourceCopy')
+        self._copy_source.setIcon(icon('link'))
+        self._copy_source.setFixedSize(30, 32)
+        self._copy_source.setToolTip('复制文件路径')
+        self._copy_source.setAccessibleName('复制文件路径')
+        self._copy_source.clicked.connect(lambda: QtWidgets.QApplication.clipboard().setText(self._source_edit.text()))
+        source_layout.addWidget(self._copy_source)
+        self._body_layout.addWidget(self._source_row)
 
         # Category dropdown
         lbl_cat = components.RoleLabel('\u5206\u7c7b', role='inspectorSection')
@@ -122,6 +164,7 @@ class DetailPanel(QtWidgets.QWidget):
         # Rating (works for one item or a multi-selection)
         lbl_rating = components.RoleLabel(_('Rating'), role='inspectorSection')
         self._body_layout.addWidget(lbl_rating)
+        lbl_rating.hide()
         rating_row = QtWidgets.QHBoxLayout()
         rating_row.setSpacing(2)
         self._rating_buttons = []
@@ -148,22 +191,30 @@ class DetailPanel(QtWidgets.QWidget):
         # The inspector therefore lists the tags the selection carries (and
         # whatever the search box is asking for) instead of the whole
         # catalogue, which in a real project runs into the hundreds.
-        tag_header = QtWidgets.QHBoxLayout()
+        tag_header_widget = QtWidgets.QWidget()
+        tag_header_widget.setObjectName('inspectorTagHeader')
+        tag_header = QtWidgets.QHBoxLayout(tag_header_widget)
         tag_header.setContentsMargins(0, 0, 0, 0)
         lbl_tags = components.RoleLabel(
             _('Tags of the selection'), role='inspectorSection')
         tag_header.addWidget(lbl_tags)
+        lbl_tags.setText('标签')
         tag_header.addStretch()
+        from prism.widgets.components.icons import icon_button
+        self._add_tag_button = icon_button('plus', '添加标签', size=24)
+        self._add_tag_button.clicked.connect(self._show_tag_search)
+        tag_header.addWidget(self._add_tag_button)
         # 「标签管理」的齿轮按钮原来在这儿。用户要求去掉右侧这一个：
         # 属性面板管的是"选中素材的属性"，而标签目录是全工程的东西，
         # 归左侧素材库那一栏管（那边还有一个齿轮，保留）。
-        self._body_layout.addLayout(tag_header)
+        self._body_layout.addWidget(tag_header_widget)
         # Which object is on the other end of these checkboxes is the one
         # thing a tag UI has to keep clear: the inspector tags the assets
         # in the selection, never a page.
         self._tag_scope = components.RoleLabel(role='secondary')
         self._tag_scope.setWordWrap(True)
         self._body_layout.addWidget(self._tag_scope)
+        self._tag_scope.hide()
         self._update_tag_scope(0)
         self._tag_search = components.LineEdit()
         self._tag_search.setPlaceholderText(
@@ -172,15 +223,25 @@ class DetailPanel(QtWidgets.QWidget):
         self._tag_search.textChanged.connect(self._filter_tag_choices)
         self._tag_search.returnPressed.connect(self._add_typed_tag)
         self._body_layout.addWidget(self._tag_search)
+        self._tag_search.hide()
         self._tags_container = QtWidgets.QWidget()
-        self._tags_layout = QtWidgets.QVBoxLayout(self._tags_container)
+        self._tags_layout = FlowLayout(self._tags_container)
         self._tags_layout.setContentsMargins(0, 0, 0, 0)
-        self._tags_layout.setSpacing(1)
+        self._tags_layout.setSpacing(5)
         self._body_layout.addWidget(self._tags_container)
         self._tag_checks = {}
         self._tags_hint = None
         self._tag_names_shown = None
         self._rebuild_tag_checks()
+
+        folder_heading = components.RoleLabel('所在画布', role='inspectorSection')
+        self._body_layout.addWidget(folder_heading)
+        self._folder_button = QtWidgets.QToolButton()
+        self._folder_button.setObjectName('inspectorFolder')
+        self._folder_button.setIcon(icon('canvas'))
+        self._folder_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._folder_button.clicked.connect(self._open_item_canvas)
+        self._body_layout.addWidget(self._folder_button, alignment=Qt.AlignmentFlag.AlignLeft)
 
         # Info grid
         self._info_grid = QtWidgets.QFormLayout()
@@ -215,6 +276,7 @@ class DetailPanel(QtWidgets.QWidget):
 
         info_heading = components.RoleLabel('文件信息', role='inspectorSection')
         self._body_layout.addWidget(info_heading)
+        info_heading.setText('基本信息')
         for value in (self._type_label, self._dims_label, self._format_label, self._size_label, self._date_label, self._path_label):
             value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         self._body_layout.addLayout(self._info_grid)
@@ -222,6 +284,7 @@ class DetailPanel(QtWidgets.QWidget):
         # Color distribution
         lbl_cd = components.RoleLabel(
             _('Color Distribution'), role='inspectorSection')
+        self._lbl_cd = lbl_cd
         self._body_layout.addWidget(lbl_cd)
         self._cd_container = QtWidgets.QWidget()
         self._cd_layout = QtWidgets.QVBoxLayout(self._cd_container)
@@ -231,15 +294,17 @@ class DetailPanel(QtWidgets.QWidget):
 
         # Histogram
         lbl_hist = components.RoleLabel(_('Histogram'), role='inspectorSection')
+        self._lbl_hist = lbl_hist
         self._body_layout.addWidget(lbl_hist)
         self._hist_widget = _HistogramWidget()
         self._hist_widget.setMinimumHeight(180)
         self._hist_widget.setObjectName('inspectorHistogram')
         self._body_layout.addWidget(self._hist_widget)
-        lbl_cd.hide()
-        self._cd_container.hide()
-        lbl_hist.hide()
-        self._hist_widget.hide()
+        # 色彩分布（色条 + 颜色名称/百分比）是原实现，选中图片时才显示；
+        # 直方图按方案 §8「不因本次需求擅自增加大块图表」保持隐藏，计算
+        # 逻辑仍留在 `_hist_widget` 里。二者都由 `_set_color_widgets_visible`
+        # 统一切换，绝不残留上一张图片的分析结果（方案 C02）。
+        self._set_color_widgets_visible(False)
 
         # Frame extraction, shown only for videos.  The button is the whole
         # entry point: select a video, pull stills out of it.
@@ -334,6 +399,13 @@ class DetailPanel(QtWidgets.QWidget):
     def _show_empty(self):
         self._visual_key = None
         self._item = None
+        self._clear_color_distribution()
+        self._set_color_widgets_visible(False)
+        self._source_edit.clear()
+        self._source_row.hide()
+        self._copy_source.setEnabled(False)
+        self._folder_button.setText('未选择素材')
+        self._folder_button.setEnabled(False)
         self._preview_label.setText('\u672a\u9009\u4e2d\u7d20\u6750')
         self._title_edit.setEnabled(False)
         self._title_edit.clear()
@@ -362,8 +434,23 @@ class DetailPanel(QtWidgets.QWidget):
         self._tag_scope.setText(
             _('Tagging {count} selected assets').format(count=count) if count
             else _('Select assets first, then tag them'))
+        self._tag_scope.setVisible(count > 1)
+
+    def _show_tag_search(self):
+        self._tag_search.show()
+        self._tag_search.setFocus()
+
+    def show_collection(self, title, count, size=None):
+        self._scroll.hide()
+        self._collection.show()
+        self._collection_title.setText(title)
+        self._collection_count.setText(f'文件数                       {count:,}')
+        self._collection_size.setText('占用空间                    ' + (f'{size / (1024 * 1024):.2f} MB' if size is not None else '未知'))
+        self._selection_count.clear()
 
     def _on_selection_changed(self):
+        self._scroll.show()
+        self._collection.hide()
         self._rebuild_tag_checks()
         selected = self.scene.selectedItems(user_only=True)
         self._update_tag_scope(len(selected))
@@ -442,6 +529,7 @@ class DetailPanel(QtWidgets.QWidget):
             entry = self._tags_layout.takeAt(0)
             widget = entry.widget()
             if widget is not None:
+                widget.hide()
                 widget.deleteLater()
         self._tag_checks = {}
         if not names:
@@ -458,6 +546,9 @@ class DetailPanel(QtWidgets.QWidget):
         self._tags_hint = None
         for name in names:
             box = QtWidgets.QCheckBox(self._tag_label(name, system))
+            box.setObjectName('inspectorTagChip')
+            box.setMinimumHeight(26)
+            box.setAccessibleName(name)
             color = tags.namespace_color(name)
             if color:
                 box.setStyleSheet(f'color: {color};')
@@ -505,6 +596,7 @@ class DetailPanel(QtWidgets.QWidget):
             box.blockSignals(False)
             box.setEnabled(enabled)
         self._tag_search.setEnabled(True)
+        self._add_tag_button.setEnabled(enabled)
 
     def _filter_tag_choices(self, text):
         """The search box decides which tags are offered at all."""
@@ -533,6 +625,7 @@ class DetailPanel(QtWidgets.QWidget):
             self.view.mark_content_dirty()
         self._on_tag_box_toggled(name, True)
         self._tag_search.clear()
+        self._tag_search.hide()
         self._refresh()
 
     def _on_tag_box_toggled(self, name, checked):
@@ -601,7 +694,7 @@ class DetailPanel(QtWidgets.QWidget):
         pm = self._inspection_pixmap(item)
         if pm and not pm.isNull():
             scaled = pm.scaled(
-                max(200, self.width() - 40), 145,
+                max(120, self.width() - 32), 170,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation)
             self._preview_label.setPixmap(scaled)
@@ -644,6 +737,12 @@ class DetailPanel(QtWidgets.QWidget):
 
         self._sync_tag_checks(set(getattr(item, '_tags', [])), enabled=True)
         self._update_rating_buttons(getattr(item, '_rating', 0), enabled=True)
+        canvas_id = getattr(item, '_canvas_id', None) or getattr(self.view, 'current_canvas_id', None)
+        pages = self.view.category_panel._pages_with_implicit_defaults()
+        page = next((page for page in pages if page['id'] == canvas_id), None)
+        self._folder_button.setText(page.get('title', '画布') if page else '未归入画布')
+        self._folder_button.setEnabled(page is not None)
+        self._folder_button.setToolTip(self._folder_button.text())
 
         # Info grid
         if isinstance(item, PrismPixmapItem):
@@ -693,15 +792,19 @@ class DetailPanel(QtWidgets.QWidget):
                       getattr(item, '_preview_adjusted', False))
         visuals_changed = visual_key != getattr(self, '_visual_key', None)
         self._visual_key = visual_key
+        source = fpath or getattr(item, '_source_path', None) or ''
+        self._source_edit.setText(source)
+        self._source_edit.setToolTip(source)
+        self._copy_source.setEnabled(bool(source))
+        self._source_row.setVisible(bool(source))
         # Text and tag edits must not recalculate the same image statistics.
         if isinstance(item, PrismPixmapItem):
             if visuals_changed:
                 self._build_color_distribution(item)
         else:
-            while hasattr(self, '_cd_layout') and self._cd_layout.count():
-                w = self._cd_layout.takeAt(0).widget()
-                if w:
-                    w.deleteLater()
+            # 选中的不是图片：清掉色条并隐藏，绝不残留上一张的分析。
+            self._clear_color_distribution()
+            self._set_color_widgets_visible(False)
 
         # Histogram (only for images)
         if isinstance(item, PrismPixmapItem):
@@ -716,13 +819,30 @@ class DetailPanel(QtWidgets.QWidget):
 
     # ── Color distribution ────────────────────────
 
-    def _build_color_distribution(self, item):
-        """Compute and render color distribution for a pixmap item."""
-        # Clear existing
+    def _set_color_widgets_visible(self, visible):
+        """统一切换"色彩分布"标题和容器的显隐。
+
+        直方图（`_lbl_hist` / `_hist_widget`）按方案 §8 保持隐藏，这里
+        一并收口，方便日后要恢复时只改这一处。
+        """
+        self._lbl_cd.setVisible(visible)
+        self._cd_container.setVisible(visible)
+        self._lbl_hist.setVisible(False)
+        self._hist_widget.setVisible(False)
+
+    def _clear_color_distribution(self):
+        """清掉色条/标签，避免残留上一张图片的分析结果（方案 C02）。"""
         while self._cd_layout.count():
             w = self._cd_layout.takeAt(0).widget()
             if w:
                 w.deleteLater()
+
+    def _build_color_distribution(self, item):
+        """Compute and render color distribution for a pixmap item."""
+        # 先清空并隐藏，只有真正算出色条后才显示 —— 中途 return 都不会
+        # 留下上一张图的残影。
+        self._clear_color_distribution()
+        self._set_color_widgets_visible(False)
 
         pm = self._inspection_pixmap(item)
         if pm is None or pm.isNull():
@@ -789,6 +909,15 @@ class DetailPanel(QtWidgets.QWidget):
             labels_layout.addWidget(txt, row, 1)
         labels_layout.setColumnStretch(1, 1)
         self._cd_layout.addWidget(labels_row)
+        # 真的算出色条和标签了，才把"色彩分布"显示出来。
+        self._set_color_widgets_visible(True)
+
+    def _open_item_canvas(self):
+        if self._item is None:
+            return
+        canvas_id = getattr(self._item, '_canvas_id', None) or getattr(self.view, 'current_canvas_id', None)
+        if canvas_id:
+            self.view.category_panel.workspace_requested.emit('canvas', canvas_id)
 
     def _on_title_changed(self, text):
         if not self._item:

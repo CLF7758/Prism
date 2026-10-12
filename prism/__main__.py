@@ -45,6 +45,7 @@ from prism.utils import create_palette_from_dict
 from prism.view import PrismGraphicsView
 from prism.widgets.color_filter import ColorFilterBar
 from prism.widgets.components.icons import icon
+from prism.widgets.window_shell import FramelessShellMixin, TitleBarControls
 
 logger = logging.getLogger(__name__)
 
@@ -88,26 +89,13 @@ class ShellSplitter(QtWidgets.QSplitter):
         return ShellSplitterHandle(self.orientation(), self)
 
 
-class ShellDrawerScrim(QtWidgets.QFrame):
-    def __init__(self, on_close, parent):
-        super().__init__(parent)
-        self.on_close = on_close
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+class PrismMainWindow(FramelessShellMixin, QtWidgets.QMainWindow):
+    """A standard desktop window with independently resizable side panels.
 
-    def mousePressEvent(self, event):
-        self.on_close()
-        event.accept()
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Escape:
-            self.on_close()
-            event.accept()
-        else:
-            super().keyPressEvent(event)
-
-
-class PrismMainWindow(QtWidgets.QMainWindow):
-    """A standard desktop window with independently resizable side panels."""
+    继承 `FramelessShellMixin`（放在最前面，让它的 `nativeEvent` 生效）：
+    需求 4 要去掉 Windows 系统那条白色标题栏，同时保留原生缩放/贴靠/阴影。
+    平台相关的 Win32 消息处理全部集中在 `window_shell.py`，不散落到这里。
+    """
 
     def __init__(self, app):
         super().__init__()
@@ -121,10 +109,30 @@ class PrismMainWindow(QtWidgets.QMainWindow):
                 self.menuBar().addMenu(action.menu())
         self.menuBar().setFixedHeight(36)
         self._menu_file_title = QtWidgets.QLabel()
-        self._menu_file_title.setContentsMargins(12, 0, 12, 0)
+        self._menu_file_title.setContentsMargins(12, 0, 8, 0)
         self._menu_file_title.setStyleSheet('color: #AAB0BB; font-size: 12px; background: transparent;')
-        self.menuBar().setCornerWidget(self._menu_file_title, Qt.Corner.TopRightCorner)
+        # 方案 §9.1：无边框后，把「项目标题 / 未保存状态」和右侧窗口控制
+        # 按钮（最小化 / 最大化-还原 / 关闭）一起塞进现有深色菜单栏的右上角，
+        # 复用这条已有的深色顶栏，不另起一条标题栏。关闭走 closeEvent
+        # （含未保存确认），绝不直接退进程。
+        self._title_corner = QtWidgets.QWidget()
+        self._title_corner.setObjectName('titleBarCorner')
+        self._title_corner.setStyleSheet('background: transparent;')
+        _corner_layout = QtWidgets.QHBoxLayout(self._title_corner)
+        _corner_layout.setContentsMargins(0, 0, 0, 0)
+        _corner_layout.setSpacing(0)
+        _corner_layout.addWidget(self._menu_file_title)
+        self._title_controls = TitleBarControls(self, self._title_corner)
+        _corner_layout.addWidget(self._title_controls)
+        self.menuBar().setCornerWidget(self._title_corner, Qt.Corner.TopRightCorner)
         self.windowTitleChanged.connect(lambda title: self._menu_file_title.setText(title.removesuffix(' - Prism')))
+        # 方案 §9.2：只在菜单栏的空白区（菜单项之间）启动系统拖动，双击空白
+        # 区最大化/还原；命中菜单项时照常交给 QMenuBar。拖动逻辑放在
+        # eventFilter 里，不新起一套鼠标位移拖动（避免和贴靠/多屏冲突）。
+        # 缓存菜单栏引用给 eventFilter 用（见 eventFilter 注释：不能在里面
+        # 调 self.menuBar()，会与 application 级过滤器互相触发导致递归）。
+        self._title_menubar = self.menuBar()
+        self._title_menubar.installEventFilter(self)
         self.workspace_service = self.view.workspace_service
         self.browser_capture = BrowserCaptureService(
             self.view.settings.valueOrDefault('BrowserCapture/port'), self)
@@ -171,7 +179,7 @@ class PrismMainWindow(QtWidgets.QMainWindow):
         from prism.widgets.filter_popover import FilterPopover
 
         self.filter_bar = FilterBar(self.view, outer)
-        layout.addWidget(self.filter_bar)
+
         self.filter_popover = FilterPopover(self.view, outer, color_host=self.color_filter)
         self.filter_popover.hide()
         self.filter_bar.open_requested.connect(self._toggle_filter_popover)
@@ -209,18 +217,23 @@ class PrismMainWindow(QtWidgets.QMainWindow):
         self.mindmap_panel = MindMapPanel(self.view, self)
         self.tabs.addTab(self.mindmap_panel, _('Mind Map'))
 
+        from prism.widgets.asset_browser import AssetBrowser
+        self.asset_browser = AssetBrowser(self)
+        self.tabs.addTab(self.asset_browser, '素材库')
+        self._build_eagle_chrome(layout)
+
         self._previous_tab = 0
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         self.splitter = ShellSplitter(Qt.Orientation.Horizontal)
         self.splitter.setHandleWidth(shell['splitter-hotzone'])
-        self.splitter.addWidget(self.view.category_panel)
-        self.splitter.addWidget(self.tabs)
-        self.splitter.addWidget(self.view._detail_panel)
-        self.view.category_panel.setMinimumWidth(shell['left-panel-min'])
-        self.view.category_panel.setMaximumWidth(shell['left-panel-max'])
-        self.view._detail_panel.setMinimumWidth(shell['right-panel-min'])
-        self.view._detail_panel.setMaximumWidth(shell['right-panel-max'])
+        self.splitter.addWidget(self._left_column)
+        self.splitter.addWidget(self._centre_column)
+        self.splitter.addWidget(self._right_column)
+        self._left_column.setMinimumWidth(shell['left-panel-min'])
+        self._left_column.setMaximumWidth(shell['left-panel-max'])
+        self._right_column.setMinimumWidth(shell['right-panel-min'])
+        self._right_column.setMaximumWidth(shell['right-panel-max'])
         self.splitter.setCollapsible(1, False)
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
@@ -235,19 +248,7 @@ class PrismMainWindow(QtWidgets.QMainWindow):
         # 筛选条已经在 outer 顶部（见上面构造处），这里只接三栏分割器。
         layout.addWidget(self.splitter, 1)
         self.setCentralWidget(outer)
-        self._drawer_side = None
-        self._drawer_scrim = ShellDrawerScrim(self._close_drawer, outer)
-        self._drawer_scrim.setStyleSheet(
-            'background: %s;' % ui_tokens.COLOURS_DARK['scrim'])
-        self._drawer_scrim.hide()
-        self._drawer = QtWidgets.QFrame(self._drawer_scrim)
-        self._drawer.setStyleSheet(
-            'background: %s; border: 1px solid %s;' % (
-                ui_tokens.COLOURS_DARK['panel-bg'],
-                ui_tokens.COLOURS_DARK['border-subtle']))
-        self._drawer_layout = QtWidgets.QVBoxLayout(self._drawer)
-        self._drawer_layout.setContentsMargins(0, 0, 0, 0)
-        self._drawer_layout.setSpacing(0)
+        self._sidebar_widths = {side: max(shell[side+'-panel-min'], min(shell[side+'-panel-max'], self.view.settings.value('MainWindow/'+side+'Width', shell[side+'-panel-width'], type=int))) for side in ('left', 'right')}
 
         self._page_panels = {}
         self._deleted_pages = []
@@ -277,16 +278,6 @@ class PrismMainWindow(QtWidgets.QMainWindow):
             self._on_resource_tree_change)
         self.workspace_service.changed.connect(self._on_workspace_changed)
 
-        self._edge_handles = {}
-        for side, text in [('left', '›'), ('right', '‹')]:
-            button = QtWidgets.QToolButton(outer)
-            button.setObjectName('shellEdgeHandle')
-            button.setText(text)
-            button.setFixedSize(14, 64)
-            button.setToolTip('显示资源树' if side == 'left' else '显示素材检查器')
-            button.clicked.connect(lambda checked=False, side=side: self._toggle_sidebar(side))
-            button.hide()
-            self._edge_handles[side] = button
         app.installEventFilter(self)
         self._build_layout_menu()
         self._apply_responsive_panels()
@@ -299,14 +290,17 @@ class PrismMainWindow(QtWidgets.QMainWindow):
             _('Zoom out to fit everything on this canvas'))
         self._fit_all_button.clicked.connect(self.view.on_action_fit_scene)
         self._fit_all_button.setFixedHeight(22)
-        self.statusBar().setFixedHeight(shell['statusbar-height'])
-        self.statusBar().addPermanentWidget(self._fit_all_button)
+        self._centre_status.setFixedHeight(shell['statusbar-height'])
+        self._centre_status.addPermanentWidget(self._fit_all_button)
         self.view.scene.selectionChanged.connect(
             self._on_scene_selection_changed)
         self.view.category_panel.update_counts()
         self.color_filter.recount()
         self._refresh_filter_bar()
         self.view.update_window_title()
+        # 需求 4：在窗口 show 之前打开无边框外壳（砍系统白标题栏，保留
+        # WS_THICKFRAME 的原生缩放/贴靠/阴影）。离屏测试平台会自己跳过。
+        self.enable_frameless_shell()
         self.show()
         QtCore.QTimer.singleShot(0, self._apply_responsive_panels)
         self._recovery_timer = QtCore.QTimer(self)
@@ -327,6 +321,144 @@ class PrismMainWindow(QtWidgets.QMainWindow):
             self._autosave_timer.setInterval(minutes * 60 * 1000)
             self._autosave_timer.timeout.connect(self._perform_autosave)
             self._autosave_timer.start()
+
+    def _build_eagle_chrome(self, layout):
+        """Each splitter column owns its header and contents, top to bottom."""
+        from prism.widgets.components.icons import icon_button
+        from prism.widgets.window_shell import TitleBarDragArea
+        self.menuBar().hide()
+
+        def column(name):
+            widget = QtWidgets.QFrame()
+            widget.setObjectName(name)
+            box = QtWidgets.QVBoxLayout(widget)
+            box.setContentsMargins(0, 0, 0, 0)
+            box.setSpacing(0)
+            return widget, box
+
+        def header(name):
+            widget = TitleBarDragArea(self)
+            widget.setObjectName(name)
+            widget.setFixedHeight(36)
+            box = QtWidgets.QHBoxLayout(widget)
+            box.setContentsMargins(6, 0, 4, 0)
+            box.setSpacing(0)
+            return widget, box
+
+        self._left_column, left = column('eagleLeftColumn')
+        self._centre_column, centre = column('eagleCentreColumn')
+        self._right_column, right = column('eagleRightColumn')
+        self._centre_column.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                                          QtWidgets.QSizePolicy.Policy.Expanding)
+        self._left_header, tools = header('eagleLeftHeader')
+        menu_button = icon_button('menu', '主菜单', size=28)
+        menu_button.clicked.connect(self._show_eagle_menu)
+        tools.addWidget(menu_button)
+        tools.addStretch()
+        self._sidebar_toggle = icon_button('sidebars', '折叠 / 展开左右栏 · Tab', size=28)
+        self._sidebar_toggle.clicked.connect(self._toggle_sidebars)
+        tools.addWidget(self._sidebar_toggle)
+        left.addWidget(self._left_header)
+        left.addWidget(self.view.category_panel, 1)
+
+        self._centre_header, middle = header('eagleCentreHeader')
+        self._restore_sidebars = icon_button('sidebars', '展开左右栏 · Tab', size=28)
+        self._restore_sidebars.clicked.connect(self._toggle_sidebars)
+        middle.addWidget(self._restore_sidebars)
+        self._eagle_header_stack = QtWidgets.QStackedWidget()
+        self._eagle_header_stack.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                                              QtWidgets.QSizePolicy.Policy.Preferred)
+        self._eagle_drag = TitleBarDragArea(self)
+        drag_layout = QtWidgets.QHBoxLayout(self._eagle_drag)
+        drag_layout.setContentsMargins(6, 0, 0, 0)
+        drag_layout.addWidget(self._menu_file_title)
+        drag_layout.addStretch()
+        self._eagle_header_stack.addWidget(self._eagle_drag)
+        self.asset_browser.layout().removeWidget(self.asset_browser.toolbar)
+        self.asset_browser.toolbar.setFixedHeight(36)
+        self._eagle_header_stack.addWidget(self.asset_browser.toolbar)
+        middle.addWidget(self._eagle_header_stack, 1)
+        self._collapsed_window_host = QtWidgets.QWidget()
+        self._collapsed_window_layout = QtWidgets.QHBoxLayout(self._collapsed_window_host)
+        self._collapsed_window_layout.setContentsMargins(0, 0, 0, 0)
+        self._collapsed_window_layout.setSpacing(0)
+        middle.addWidget(self._collapsed_window_host)
+        centre.addWidget(self._centre_header)
+        self.filter_bar.hide()
+        self.canvas_page.layout().removeWidget(self.canvas_toolbar)
+        self._eagle_header_stack.addWidget(self.canvas_toolbar)
+        self._eagle_header_stack.setCurrentWidget(self.canvas_toolbar)
+        self._centre_header.setFixedHeight(40)
+        middle.setContentsMargins(0, 0, 0, 0)
+        centre.addWidget(self.tabs, 1)
+        # QMainWindow's full-width status bar would join all three columns.
+        self._centre_status = QtWidgets.QStatusBar()
+        self._centre_status.setSizeGripEnabled(False)
+        centre.addWidget(self._centre_status)
+
+        self._right_header, controls = header('eagleRightHeader')
+        controls.addStretch()
+        self._window_controls = QtWidgets.QWidget()
+        self._window_controls_layout = QtWidgets.QHBoxLayout(self._window_controls)
+        self._window_controls_layout.setContentsMargins(0, 0, 0, 0)
+        self._window_controls_layout.setSpacing(0)
+        self._eagle_pin = icon_button('pin', '窗口置顶', size=28)
+        self._eagle_pin.setCheckable(True)
+        self._eagle_pin.toggled.connect(self._pin_eagle_window)
+        self._window_controls_layout.addWidget(self._eagle_pin)
+        for button in (self._title_controls.min_button, self._title_controls.max_button,
+                       self._title_controls.close_button):
+            button.setFixedWidth(36)
+        self._window_controls_layout.addWidget(self._title_controls)
+        self._right_controls_layout = controls
+        controls.addWidget(self._window_controls)
+        right.addWidget(self._right_header)
+        right.addWidget(self.view._detail_panel, 1)
+        self._right_empty = QtWidgets.QWidget()
+        self._right_empty.hide()
+        right.addWidget(self._right_empty, 1)
+        self._sidebars_shortcut = QtGui.QShortcut(QtGui.QKeySequence('Tab'), self)
+        self._sidebars_shortcut.activated.connect(self._toggle_sidebars)
+        for button in (self._sidebar_toggle, self._restore_sidebars):
+            button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            button.customContextMenuRequested.connect(self._show_sidebar_menu)
+        self._sidebar_shortcuts = []
+        for key, callback in [('Ctrl+Alt+1', lambda: self._toggle_sidebar('left')),
+                              ('Ctrl+Alt+2', lambda: self._toggle_sidebar('right')),
+                              ('Ctrl+Alt+3', self._toggle_sidebars)]:
+            shortcut = QtGui.QShortcut(QtGui.QKeySequence(key), self)
+            shortcut.activated.connect(callback)
+            self._sidebar_shortcuts.append(shortcut)
+
+
+    def statusBar(self):
+        status = getattr(self, '_centre_status', None)
+        return status if status is not None else super().statusBar()
+
+    def _eagle_menu(self):
+        menu = QtWidgets.QMenu(self)
+        self.view._build_recent_files()
+        menu.addMenu(self.view._recent_files_submenu)
+        menu.addSeparator()
+        for action in self.view.context_menu.actions():
+            if action.menu() is not None:
+                menu.addMenu(action.menu())
+        menu.addSeparator()
+        menu.addAction('项目搜索（图片 / 文档 / 脑图）', self._focus_project_search)
+        menu.addAction('返回当前画布', lambda: self.open_workspace_page('canvas', self.view.current_canvas_id))
+        return menu
+
+    def _show_eagle_menu(self):
+        self._eagle_menu().exec(self._left_header.mapToGlobal(QtCore.QPoint(6, 36)))
+
+    def _focus_project_search(self):
+        self.view.category_panel.search.show()
+        self.view.category_panel.search.setFocus()
+
+    def _pin_eagle_window(self, enabled):
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, enabled)
+        self.show()
+        self.enable_frameless_shell()
 
     def _perform_autosave(self):
         if not self.view.is_dirty():
@@ -750,9 +882,27 @@ class PrismMainWindow(QtWidgets.QMainWindow):
 
         panel = TrashPanel(self.view, self)
         panel.purged.connect(self._on_trash_purged)
+        panel.assets_purged.connect(self._on_assets_purged)
         panel.exec()
         # 面板里改过回收站，树跟着刷新一次。
         self.view.category_panel.rebuild_workspace_tree()
+
+    def _on_assets_purged(self, items):
+        """永久删除素材：把图元移出场景，保存时数据库记录和 sqlar 原始字节
+        随之删除。这一步不可逆，所以顺手清空撤销栈 —— 老命令不能把它复活。
+        """
+        if not items:
+            return
+        scene = self.view.scene
+        for item in list(items):
+            # 先把归档引用丢掉，否则 `delete_items` 的 retain_bytes 会把它
+            # 的字节又留一份到临时文件里 —— 那就不叫"永久删除"了。
+            archive = getattr(scene, '_prism_archive_items', None)
+            if archive is not None:
+                archive.discard(item)
+            scene.removeItem(item)
+        self.view.undo_stack.clear()
+        self.view.mark_content_dirty()
 
     def _on_trash_purged(self, page_ids):
         """永久删除之后，把对应的页面正文也清掉 —— 这次是真的没了。"""
@@ -915,6 +1065,11 @@ class PrismMainWindow(QtWidgets.QMainWindow):
         self.view.category_panel.rebuild_workspace_tree()
         self.view.category_panel._apply_filter()
 
+        if hasattr(self, 'asset_browser'):
+            self.asset_browser.history = []
+            self.asset_browser.history_index = -1
+            self.asset_browser.open('all', record=False)
+
     # ── 筛选条与筛选弹层（§8.3）──────────────────────────────────
 
     def _on_recount(self):
@@ -1003,6 +1158,8 @@ class PrismMainWindow(QtWidgets.QMainWindow):
         return 'default-canvas'
 
     def open_workspace_page(self, kind, page_id):
+        if hasattr(self, 'asset_browser'):
+            self.asset_browser.saved_rule = None
         current = self.tabs.currentWidget()
         if hasattr(current, 'store_to_scene'):
             current.store_to_scene()
@@ -1117,99 +1274,80 @@ class PrismMainWindow(QtWidgets.QMainWindow):
     # ——「未命名项目 / 画布 / 画布 / 检查器」。它显示的东西现在这样找：
     #   · 项目名与文件路径 → 窗口标题（`update_window_title`）
     #   · 左/右面板的显示开关 → 画布右键菜单「界面布局」里的两项
-    #     （`_category_action` / `_inspector_action`，窄窗口会自动收成抽屉）
+    #     （`_category_action` / `_inspector_action`，折叠会释放中间区域宽度）
     #   · 当前页面位置 → 中央页签本身（文档 / 脑图面板）
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, '_drawer_scrim'):
+        if hasattr(self, '_category_action'):
             QtCore.QTimer.singleShot(0, self._apply_responsive_panels)
 
-    def _position_drawer(self):
-        if self._drawer_side is None:
-            return
-        outer = self.centralWidget()
-        # 工作区头部删掉之后，抽屉从窗口最上沿开始（以前要给它让出
-        # 一条 header 的高度）。
-        self._drawer_scrim.setGeometry(
-            0, 0, outer.width(), outer.height())
-        width = ui_tokens.LAYOUT[
-            'left-panel-width' if self._drawer_side == 'left'
-            else 'right-panel-width']
-        x = 0 if self._drawer_side == 'left' else max(
-            0, self._drawer_scrim.width() - width)
-        self._drawer.setGeometry(x, 0, width, self._drawer_scrim.height())
+    def _sidebar_menu(self):
+        menu = QtWidgets.QMenu(self)
+        for title, action in [('显示左栏   Ctrl+Alt+1', self._category_action),
+                              ('显示右栏   Ctrl+Alt+2', self._inspector_action)]:
+            entry = menu.addAction(title)
+            entry.setCheckable(True)
+            entry.setChecked(action.isChecked())
+            entry.toggled.connect(action.setChecked)
+        menu.addSeparator()
+        menu.addAction('折叠 / 展开左右栏   Tab / Ctrl+Alt+3', self._toggle_sidebars)
+        return menu
 
-    def _open_drawer(self, side):
-        if self._drawer_side == side:
-            return
-        self._close_drawer()
-        panel = (self.view.category_panel if side == 'left'
-                 else self.view._detail_panel)
-        self._drawer_side = side
-        panel.setParent(self._drawer)
-        self._drawer_layout.addWidget(panel)
-        self._position_drawer()
-        panel.show()
-        self._drawer_scrim.show()
-        self._drawer_scrim.raise_()
-        self._drawer_scrim.setFocus()
+    def _show_sidebar_menu(self, *_args):
+        self._sidebar_menu().exec(QtGui.QCursor.pos())
 
-    def _close_drawer(self):
-        if self._drawer_side is None:
-            return
-        side = self._drawer_side
-        self._drawer_side = None
-        panel = (self.view.category_panel if side == 'left'
-                 else self.view._detail_panel)
-        self._drawer_layout.removeWidget(panel)
-        panel.setParent(None)
-        panel.hide()
-        self.splitter.insertWidget(0 if side == 'left' else 2, panel)
-        self._drawer_scrim.hide()
-        self._apply_responsive_panels()
+    def _toggle_sidebars(self):
+        expand = not (self._category_action.isChecked() or self._inspector_action.isChecked())
+        self._category_action.setChecked(expand)
+        self._inspector_action.setChecked(expand)
 
     def _toggle_sidebar(self, side):
-        if self._drawer_side == side:
-            self._close_drawer()
-            return
-        panel = (self.view.category_panel if side == 'left'
-                 else self.view._detail_panel)
-        if panel.isHidden() or self.splitter.indexOf(panel) < 0:
-            self._open_drawer(side)
-        else:
-            action = (self._category_action if side == 'left'
-                      else self._inspector_action)
-            action.setChecked(False)
+        action = self._category_action if side == 'left' else self._inspector_action
+        action.setChecked(not action.isChecked())
 
     def _apply_responsive_panels(self):
+        """Collapse layout columns; never reparent a sidebar over the canvas."""
         if not hasattr(self, '_category_action'):
             return
-        if self._drawer_side is not None:
-            self._position_drawer()
-            return
-        shell = ui_tokens.LAYOUT
-        width = self.centralWidget().width()
-        handle = shell['splitter-hotzone']
-        want_left = self._category_action.isChecked()
-        want_right = self._inspector_action.isChecked() and self.tabs.currentIndex() == 0
-        show_left = want_left and width >= (
-            shell['left-panel-min'] + shell['centre-min-width'] + handle)
-        show_right = want_right and width >= (
-            shell['right-panel-min'] + shell['centre-min-width'] + handle +
-            (shell['left-panel-min'] + handle if show_left else 0))
-        self.view.category_panel.setVisible(show_left)
-        self.view._detail_panel.setVisible(show_right)
-        if hasattr(self, '_edge_handles'):
-            for side, shown, wanted in [('left', show_left, want_left), ('right', show_right, want_right)]:
-                button = self._edge_handles[side]
-                button.setVisible(wanted and not shown)
-                button.move(0 if side == 'left' else width - button.width(), max(0, (self.centralWidget().height() - button.height()) // 2))
-                button.raise_()
+        sizes = self.splitter.sizes()
+        before_left = not self._left_column.isHidden()
+        before_right = not self._right_column.isHidden()
+        if before_left and sizes[0]:
+            self._sidebar_widths['left'] = sizes[0]
+        if before_right and sizes[2]:
+            self._sidebar_widths['right'] = sizes[2]
+        show_left = self._category_action.isChecked()
+        show_right = self._inspector_action.isChecked()
+        self._left_column.setVisible(show_left)
+        self._right_column.setVisible(show_right)
+        material_mode = self.tabs.currentWidget() in (self.canvas_page, self.asset_browser)
+        self.view._detail_panel.setVisible(material_mode)
+        self._right_empty.setVisible(not material_mode)
+        self._restore_sidebars.setVisible(not show_left)
+        host = self._right_controls_layout if show_right else self._collapsed_window_layout
+        if self._window_controls.parentWidget() is not (self._right_header if show_right else self._collapsed_window_host):
+            host.addWidget(self._window_controls)
+        self._collapsed_window_host.setVisible(not show_right)
+        if before_left != show_left or before_right != show_right:
+            left = self._sidebar_widths['left'] if show_left else 0
+            right = self._sidebar_widths['right'] if show_right else 0
+            self.splitter.setSizes([left, max(1, self.splitter.width() - left - right), right])
         if self.filter_popover.isVisible():
             self._position_filter_popover()
 
     def eventFilter(self, watched, event):
+        # 方案 §9.2：无边框后，菜单栏空白区负责窗口拖动 / 双击最大化。
+        # 只拦截落在菜单栏、且不在任何菜单项上的鼠标事件；命中菜单项时
+        # 返回 False 让 QMenuBar 正常开菜单，不影响菜单交互。
+        # 用缓存引用 `_title_menubar` 而不是 self.menuBar() —— 本窗口被
+        # 装成了 application 级过滤器（见 __init__ 的 installEventFilter），
+        # 每个事件都会进来；menuBar() 在菜单栏为空时会**惰性新建**一个并发
+        # 出子事件，那些事件又被本过滤器收到 → 无限递归。缓存引用无副作用。
+        menubar = getattr(self, '_title_menubar', None)
+        if menubar is not None and watched is menubar:
+            if self._handle_titlebar_mouse(event):
+                return True
         popover = getattr(self, 'filter_popover', None)
         if popover is not None and popover.isVisible():
             close = event.type() == QtCore.QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape
@@ -1222,6 +1360,52 @@ class PrismMainWindow(QtWidgets.QMainWindow):
                 if event.type() == QtCore.QEvent.Type.KeyPress:
                     return True
         return super().eventFilter(watched, event)
+
+    def _handle_titlebar_mouse(self, event):
+        """菜单栏空白区的拖动 / 双击最大化。命中菜单项则不接管。"""
+        etype = event.type()
+        if etype not in (QtCore.QEvent.Type.MouseButtonPress,
+                         QtCore.QEvent.Type.MouseButtonDblClick):
+            return False
+        bar = getattr(self, '_title_menubar', None)
+        if bar is None:
+            return False
+        try:
+            pos = event.position().toPoint()
+        except AttributeError:  # pragma: no cover - 非鼠标事件
+            return False
+        if bar.actionAt(pos) is not None:
+            # 落在某个菜单标题上：交回 QMenuBar，照常下拉菜单。
+            return False
+        if etype == QtCore.QEvent.Type.MouseButtonDblClick:
+            self._toggle_maximize()
+            return True
+        if event.button() == Qt.MouseButton.LeftButton:
+            handle = self.windowHandle()
+            if handle is not None and hasattr(handle, 'startSystemMove'):
+                # 交给系统移动：贴靠、多显示器、DPI 全部原生处理，
+                # 比自己按鼠标位移 move() 稳（方案 §9.2）。
+                if handle.startSystemMove():
+                    return True
+        return False
+
+    def _toggle_maximize(self):
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def set_native_titlebar(self, visible):
+        """切换「系统原生标题栏 / 无边框外壳」，并同步窗口控制按钮显隐。
+
+        无边框（visible=False，默认）时显示我们自己的最小化/最大化/关闭
+        按钮；切回系统原生标题栏（visible=True）时隐藏它们，避免和系统
+        的按钮重复。缩放/贴靠在两种状态下都保留（WS_THICKFRAME 没动）。
+        """
+        super().set_native_titlebar(visible)
+        controls = getattr(self, '_title_controls', None)
+        if controls is not None:
+            controls.setVisible(not visible)
 
     def _build_layout_menu(self):
         menu = self.view.context_menu.addMenu(_('Interface Layout'))
@@ -1323,12 +1507,19 @@ class PrismMainWindow(QtWidgets.QMainWindow):
         if hasattr(previous, 'store_to_scene'):
             previous.store_to_scene()
         current = self.tabs.widget(index)
+        if hasattr(self, '_eagle_header_stack'):
+            browsing = current is self.asset_browser
+            self._eagle_header_stack.setCurrentWidget(self.asset_browser.toolbar if browsing else self.canvas_toolbar if current is self.canvas_page else self._eagle_drag)
+            self._centre_header.setFixedHeight(40 if current is self.canvas_page else 36)
+            self._centre_status.setVisible(not browsing)
+            self.view.category_panel.search.setVisible(not browsing)
+            self.view.category_panel.hint.setVisible(not browsing)
         if hasattr(current, 'load_from_scene'):
             current.load_from_scene()
         self._previous_tab = index
         is_canvas = index == 0
         # 常驻颜色条没有了（§8.3）：跟着画布页显隐的是这条 36 px 筛选条。
-        self.filter_bar.setVisible(is_canvas)
+        self.filter_bar.hide()
         if not is_canvas:
             self.filter_popover.hide()
             self.canvas_toolbar.filter_button.setChecked(False)
@@ -1344,7 +1535,6 @@ class PrismMainWindow(QtWidgets.QMainWindow):
     def reset_layout(self):
         self._category_action.setChecked(True)
         self._inspector_action.setChecked(True)
-        self._close_drawer()
         self._apply_responsive_panels()
         shell = ui_tokens.LAYOUT
         self.splitter.setSizes([
@@ -1358,7 +1548,7 @@ class PrismMainWindow(QtWidgets.QMainWindow):
         total = sum(1 for i in self.view.scene.items() if hasattr(i, 'save_id'))
         visible = sum(i.isVisible() for i in self.view.scene.items_for_save())
         zoom = self.view.transform().m11() * 100.0
-        self.statusBar().showMessage(
+        self._centre_status.showMessage(
             _('{total} items · {visible} shown · {selected} selected').format(
                 total=total, visible=visible, selected=selected) +
             _(' · Zoom {zoom:.0f}% · Ctrl+Shift+drag to drag out to '
@@ -1379,7 +1569,10 @@ class PrismMainWindow(QtWidgets.QMainWindow):
             event.ignore()
             return
         self.view.settings.setValue('MainWindow/geometry', self.saveGeometry())
+        self._apply_responsive_panels()
         self.view.settings.setValue('MainWindow/splitter', self.splitter.saveState())
+        for side, width in self._sidebar_widths.items():
+            self.view.settings.setValue('MainWindow/'+side+'Width', width)
         self.view.scene.deselect_all_items()
         self.browser_capture.stop()
         event.accept()

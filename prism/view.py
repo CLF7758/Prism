@@ -63,6 +63,10 @@ class PrismGraphicsView(MainControlsMixin,
     SAMPLE_COLOR_MODE = 3
     DRAW_MODE = 4
 
+    #: 这些 TYPE 的图元是"有原始字节的素材"，删除时走软删除进回收站；
+    #: 其余（文字 text、绘制线 path、错误占位 error）直接删。
+    TRASH_TYPES = ('pixmap', 'video', 'glb')
+
     def __init__(self, app, parent=None):
         super().__init__(parent)
         self.app = app
@@ -797,6 +801,15 @@ class PrismGraphicsView(MainControlsMixin,
             self.parent.setMenuBar(None)
 
     def on_action_show_titlebar(self, checked):
+        # 需求 4 / 方案 §9：无边框外壳是默认状态。切换标题栏交给窗口外壳层
+        # 用 WM_NCCALCSIZE 处理，保留 WS_THICKFRAME（原生缩放/贴靠/阴影）。
+        # 只有当 parent 不是带外壳的主窗口时（例如单元测试里传入的普通
+        # QMainWindow）才退回旧的 FramelessWindowHint 路径。
+        shell_toggle = getattr(self.parent, 'set_native_titlebar', None)
+        if callable(shell_toggle):
+            # checked=True → 显示系统原生标题栏；checked=False → 无边框外壳。
+            shell_toggle(checked)
+            return
         # The native frame supplies Windows drag-to-restore, snapping and
         # resize, so it stays on by default and is removed when unchecked.
         self.parent.setWindowFlag(
@@ -830,9 +843,20 @@ class PrismGraphicsView(MainControlsMixin,
     def on_action_delete_items(self):
         logger.debug('Deleting items...')
         self.cancel_active_modes()
+        selected = self.scene.selectedItems(user_only=True)
+        if not selected:
+            return
+        # 素材（图片/视频/模型）软删除进回收站，可恢复、可撤销、保存重开
+        # 仍在回收站；标注（文字、绘制线、错误占位）没有原始字节，直接删。
+        # 两类合成一步 DeleteSelection，用户撤销一次全部回来。
+        assets, others = [], []
+        for item in selected:
+            if getattr(item, 'TYPE', '') in self.TRASH_TYPES or getattr(item, '_asset_source', None):
+                assets.append(item)
+            else:
+                others.append(item)
         self.undo_stack.push(
-            commands.DeleteItems(
-                self.scene, self.scene.selectedItems(user_only=True)))
+            commands.DeleteSelection(self.scene, assets, others))
 
     def on_action_cut(self):
         logger.debug('Cutting items...')

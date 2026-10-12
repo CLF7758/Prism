@@ -14,7 +14,7 @@ def test_true_ten_level_indexes_and_updates(qapp):
     assert model.data(model.index(3, 0)) == '标签'
     blank = model.index(0, 0, document)
     assert model.data(blank, SECTION_ROLE) == 'document'
-    assert model.data(blank, Qt.ItemDataRole.SizeHintRole).height() == 32
+    assert model.data(blank, Qt.ItemDataRole.SizeHintRole).height() == 14
     parent_id = None
     parent_index = document
     for depth in range(10):

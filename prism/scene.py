@@ -40,6 +40,8 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
     cursor_cleared = QtCore.pyqtSignal()
     metadata_changed = QtCore.pyqtSignal()
     filter_changed = QtCore.pyqtSignal()
+    #: 素材被软删除 / 从回收站恢复后发出，让回收站面板和左栏计数刷新。
+    items_trashed = QtCore.pyqtSignal()
 
     MOVE_MODE = 1
     RUBBERBAND_MODE = 2
@@ -85,6 +87,7 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         self._group_drag_frame = None
         self.category_names = []
         self.tag_names = []
+        self.library_queries = []
         self.edit_item = None
         self.crop_item = None
         self._clear_ongoing = True
@@ -527,7 +530,7 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
 
         items = super().selectedItems()
         if user_only:
-            return list(filter(lambda i: hasattr(i, 'save_id'), items))
+            return list(filter(lambda i: hasattr(i, 'save_id') or getattr(i, '_asset_source', None), items))
         return items
 
     def items_by_type(self, itype):

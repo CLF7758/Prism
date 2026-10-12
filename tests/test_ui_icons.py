@@ -8,6 +8,7 @@ from prism.widgets.components.icons import ICON_DIR, icon, set_icon_button
 
 
 NAMES = (
+    'library', 'tag-outline', 'link',
     'folder', 'canvas', 'mindmap', 'document', 'tag', 'search', 'filter',
     'plus', 'more', 'chevron-down', 'close', 'undo', 'redo', 'trash', 'move',
     'export', 'settings', 'save-state',

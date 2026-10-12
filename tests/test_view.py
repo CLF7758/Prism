@@ -926,25 +926,23 @@ def test_on_action_show_menubar(view):
 
 
 def test_on_action_show_titlebar_checked(view):
-    with (patch.object(view.parent, 'show') as show_mock,
-          patch.object(view.parent, 'destroy') as destroy_mock,
-          patch.object(view.parent, 'create') as create_mock):
-        view.on_action_show_titlebar(True)
+    # 需求 4：主窗口带无边框外壳（window_shell）。勾选 Show Title Bar →
+    # 交回系统原生标题栏，走 WM_NCCALCSIZE，不再用 FramelessWindowHint
+    # +destroy/create（那条路会连 WS_THICKFRAME 一起砍掉，缩放/贴靠就没了）。
+    view.on_action_show_titlebar(True)
+    assert view.parent._native_titlebar is True
+    # 自绘的最小化/最大化/关闭按钮隐藏，避免和系统按钮重复。
+    assert view.parent._title_controls.isHidden()
     assert not (view.parent.windowFlags() & Qt.WindowType.FramelessWindowHint)
-    show_mock.assert_called_once()
-    destroy_mock.assert_called_once()
-    create_mock.assert_called_once()
 
 
 def test_on_action_show_titlebar_unchecked(view):
-    with (patch.object(view.parent, 'show') as show_mock,
-          patch.object(view.parent, 'destroy') as destroy_mock,
-          patch.object(view.parent, 'create') as create_mock):
-        view.on_action_show_titlebar(False)
-    assert view.parent.windowFlags() & Qt.WindowType.FramelessWindowHint
-    show_mock.assert_called_once()
-    destroy_mock.assert_called_once()
-    create_mock.assert_called_once()
+    # 取消勾选 → 回到无边框外壳（默认状态），自绘窗口控制按钮显示。
+    view.on_action_show_titlebar(False)
+    assert view.parent._native_titlebar is False
+    assert not view.parent._title_controls.isHidden()
+    # 无边框也不用 FramelessWindowHint：保留 WS_THICKFRAME 才有原生缩放/贴靠。
+    assert not (view.parent.windowFlags() & Qt.WindowType.FramelessWindowHint)
 
 
 @patch('prism.widgets.welcome_overlay.WelcomeOverlay.cursor')
@@ -993,7 +991,18 @@ def test_on_action_delete_items(view, item):
     view.scene.addItem(item)
     item.setSelected(True)
     view.on_action_delete_items()
-    assert view.scene.items() == []
+    # 需求 2 / 回收站闭环（方案 §7）：图片改为**软删除**进回收站，仍留在
+    # scene 里（保存时原图字节和元数据都保留，可撤销/恢复），不再硬删。
+    assert item in view.scene.items()
+    assert getattr(item, '_deleted_at', None) is not None
+    assert not item.isVisible()
+    assert not item.isSelected()
+    # 撤销后应回到可见、可选中、无删除标记的状态。
+    view.undo_stack.undo()
+    assert getattr(item, '_deleted_at', None) is None
+    assert item.isVisible()
+    view.undo_stack.redo()
+    assert getattr(item, '_deleted_at', None) is not None
     assert view.undo_stack.isClean() is False
     view.cancel_active_modes.assert_called_once()
 

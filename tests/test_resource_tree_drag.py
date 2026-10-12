@@ -213,7 +213,8 @@ def test_the_partition_row_and_blank_row_mean_move_to_the_section(qtbot):
     # 空白创建区是这个分区的最后一行
     blank = model.index(model.rowCount(document) - 1, 0, document)
     assert blank.data(NODE_TYPE_ROLE) == 'blank'
-    assert view.drop_intent_for(blank, row_rect(view, blank).center())[0] == \
+    assert view.isRowHidden(blank.row(), document)
+    assert view.drop_intent_for(blank, QtCore.QPoint())[0] == \
         ('append', None)
 
 

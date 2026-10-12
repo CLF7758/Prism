@@ -15,6 +15,8 @@ from PyQt6 import QtCore, QtGui, QtWidgets, sip
 
 from prism import commands, tags
 from prism.i18n import _
+from prism.project_catalog import (
+    ProjectAssetCatalog, AssetResult, UNASSIGNED_CANVAS, UNASSIGNED_LABEL)
 from prism.widgets import components, tag_panel
 from prism.widgets.resource_tree_model import (
     NODE_ID_ROLE, NODE_TYPE_ROLE, SECTION_ROLE, ResourceTreeModel)
@@ -71,6 +73,13 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         # 「只看没有标签的素材」（§8.3 筛选弹层的「未标记」字段）。
         # 界面上那条勾选行随红框删掉了，状态与筛选条件留着 —— 现在是弹层在用。
         self._untagged_only = False
+        # 结果模式（方案 §6.3）：None=浏览资源目录；'all'=全项目素材；
+        # 'untagged'=全项目未标签；'search'=搜索框驱动的综合项目搜索。
+        # 三种结果模式都复用 search_results 树控件，但渲染内容和返回行为不同。
+        self._result_mode = None
+        # 全项目素材查询服务（方案 §5.2）。在 _install_resource_service 里
+        # 创建，因为需要 resource_service 来解析画布路径。
+        self.catalog = None
         self._setup_ui()
         self._recount_timer = QtCore.QTimer(self)
         self._recount_timer.setSingleShot(True)
@@ -97,12 +106,19 @@ class MediaLibraryPanel(QtWidgets.QWidget):
 
     def _setup_ui(self):
         self.setObjectName('prismSidebar')
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setMinimumWidth(200)
         self.setMaximumWidth(16777215)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(12, 14, 12, 12)
         layout.setSpacing(8)
+
+        # 方案需求 5：整行"Prism 图标 + Prism 文字 + 加号按钮"品牌区删除。
+        # 新建页面/文件夹的入口在资源树右键菜单里（`create_requested`），
+        # 品牌行那个加号是重复入口，一并去掉。
+        # （这里原来 import 了 icon_button/tinted_icon 供品牌行使用，
+        #   品牌行删除后这两个已无人调用；`icon` 在下面搜索框处再导入。）
 
         self.search = components.LineEdit()
         self.search.setPlaceholderText(_('Search photos, documents, mind maps'))
@@ -122,10 +138,54 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         from prism.widgets.components.icons import icon
         self.search.addAction(icon('search'), QtWidgets.QLineEdit.ActionPosition.LeadingPosition)
         layout.addWidget(self.search)
-        clear_button = components.Button(_('Show All / Clear Filters'))
+        self._navigation = QtWidgets.QButtonGroup(self)
+        self._navigation.setExclusive(True)
+        self._nav_counts = {}
+        self._nav_buttons = {}
+        navigation = QtWidgets.QWidget()
+        navigation_layout = QtWidgets.QVBoxLayout(navigation)
+        navigation_layout.setContentsMargins(0, 0, 0, 0)
+        navigation_layout.setSpacing(2)
+        for key, name, glyph in (
+                ('all', '全部', 'library'),
+                ('unclassified', '未分类', 'unclassified'),
+                ('untagged', '未标签', 'tag-outline'),
+                ('recent', '最近使用', 'clock'),
+                ('trash', '回收站', 'trash')):
+            row = QtWidgets.QWidget()
+            row_layout = QtWidgets.QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 6, 0)
+            row_layout.setSpacing(4)
+            button = QtWidgets.QToolButton()
+            button.setObjectName('libraryNav')
+            button.setText(name)
+            button.setIcon(icon(glyph))
+            button.setIconSize(QtCore.QSize(17, 17))
+            button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                                 QtWidgets.QSizePolicy.Policy.Fixed)
+            button.setFixedHeight(29)
+            button.setToolTip('当前画布的素材' if key == 'all' else name)
+            if key != 'trash':
+                button.setCheckable(True)
+                self._navigation.addButton(button)
+            button.clicked.connect(lambda checked=False, target=key: self._navigate(target))
+            row_layout.addWidget(button, 1)
+            count = components.RoleLabel(role='secondary')
+            row_layout.addWidget(count)
+            self._nav_counts[key] = count
+            self._nav_buttons[key] = button
+            if key == 'all':
+                self.all_button = button
+                button.setChecked(True)
+            elif key == 'untagged':
+                self.untagged_button = button
+            navigation_layout.addWidget(row)
+        layout.addWidget(navigation)
+        layout.addWidget(components.RoleLabel('资源库', role='treeSection'))
+        clear_button = components.Button('清除筛选')
         self.clear_button = clear_button
         clear_button.clicked.connect(self._clear_search_or_filters)
-        layout.addWidget(clear_button)
 
         # （这里原来还有第二个输入框「标签查询」。用户问过"标签查询功能
         # 是不是和搜索功能重叠了"—— 界面上两个盒子确实让人分不清。现在
@@ -144,7 +204,6 @@ class MediaLibraryPanel(QtWidgets.QWidget):
             [_('All'), '★+', '★★+', '★★★+', '★★★★+', '★★★★★'])
         self.rating_filter.currentIndexChanged.connect(self._on_rating_filter)
         rating_row.addWidget(self.rating_filter, 1)
-        layout.addLayout(rating_row)
 
         # 左栏现在只有这一棵树。「筛选与旧分类」那个旧列表页签按用户
         # 要求删掉了 —— 分类行、标签勾选行和「未打标签」行都随它一起
@@ -161,9 +220,18 @@ class MediaLibraryPanel(QtWidgets.QWidget):
             self.resource_export_requested.emit)
         self.resource_tree.import_requested.connect(
             self.resource_import_requested.emit)
+        self.resource_tree.clicked.connect(self._browse_folder)
         self.resource_tree.new_tag_requested.connect(self.add_tag)
         self.resource_tree.manage_tags_requested.connect(self.manage_tags)
         layout.addWidget(self.resource_tree, stretch=1)
+        # 「返回资源目录」按钮（方案 §6.1）：全项目结果模式下必须有一个
+        # 明确的返回入口，不能进入结果后连返回都找不到。默认隐藏，只在
+        # _result_mode 非 None 时显示。
+        self.back_to_tree_button = components.Button('← 返回资源目录')
+        self.back_to_tree_button.setObjectName('sidebarBackToTree')
+        self.back_to_tree_button.clicked.connect(self._exit_result_mode)
+        self.back_to_tree_button.hide()
+        layout.addWidget(self.back_to_tree_button)
         self.search_results = QtWidgets.QTreeWidget()
         self.search_results.setObjectName('projectSearchResults')
         self.search_results.setStyleSheet(
@@ -181,7 +249,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self._search_timer = QtCore.QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(180)
-        self._search_timer.timeout.connect(self._refresh_project_search)
+        self._search_timer.timeout.connect(self._on_search_timer)
         self.resource_tree.tag_requested.connect(
             lambda name: self.search.setText('tag:' + json.dumps(name, ensure_ascii=False)))
         self.resource_tree.rename_tag_requested.connect(self.rename_tag)
@@ -191,7 +259,107 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self.hint.setWordWrap(True)
         layout.addWidget(self.hint)
 
+        self.filter_controls = QtWidgets.QWidget()
+        filter_layout = QtWidgets.QVBoxLayout(self.filter_controls)
+        filter_layout.addLayout(rating_row)
+        filter_layout.addWidget(clear_button)
+        self.filter_controls.hide()
+        layout.addWidget(self.filter_controls)
+        self.filter_button = components.LineEdit()
+        self.filter_button.setPlaceholderText('筛选目录')
+        self.filter_button.addAction(icon('filter'), QtWidgets.QLineEdit.ActionPosition.LeadingPosition)
+        self.filter_button.textChanged.connect(self._filter_directories)
+        self.filter_button.hide()
+        self.counts_changed.connect(self._update_navigation)
+
         self.scene.metadata_changed.connect(self._on_metadata_changed)
+
+    def _browse_folder(self, index):
+        if index.data(NODE_TYPE_ROLE) != 'folder' or index.data(SECTION_ROLE) != 'canvas':
+            return
+        window = self.view.window()
+        if not hasattr(window, 'asset_browser'):
+            return
+        node_id = index.data(NODE_ID_ROLE)
+        nodes = [self.resource_service._by_id(i) for i in self.resource_service._descendants(node_id)]
+        pages = {n['pageId'] for n in nodes if n and n.get('pageId')}
+        window.asset_browser.saved_rule = None
+        window.asset_browser.search.clear()
+        window.asset_browser.open('all', pages, str(index.data()))
+
+    def _filter_directories(self, text):
+        needle = text.strip().casefold()
+        model = self.resource_tree.model()
+        def walk(parent):
+            found = False
+            for row in range(model.rowCount(parent)):
+                index = model.index(row, 0, parent)
+                children = walk(index)
+                match = not needle or needle in str(index.data() or '').casefold() or children
+                self.resource_tree.setRowHidden(row, parent, not match)
+                if needle and children:
+                    self.resource_tree.expand(index)
+                found |= match
+            return found
+        walk(QtCore.QModelIndex())
+
+    def _navigate(self, target):
+        if target == 'trash':
+            self.resource_tree.trash_requested.emit()
+        elif hasattr(self.view.window(), 'asset_browser'):
+            browser = self.view.window().asset_browser
+            browser.saved_rule = None
+            browser.search.clear()
+            browser.open(target)
+        elif target in ('all', 'untagged'):
+            # 方案 §6：全部/未标签进入全项目结果模式，不再只过滤当前画布。
+            # 当前画布的评分/颜色筛选仍然保留原本含义（方案 §6.3），但
+            # 结果列表的范围是全项目。
+            self._enter_result_mode(target)
+        else:
+            self.clear_filter()
+            self._apply_filter()
+            self._update_navigation()
+
+    def _update_navigation(self, counts=None):
+        """刷新左栏导航数字和资源树计数（方案 §5.4）。
+
+        全部/未标签/回收站都走 `ProjectAssetCatalog` 的全项目口径，不再
+        按当前画布过滤。资源树父文件夹的递归汇总由
+        `ResourceTreeModel.set_asset_counts()` 基于 `canvas_counts()` 做。
+
+        计数只读元数据，不解码图像。300 ms 防抖由 `_recount_timer` 保证，
+        平移/缩放/拖动中的每一次 `scene.changed` 不会触发完整重扫。
+        """
+        if self.catalog is None:
+            # _install_resource_service 还没跑（极早期初始化），退回到
+            # 空数字，避免 AttributeError。
+            for key in ('all', 'untagged', 'trash'):
+                if key in self._nav_counts:
+                    self._nav_counts[key].setText('0')
+            return
+        total = self.catalog.total_count()
+        untagged = self.catalog.untagged_count()
+        trash = self.catalog.trash_top_level_count()
+        self._nav_counts['all'].setText(f'{total:,}')
+        self._nav_counts['untagged'].setText(f'{untagged:,}')
+        # 需求 1：左栏「标签管理」入口已删除，`_nav_counts` 不再有 'tags'。
+        if 'trash' in self._nav_counts:
+            self._nav_counts['trash'].setText(str(trash))
+        browser = getattr(self.view.window(), 'asset_browser', None)
+        mode = browser.mode if browser is not None and browser.isVisible() else self._result_mode
+        self._navigation.setExclusive(False)
+        for key, button in self._nav_buttons.items():
+            if button.isCheckable():
+                button.setChecked(key == mode)
+        self._navigation.setExclusive(True)
+        active = (self._min_rating or self._untagged_only
+                  or self._active_tags or self._active_filter)
+        self.filter_button.setToolTip('按名称筛选左侧目录；素材筛选在顶部漏斗中')
+        # 资源树计数：全项目口径，含 UNASSIGNED_CANVAS 桶。
+        # set_asset_counts 已经实现文件夹层级的递归 roll-up。
+        page_counts = self.catalog.canvas_counts()
+        self.resource_tree.model().set_asset_counts(page_counts)
 
     def _install_resource_service(self):
         project_id = self.scene.project_id
@@ -204,7 +372,10 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self.resource_service.changed.connect(self._on_resource_nodes_changed)
         self.resource_tree.setModel(ResourceTreeModel(
             self.resource_service, self.resource_tree))
-        self.resource_tree.expandAll()
+        self.resource_tree.sync_sections()
+        # 全项目素材查询服务（方案 §5.2）。左栏数字、资源树计数、结果列表
+        # 和状态栏都走这一层，避免各处写不同的过滤条件导致口径漂移。
+        self.catalog = ProjectAssetCatalog(self.scene, self.resource_service)
 
     def _on_resource_nodes_changed(self, _change):
         self.scene.workspace_nodes = self.resource_service.nodes
@@ -217,6 +388,11 @@ class MediaLibraryPanel(QtWidgets.QWidget):
             self._search_timer.start()
 
     def _clear_search_or_filters(self):
+        # 结果模式下，这个按钮的文案是"退出结果 / 返回资源目录"，
+        # 点击应退出结果模式（方案 §6.1）。
+        if self._result_mode is not None:
+            self._exit_result_mode()
+            return
         if self.search.text().strip():
             self.search.clear()
         else:
@@ -224,48 +400,36 @@ class MediaLibraryPanel(QtWidgets.QWidget):
 
     def _on_project_search(self, text):
         active = bool(text.strip())
-        window = self.view.window()
-        if active and not getattr(self, '_search_origin', None):
-            self._search_origin = (getattr(window, 'current_page_kind', 'canvas'),
-                getattr(window, 'current_page_id', None), self.view.transform(),
-                self.view.mapToScene(self.view.viewport().rect().center()))
-            self._search_origin_panel = None
-            self._search_origin_view = None
-            if hasattr(window, 'tabs'):
-                panel = window.tabs.currentWidget()
-                if hasattr(panel, 'capture_search_view'):
-                    self._search_origin_panel = panel
-                    origin = self._search_origin
-                    def captured(state):
-                        if getattr(self, '_search_origin', None) is origin:
-                            self._search_origin_view = state
-                    panel.capture_search_view(captured)
-        self.resource_tree.setVisible(not active)
-        self.search_results.setVisible(active)
-        self.rating_label.setVisible(not active)
-        self.rating_filter.setVisible(not active)
-        self.clear_button.setText('退出搜索 / 返回原位置' if active else _('Show All / Clear Filters'))
-        if active:
+        # 方案 §6.1：在全项目结果模式（all/untagged）下，搜索框用来过滤
+        # 当前结果列表，不切换到综合项目搜索。只有从浏览模式进入搜索时
+        # 才切换到 'search' 模式。
+        if self._result_mode in ('all', 'untagged'):
+            # 结果模式内部过滤：用 timer 防抖，避免每次按键都重建结果列表
             self._search_timer.start()
-        else:
-            self._search_timer.stop()
-            self.search_results.clear()
-            for item in getattr(self, '_search_pinned_items', []):
-                if not sip.isdeleted(item):
-                    item._keep_visible = False
-            self._search_pinned_items = []
-            origin = getattr(self, '_search_origin', None)
-            self._search_origin = None
-            if origin and origin[1] and hasattr(window, 'open_workspace_page'):
-                window.open_workspace_page(origin[0], origin[1])
-                if origin[0] == 'canvas':
-                    self.view.setTransform(origin[2])
-                    self.view.centerOn(origin[3])
-                else:
-                    panel = getattr(self, '_search_origin_panel', None)
-                    if panel is not None and not sip.isdeleted(panel):
-                        panel.restore_search_view(getattr(self, '_search_origin_view', None))
-            self.update_counts()
+            return
+        if active and self._result_mode is None:
+            # 从浏览模式进入搜索：记录原位置，切换到 search 模式
+            self._enter_result_mode('search')
+            return
+        if active and self._result_mode == 'search':
+            # 已经在 search 模式，刷新结果
+            self._search_timer.start()
+            return
+        if not active and self._result_mode == 'search':
+            # 清空搜索框：退出 search 模式，回到资源目录
+            self._exit_result_mode()
+            return
+        # 其余情况（active 但 _result_mode 已经是 all/untagged 已在上面
+        # 处理；not active 且 _result_mode 是 None）不做任何事。
+
+    def _on_search_timer(self):
+        """搜索防抖 timer 的分发：按当前结果模式选择刷新方式。"""
+        if not self._scene_alive():
+            return
+        if self._result_mode in ('all', 'untagged'):
+            self._refresh_result_mode()
+        elif self._result_mode == 'search':
+            self._refresh_project_search()
 
     def _refresh_project_search(self):
         from prism.project_search import search_project
@@ -301,6 +465,11 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         result = row.data(0, QtCore.Qt.ItemDataRole.UserRole)
         if not result:
             return
+        # 全项目结果模式（方案 §6）：AssetResult 实例
+        if isinstance(result, AssetResult):
+            self._locate_asset_result(result)
+            return
+        # 综合项目搜索（原有逻辑）：dict 结果
         window = self.view.window()
         kind = result['kind']
         if kind == 'tag':
@@ -340,6 +509,264 @@ class MediaLibraryPanel(QtWidgets.QWidget):
             if panel is not None:
                 panel.locate_search_result(result.get('match_text', '') if kind == 'document_text' else
                     {'path': result['node_path'], 'uid': result.get('node_uid')})
+
+    def _locate_asset_result(self, result):
+        """定位全项目结果里的一张素材（方案 §6.1"选中结果能打开原画布并
+        定位/选中该图片"）。
+
+        - 打开素材所属画布（无归属时回落到 default-canvas 或第一个画布）
+        - pin 住素材使其不被画布隔离隐藏
+        - 选中并居中
+        - 不重排、不移动、不重新导入（方案 §6.3"定位图片只改变打开的
+          页面和选择/视角"）
+        """
+        item = result.item
+        if item is None or sip.isdeleted(item):
+            self._refresh_result_mode()
+            return
+        window = self.view.window()
+        page_kind, page_id = (self.catalog.locate(item)
+                              if self.catalog is not None
+                              else ('canvas', result.canvas_id))
+        if page_id is None:
+            # 原画布已永久删除且没有可用回落（方案 §7.4）。提示用户，
+            # 不悄悄恢复到不存在的 ID。
+            QtWidgets.QMessageBox.information(
+                self, '无法定位',
+                '该素材的原画布已不存在，且项目里没有可用的回落画布。\n'
+                '请先在资源树里创建一个画布，或从回收站恢复原画布。')
+            return
+        if hasattr(window, 'open_workspace_page'):
+            window.open_workspace_page(page_kind, page_id)
+        item._keep_visible = True
+        if not hasattr(self, '_search_pinned_items'):
+            self._search_pinned_items = []
+        self._search_pinned_items.append(item)
+        item.setVisible(True)
+        self.scene.clearSelection()
+        item.setSelected(True)
+        self.view.centerOn(item)
+
+    # ── 全项目结果模式（方案 §6） ─────────────────────────────
+
+    def _enter_result_mode(self, mode):
+        """进入全项目结果模式。
+
+        mode: 'all' | 'untagged' | 'search'
+
+        - 隐藏资源树，显示 search_results 和「返回资源目录」按钮
+        - 记录进入前的页面/视角，退出时恢复（方案 §6.3"返回目录时恢复
+          原有展开状态和滚动位置"）
+        - 立即渲染结果
+        """
+        if mode not in ('all', 'untagged', 'search'):
+            return
+        window = self.view.window()
+        # 记录原位置（只在第一次进入结果模式时记，避免在结果模式内部
+        # 切换 all/untagged 时把"原位置"覆盖成结果模式自己的状态）。
+        if self._result_mode is None and not getattr(self, '_search_origin', None):
+            self._search_origin = (
+                getattr(window, 'current_page_kind', 'canvas'),
+                getattr(window, 'current_page_id', None),
+                self.view.transform(),
+                self.view.mapToScene(self.view.viewport().rect().center()))
+            self._search_origin_panel = None
+            self._search_origin_view = None
+            if hasattr(window, 'tabs'):
+                panel = window.tabs.currentWidget()
+                if hasattr(panel, 'capture_search_view'):
+                    self._search_origin_panel = panel
+                    origin = self._search_origin
+
+                    def captured(state):
+                        if getattr(self, '_search_origin', None) is origin:
+                            self._search_origin_view = state
+                    panel.capture_search_view(captured)
+        # 保存资源树展开状态和滚动位置，退出时恢复
+        if self._result_mode is None:
+            self._tree_expanded_state = self._capture_tree_state()
+        self._result_mode = mode
+        # 方案 §6.3：全部/未标签决定全项目查询范围，不再过滤当前画布。
+        # 清除 _untagged_only，让画布保持正常显示（未标签过滤由结果列表
+        # 承担）。search 模式不动这个标志。
+        if mode in ('all', 'untagged'):
+            self._untagged_only = False
+        self.resource_tree.setVisible(False)
+        self.search_results.setVisible(True)
+        self.back_to_tree_button.setVisible(True)
+        self.rating_label.setVisible(False)
+        self.rating_filter.setVisible(False)
+        # 结果模式下清除筛选按钮的文案跟随模式
+        self.clear_button.setText('退出结果 / 返回资源目录')
+        self._refresh_result_mode()
+        self._update_navigation()
+
+    def _exit_result_mode(self):
+        """退出结果模式，回到资源目录浏览（方案 §6.1"返回资源目录"）。"""
+        if self._result_mode is None:
+            return
+        self._result_mode = None
+        self.search_results.clear()
+        self.search_results.setVisible(False)
+        self.back_to_tree_button.setVisible(False)
+        self.resource_tree.setVisible(True)
+        self.rating_label.setVisible(True)
+        self.rating_filter.setVisible(True)
+        self.clear_button.setText(_('Show All / Clear Filters'))
+        # 清除搜索框（不触发 _on_project_search 的递归）
+        self.search.blockSignals(True)
+        self.search.clear()
+        self.search.blockSignals(False)
+        # 取消 pin 住的素材
+        for item in getattr(self, '_search_pinned_items', []):
+            if not sip.isdeleted(item):
+                item._keep_visible = False
+        self._search_pinned_items = []
+        # 恢复原页面/视角
+        window = self.view.window()
+        origin = getattr(self, '_search_origin', None)
+        self._search_origin = None
+        if origin and origin[1] and hasattr(window, 'open_workspace_page'):
+            window.open_workspace_page(origin[0], origin[1])
+            if origin[0] == 'canvas':
+                self.view.setTransform(origin[2])
+                self.view.centerOn(origin[3])
+            else:
+                panel = getattr(self, '_search_origin_panel', None)
+                if panel is not None and not sip.isdeleted(panel):
+                    panel.restore_search_view(
+                        getattr(self, '_search_origin_view', None))
+        # 恢复资源树展开状态和滚动位置
+        self._restore_tree_state(getattr(self, '_tree_expanded_state', None))
+        self._tree_expanded_state = None
+        # 结果模式下可能 pin 了素材，退出后恢复画布隔离
+        self._untagged_only = False
+        self._apply_filter()
+        self.update_counts()
+
+    def _refresh_result_mode(self):
+        """按当前 _result_mode 重新渲染结果列表。"""
+        if self._result_mode is None:
+            return
+        if self._result_mode == 'search':
+            self._refresh_project_search()
+            return
+        # 'all' / 'untagged'：走 catalog 查询
+        if self.catalog is None:
+            return
+        text = self.search.text().strip()
+        query, expression = self._split_query(text)
+        results = self.catalog.query(
+            text=query,
+            tag_expression=expression,
+            untagged_only=(self._result_mode == 'untagged'),
+            min_rating=self._min_rating,
+        )
+        self._render_asset_results(results)
+
+    def _render_asset_results(self, results):
+        """把 AssetResult 列表渲染到 search_results 树控件。
+
+        按画布路径分组（方案 §6.1"结果至少显示素材名称、所属画布及资源
+        路径"）。1562 行 QTreeWidgetItem 在 Qt 里可接受（万级才需要虚拟化），
+        不加载缩略图，纯文本行，构建开销 < 100 ms。
+        """
+        self.search_results.clear()
+        if not results:
+            # 空状态（方案 §6.2"若结果为空显示明确提示，而不是一片空白"）
+            empty = QtWidgets.QTreeWidgetItem([
+                '项目中的素材均已添加标签'
+                if self._result_mode == 'untagged'
+                else '没有匹配的素材'])
+            empty.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+            self.search_results.addTopLevelItem(empty)
+            self.hint.setText('0 个结果')
+            return
+        # 按 path 分组
+        groups = {}
+        order = []
+        for result in results:
+            key = result.path or UNASSIGNED_LABEL
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(result)
+        total_shown = 0
+        for key in order:
+            group_results = groups[key]
+            group = QtWidgets.QTreeWidgetItem(
+                [f'{key}  ({len(group_results)})'])
+            group.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+            self.search_results.addTopLevelItem(group)
+            for result in group_results:
+                title = result.title or '未命名'
+                suffix = ''
+                if result.rating:
+                    suffix += '  ' + '★' * result.rating
+                if result.tags:
+                    suffix += '  [' + ', '.join(result.tags[:3]) + (
+                        '…' if len(result.tags) > 3 else '') + ']'
+                row = QtWidgets.QTreeWidgetItem(group, [title + suffix])
+                row.setData(0, QtCore.Qt.ItemDataRole.UserRole, result)
+                row.setToolTip(0, self._asset_tooltip(result))
+                total_shown += 1
+        self.search_results.expandAll()
+        self.hint.setText(f'全项目：{len(results)} 个素材')
+
+    @staticmethod
+    def _asset_tooltip(result):
+        lines = [result.title]
+        if result.path:
+            lines.append('位置：' + result.path)
+        if result.filename:
+            lines.append('文件：' + result.filename)
+        if result.tags:
+            lines.append('标签：' + ', '.join(result.tags))
+        if result.rating:
+            lines.append('评分：' + '★' * result.rating)
+        if result.notes:
+            notes = result.notes.strip()
+            if len(notes) > 120:
+                notes = notes[:120] + '…'
+            lines.append('备注：' + notes)
+        return '\n'.join(lines)
+
+    def _capture_tree_state(self):
+        """保存资源树展开状态和滚动位置。"""
+        tree = self.resource_tree
+        model = tree.model()
+        if model is None:
+            return None
+        expanded = []
+
+        def walk(parent_index):
+            for row in range(model.rowCount(parent_index)):
+                index = model.index(row, 0, parent_index)
+                if tree.isExpanded(index):
+                    node_id = index.data(NODE_ID_ROLE)
+                    if node_id:
+                        expanded.append(node_id)
+                    walk(index)
+        walk(QtCore.QModelIndex())
+        return {
+            'expanded': expanded,
+            'scroll': tree.verticalScrollBar().value(),
+        }
+
+    def _restore_tree_state(self, state):
+        """恢复资源树展开状态和滚动位置。"""
+        if not state:
+            return
+        tree = self.resource_tree
+        model = tree.model()
+        if model is None:
+            return
+        tree.collapseAll()
+        for node_id in state.get('expanded', []):
+            index = model.index_for_id(node_id)
+            if index.isValid():
+                tree.expand(index)
+        tree.verticalScrollBar().setValue(state.get('scroll', 0))
 
     # ── Navigation helpers ────────────────────────────────────
 
@@ -456,6 +883,10 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self._apply_filter(keep_pinned=True)
         self.counts_changed.emit(counts)
         self.search_content_changed()
+        # 方案 §6.2：结果模式下，素材增删/标签编辑后结果列表要同步刷新。
+        # 用 timer 防抖，避免连续 metadata_changed 触发多次重建。
+        if self._result_mode is not None:
+            self._search_timer.start()
         if changed:
             self.categories_changed.emit()
 
@@ -535,6 +966,10 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         """
         if not self._scene_alive():
             return
+        browser = getattr(self.view.window(), 'asset_browser', None)
+        if browser is not None and browser.isVisible():
+            browser.schedule()
+            return
         active = self._active_filter
         # The project search box does not change canvas visibility.
         query, tag_expression = '', ''
@@ -554,7 +989,14 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         # Phase 1: compute visibility (no scene mutations)
         changes = []
         visible = 0
-        for item in self.scene.items_for_save():
+        for item in self.catalog.asset_items():
+            # 软删除的素材（在回收站里）永远不在画布上露面，也不参与任何
+            # 画布隔离/分类/标签判定。万一它此刻是可见的（例如刚从回收站
+            # 状态被别的逻辑改动），这里把它按回隐藏。
+            if getattr(item, '_deleted_at', None) is not None:
+                if item.isVisible():
+                    changes.append((item, False))
+                continue
             # Annotations ignore media filters, but still belong to one canvas.
             if getattr(item, 'TYPE', '') in ANNOTATION_TYPES:
                 canvas = self._item_canvas(item) or 'default-canvas'

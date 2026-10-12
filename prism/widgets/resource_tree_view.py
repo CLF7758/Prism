@@ -5,7 +5,8 @@ from PyQt6.QtCore import Qt
 
 from prism.widgets.components.icons import icon
 from prism.widgets.resource_tree_model import (
-    NODE_ID_ROLE, NODE_TYPE_ROLE, SECTION_ROLE, TAG_NAME_ROLE, UI_SECTIONS)
+    NODE_ID_ROLE, NODE_TYPE_ROLE, SECTION_ROLE, TAG_NAME_ROLE, UI_SECTIONS,
+    ASSET_COUNT_ROLE)
 from prism import ui_tokens
 from prism.i18n import _
 
@@ -64,12 +65,19 @@ class _BlankAreaDelegate(QtWidgets.QStyledItemDelegate):
                             side, side)
 
     def paint(self, painter, option, index):
-        super().paint(painter, option, index)
-        if option.state & QtWidgets.QStyle.StateFlag.State_Selected:
+        count = index.data(ASSET_COUNT_ROLE)
+        content = QtWidgets.QStyleOptionViewItem(option)
+        if count is not None:
+            content.rect = option.rect.adjusted(0, 0, -32, 0)
+        super().paint(painter, content, index)
+        if count is not None:
             painter.save()
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QtGui.QColor(ui_tokens.COLOURS_DARK['accent']))
-            painter.drawRoundedRect(QtCore.QRectF(option.rect.left(), option.rect.top() + 5, 2, option.rect.height() - 10), 1, 1)
+            painter.setPen(QtGui.QColor(ui_tokens.COLOURS_DARK['sidebar-muted']))
+            font = painter.font()
+            font.setPixelSize(11)
+            painter.setFont(font)
+            painter.drawText(option.rect.adjusted(0, 0, -6, 0),
+                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(count))
             painter.restore()
         kind = index.data(NODE_TYPE_ROLE)
         if kind == 'section':
@@ -202,6 +210,9 @@ class ResourceTreeView(QtWidgets.QTreeView):
         super().setModel(model)
         if model is None:
             return
+        model.modelReset.connect(self.sync_sections)
+        model.rowsInserted.connect(self.sync_sections)
+        self.sync_sections()
         model.draft_committed.connect(self.create_committed)
         model.draft_refused.connect(self._show_refusal)
         # 换工程了：把上次记下的焦点/展开/滚动位置放回去（§7.6）
@@ -210,6 +221,19 @@ class ResourceTreeView(QtWidgets.QTreeView):
         if selection is not None:
             selection.currentChanged.connect(self._schedule_state_save)
             selection.selectionChanged.connect(self._enforce_single_section)
+
+    def sync_sections(self, *_args):
+        """Hide legacy drop-target rows; empty sections have no disclosure arrow."""
+        model = self.model()
+        if model is None:
+            return
+        for row in range(model.rowCount()):
+            section = model.index(row, 0)
+            for child_row in range(model.rowCount(section)):
+                child = model.index(child_row, 0, section)
+                self.setRowHidden(child_row, section, child.data(NODE_TYPE_ROLE) == 'blank')
+            if not model.hasChildren(section):
+                self.collapse(section)
 
     def begin_create(self, section, node_type, parent_id=None,
                      base_title=''):

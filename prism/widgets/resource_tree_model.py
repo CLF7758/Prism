@@ -27,6 +27,7 @@ NODE_MIME = 'application/x-prism-tree-nodes'
 SECTION_TITLES = {'canvas': '画布', 'mindmap': '脑图',
                   'document': '文档', 'tag': '标签'}
 NODE_ID_ROLE = Qt.ItemDataRole.UserRole + 1
+ASSET_COUNT_ROLE = Qt.ItemDataRole.UserRole + 5
 SECTION_ROLE = Qt.ItemDataRole.UserRole + 2
 NODE_TYPE_ROLE = Qt.ItemDataRole.UserRole + 3
 TAG_NAME_ROLE = Qt.ItemDataRole.UserRole + 4
@@ -47,6 +48,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         self._token_to_key = {}
         self._draft = None
         self._tag_records = {}
+        self._asset_counts = {}
         self._load()
         service.changed.connect(self._on_service_changed)
 
@@ -138,6 +140,9 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             return 0
         return len(self._children.get(self._key(parent), []))
 
+    def hasChildren(self, parent=QtCore.QModelIndex()):
+        return any(not key.startswith(BLANK_PREFIX) for key in self._children.get(self._key(parent), []))
+
     def columnCount(self, parent=QtCore.QModelIndex()):
         return 1
 
@@ -145,6 +150,19 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         if not index.isValid():
             return None
         key = self._key(index)
+        if role == ASSET_COUNT_ROLE:
+            node = self._nodes.get(key)
+            if node is not None and node['nodeType'] == 'tag':
+                return node.get('assetCount', 0)
+            if node is None or node['section'] != 'canvas':
+                return None
+            def count(node_key):
+                member = self._nodes[node_key]
+                if member['nodeType'] == 'page':
+                    return self._asset_counts.get(member.get('pageId'), 0)
+                return sum(count(child) for child in self._children.get(node_key, [])
+                           if child in self._nodes)
+            return count(key)
         if key.startswith(BLANK_PREFIX):
             section = key[len(BLANK_PREFIX):]
             if role == SECTION_ROLE:
@@ -154,7 +172,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             if role == Qt.ItemDataRole.ToolTipRole:
                 return '右键创建页面或文件夹' if section != 'tag' else '右键创建标签'
             if role == Qt.ItemDataRole.SizeHintRole:
-                height = 32
+                height = 14
                 return QSize(0, height)
             return None
         if key.startswith(DRAFT_PREFIX):
@@ -173,7 +191,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         if role == Qt.ItemDataRole.DisplayRole:
             return SECTION_TITLES[key] if node is None else node['title']
         if role == Qt.ItemDataRole.SizeHintRole:
-            return QSize(0, 32)
+            return QSize(0, 32 if node is None else 28)
         if role == Qt.ItemDataRole.DecorationRole:
             name = key if node is None else ('folder' if node['nodeType'] == 'folder' else 'tag' if node['section'] == 'tag' else node['section'])
             colour = (ui_tokens.FOLDER_COLOURS.get((node or {}).get('colour', 'blue'), '#79AEFF')
@@ -215,6 +233,15 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         return (Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable |
                 Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled |
                 Qt.ItemFlag.ItemIsDropEnabled)
+
+    def set_asset_counts(self, counts):
+        if self._asset_counts == counts:
+            return
+        self._asset_counts = dict(counts)
+        for key, node in self._nodes.items():
+            if node['section'] == 'canvas':
+                index = self._index_for(key)
+                self.dataChanged.emit(index, index, [ASSET_COUNT_ROLE])
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if role != Qt.ItemDataRole.EditRole or not index.isValid():
@@ -320,7 +347,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             parent_name = getattr(node.parent, 'name', node.parent)
             records[key] = {'id': key, 'section': 'tag', 'nodeType': 'tag',
                 'tagName': node.name, 'aliases': list(node.aliases),
-                'title': f'{node.label}  ({node.count})', 'order': order,
+                'title': node.label, 'assetCount': node.count, 'order': order,
                 'parentId': 'catalogue-tag:' + parent_name if parent_name else None}
         if records != self._tag_records:
             self._tag_records = records

@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with Prism.  If not, see <https://www.gnu.org/licenses/>.
 
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, QtWidgets
 from prism.i18n import _
 
 
@@ -67,6 +67,129 @@ class DeleteItems(QtGui.QUndoCommand):
         for item in self.items:
             item.setSelected(True)
             self.scene.addItem(item)
+
+
+def _trash_timestamp():
+    """回收站时间戳，本地时区、精确到秒，和页面节点的 deletedAt 格式一致。"""
+    return QtCore.QDateTime.currentDateTime().toString(QtCore.Qt.DateFormat.ISODate)
+
+
+_SELECTABLE = QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+
+
+def _mark_item_trashed(item, stamp):
+    """把一张素材标成"在回收站里"：盖时间戳、隐藏、取消可选中。
+
+    数据一个字节都不动 —— 素材还留在场景里，`items_for_save()` 照样保存
+    它，sqlar 里的原始字节也不会被清。所谓"删除"只是这一个状态位。
+    """
+    item._deleted_at = stamp
+    if item.isSelected():
+        item.setSelected(False)
+    item.setFlag(_SELECTABLE, False)
+    item.setVisible(False)
+
+
+def _mark_item_restored(item):
+    """从回收站恢复：清时间戳、恢复可选中、重新显示。
+
+    位置、缩放、旋转、翻转、标签、评分、字节全都没动过，所以恢复出来的
+    和删之前是同一张（方案 §7.3"恢复后素材属性不变"）。
+    """
+    item._deleted_at = None
+    item.setFlag(_SELECTABLE, True)
+    item.setVisible(True)
+
+
+class TrashItems(QtGui.QUndoCommand):
+    """软删除素材：丢进回收站，可撤销、可恢复、保存后重开仍在回收站。
+
+    注释、绘制线这类"标注"不走这里（它们没有原始字节要保，用 `DeleteItems`
+    直接删）。回收站的"永久删除"也不走这里 —— 那才是真正移除。
+    """
+
+    def __init__(self, scene, items):
+        super().__init__(_('Move items to trash'))
+        self.scene = scene
+        self.items = list(items)
+        self._stamp = None
+
+    def redo(self):
+        if self._stamp is None:
+            self._stamp = _trash_timestamp()
+        self.scene.deselect_all_items()
+        for item in self.items:
+            _mark_item_trashed(item, self._stamp)
+        self._notify()
+
+    def undo(self):
+        self.scene.deselect_all_items()
+        for item in self.items:
+            _mark_item_restored(item)
+        self._notify()
+
+    def _notify(self):
+        if hasattr(self.scene, 'items_trashed'):
+            self.scene.items_trashed.emit()
+        if hasattr(self.scene, 'metadata_changed'):
+            self.scene.metadata_changed.emit()
+
+
+class RestoreItems(QtGui.QUndoCommand):
+    """从回收站恢复素材（回收站面板里的"恢复"按钮走这条，可撤销）。"""
+
+    def __init__(self, scene, items):
+        super().__init__(_('Restore items from trash'))
+        self.scene = scene
+        self.items = list(items)
+        self._stamps = {}
+
+    def redo(self):
+        self.scene.deselect_all_items()
+        for item in self.items:
+            self._stamps[id(item)] = getattr(item, '_deleted_at', None)
+            _mark_item_restored(item)
+        self._notify()
+
+    def undo(self):
+        self.scene.deselect_all_items()
+        for item in self.items:
+            _mark_item_trashed(item, self._stamps.get(id(item))
+                              or _trash_timestamp())
+        self._notify()
+
+    def _notify(self):
+        if hasattr(self.scene, 'items_trashed'):
+            self.scene.items_trashed.emit()
+        if hasattr(self.scene, 'metadata_changed'):
+            self.scene.metadata_changed.emit()
+
+
+class DeleteSelection(QtGui.QUndoCommand):
+    """一次"删除"里素材和标注分开处理，但合成一步撤销。
+
+    素材（图片/视频/模型）走软删除进回收站，可恢复；标注（文字、绘制线、
+    错误占位）没有原始字节要保，直接删。用户按一次 Delete，撤销一次就
+    两类全回来 —— 不用记"哪部分是回收站、哪部分是真删"。
+    """
+
+    def __init__(self, scene, assets, others):
+        super().__init__(_('Delete items'))
+        self.scene = scene
+        self._trash = TrashItems(scene, assets) if assets else None
+        self._delete = DeleteItems(scene, others) if others else None
+
+    def redo(self):
+        if self._trash is not None:
+            self._trash.redo()
+        if self._delete is not None:
+            self._delete.redo()
+
+    def undo(self):
+        if self._delete is not None:
+            self._delete.undo()
+        if self._trash is not None:
+            self._trash.undo()
 
 
 class MoveItemsBy(QtGui.QUndoCommand):
