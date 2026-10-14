@@ -330,6 +330,14 @@ class ResourceTreeService(QtCore.QObject):
                            'new': list(node_ids), 'undo': '恢复原排序'})
         return list(node_ids)
 
+    def can_trash(self, node_id):
+        node = self._by_id(node_id)
+        if node is None:
+            return False
+        affected = {node_id} | set(self._descendants(node_id))
+        return not any(self._by_id(key).get('pageId') == 'default-canvas'
+                       for key in affected)
+
     def trash(self, node_ids, deleted_at):
         """Soft-delete selected roots and their descendants together."""
         if not deleted_at:
@@ -344,6 +352,8 @@ class ResourceTreeService(QtCore.QObject):
         affected = selected.copy()
         for node_id in selected:
             affected.update(self._descendants(node_id))
+        if any(self._by_id(i).get('pageId') == 'default-canvas' for i in affected):
+            raise ValueError('默认画布不能删除')
         old = {i: self._by_id(i).get('deletedAt') for i in affected}
         for node_id in affected:
             self._by_id(node_id)['deletedAt'] = deleted_at
@@ -412,6 +422,8 @@ class ResourceTreeService(QtCore.QObject):
         affected = selected.copy()
         for node_id in selected:
             affected.update(self._descendants(node_id))
+        if any(self._by_id(i).get('pageId') == 'default-canvas' for i in affected):
+            raise ValueError('默认画布不能删除')
         old = {i: self._by_id(i).get('deletedAt') for i in affected}
         # 原地改列表：scene.workspace_nodes 和别人拿到的引用都指着它。
         self.nodes[:] = [n for n in self.nodes if n['id'] not in affected]
@@ -585,7 +597,7 @@ class WorkspaceService(QtCore.QObject):
         隐式页面（``permanent``）删不掉，返回空列表。
         """
         page = self.find(page_id)
-        if page is None or page.get('permanent'):
+        if page_id == 'default-canvas' or page is None or page.get('permanent'):
             return []
         doomed = [page_id]
         # 二级页面可能还有三级，一层层收
@@ -596,6 +608,8 @@ class WorkspaceService(QtCore.QObject):
                 if child['id'] not in doomed:
                     doomed.append(child['id'])
                     pending.append(child['id'])
+        if 'default-canvas' in doomed:
+            return []
         removed = [p for p in self.pages if p.get('id') in set(doomed)]
         self._scene.workspace_pages = [
             p for p in self.pages if p.get('id') not in set(doomed)]

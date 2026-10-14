@@ -892,10 +892,25 @@
   };
   window.__locateDocumentText = function (query) {
     const text = quill.getText().toLocaleLowerCase();
-    const words = String(query || '').toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    const word = words.find(value => text.includes(value));
+    const target = typeof query === 'object' ? query : {text: query, occurrence: 0};
+    const word = String(target.text || '').toLocaleLowerCase();
     if (!word) return false;
-    quill.setSelection(text.indexOf(word), word.length, 'api');
+    // Map collapsed whitespace back to Quill's real offsets, without editing HTML.
+    let normalized = '', offsets = [];
+    for (let index = 0; index < text.length; index++) {
+      const char = /\s/.test(text[index]) ? ' ' : text[index];
+      if (char === ' ' && (!normalized || normalized.endsWith(' '))) continue;
+      normalized += char;
+      offsets.push(index);
+    }
+    let found = -1, cursor = 0;
+    for (let n = 0; n <= (target.occurrence || 0); n++) {
+      found = normalized.indexOf(word, cursor);
+      if (found < 0) return false;
+      cursor = found + word.length;
+    }
+    const start = offsets[found], end = offsets[found+word.length-1]+1;
+    quill.setSelection(start, end-start, 'silent');
     quill.scrollSelectionIntoView();
     return true;
   };

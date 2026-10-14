@@ -60,6 +60,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets  # noqa: E402
 from prism.fileio.attachments import extension_for  # noqa: E402
 from prism.i18n import _  # noqa: E402
 from prism.widgets import components  # noqa: E402
+from prism.item_lifecycle import is_pixmap_item
 
 try:                                            # pragma: no cover - optional
     from PyQt6 import QtWebChannel, QtWebEngineCore, QtWebEngineWidgets
@@ -542,6 +543,7 @@ class DocumentPanel(QtWidgets.QWidget):
     # ── Board <-> panel ──────────────────────────────────────────
 
     def load_from_scene(self):
+        self._search_epoch = getattr(self, '_search_epoch', 0) + 1
         """Show the stored note, registering its pictures on the way."""
         html = self._scene_html()
         if self._content_loaded and not self._page_stale and html == self._html:
@@ -681,6 +683,7 @@ class DocumentPanel(QtWidgets.QWidget):
             logger.info('The editor could not load the stored note: %s', error)
 
     def _on_content_changed(self, raw):
+        self._content_revision = getattr(self, '_content_revision', 0) + 1
         self._html = self._canonical_html(raw)
         self._content_loaded = True
         self._page_stale = False
@@ -691,6 +694,32 @@ class DocumentPanel(QtWidgets.QWidget):
         library = getattr(self.view, 'category_panel', None)
         if library is not None:
             library.search_content_changed()
+
+    def search_snapshot(self, callback):
+        if not self._ready or self._page is None:
+            callback(True)
+            return
+        if self._pending_push:
+            callback(False)
+            return
+        project_id = self.view.scene.project_id
+        epoch = getattr(self, '_search_epoch', 0)
+        revision = getattr(self, '_content_revision', 0)
+        def finished(raw):
+            if self.view.scene.project_id != project_id or epoch != getattr(self, '_search_epoch', 0):
+                callback(False)
+                return
+            if not isinstance(raw, str):
+                callback(False)
+                return
+            if revision == getattr(self, '_content_revision', 0) and self._canonical_html(raw) != self._html:
+                self._on_content_changed(raw)
+            callback(True)
+        self._page.runJavaScript('window.__flush ? window.__flush() : null', finished)
+
+    def editor_history(self, redo=False):
+        if self._ready and not self._pending_push:
+            self._page.runJavaScript('window.__quill.history.' + ('redo' if redo else 'undo') + '()')
 
     def locate_search_result(self, text):
         self._pending_search = text
@@ -714,7 +743,6 @@ class DocumentPanel(QtWidgets.QWidget):
             return
         self._pending_view_restore = None
         self._page.runJavaScript('window.__restoreDocumentView(' + json.dumps(state) + ')')
-        self._save_timer.start()
 
     def _on_save_requested(self):
         handler = getattr(self.view, 'on_action_save', None)
@@ -1133,7 +1161,7 @@ class DocumentPanel(QtWidgets.QWidget):
 
         urls = []
         for item in self.view.scene.selectedItems(user_only=True):
-            if not isinstance(item, PrismPixmapItem):
+            if not is_pixmap_item(item):
                 continue
             filename = getattr(item, 'filename', None)
             name = os.path.basename(filename) if filename else _('canvas.png')

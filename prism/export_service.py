@@ -164,7 +164,9 @@ class ExportService:
         导出」就落在这里。判据用 ``original_bytes()``（T2 加的接口），
         它只在真的有原始 payload 时才给东西。
         """
-        items = list(items or ())
+        items = [item for item in items or ()
+                 if getattr(item, 'TYPE', 'pixmap') == 'pixmap'
+                 and not getattr(item, '_deleted_at', None)]
         with_bytes = 0
         for item in items:
             getter = getattr(item, 'original_bytes', None)
@@ -224,7 +226,9 @@ class ExportService:
         from prism.fileio import export as export_module
 
         if target in (ExportTarget.ORIGINAL, ExportTarget.ADJUSTED):
-            chosen = self.items_for(selected_only, items)
+            chosen = [item for item in self.items_for(selected_only, items)
+                      if getattr(item, 'TYPE', 'pixmap') == 'pixmap'
+                      and not getattr(item, '_deleted_at', None)]
             if not chosen:
                 raise ValueError('没有要导出的素材。')
 

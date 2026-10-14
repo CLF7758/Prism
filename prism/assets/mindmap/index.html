@@ -490,17 +490,44 @@
     }
 
     let searchLocationGeneration = 0;
-    window.__restoreSearchMindMap = (state) => {
+    let searchLocating = false;
+    let searchViewOrigin = null;
+    const searchExpanded = new Map();
+    function walkSearchTree(tree, callback) {
+      if (!tree) return;
+      callback(tree);
+      (tree.children || []).forEach(child => walkSearchTree(child, callback));
+    }
+    window.__endSearchLocation = () => {
       ++searchLocationGeneration;
+      searchLocating = false;
       if (!mindMap) return;
-      mindMap.execCommand('CLEAR_ACTIVE_NODE');
+      viewRestoring = true;
+      try {
+        walkSearchTree(mindMap.renderer.renderTree, node => {
+          const uid = node.data && node.data.uid;
+          if (searchExpanded.has(uid) && node.data.expand === true) {
+            const original = searchExpanded.get(uid);
+            if (original === undefined) delete node.data.expand;
+            else node.data.expand = original;
+          }
+        });
+        searchExpanded.clear();
+        mindMap.execCommand('CLEAR_ACTIVE_NODE');
+        mindMap.render();
+        if (searchViewOrigin) mindMap.view.setTransformData(searchViewOrigin);
+        searchViewOrigin = null;
+      } finally { viewRestoring = false; }
+    };
+    window.__restoreSearchMindMap = (state) => {
+      window.__endSearchLocation();
+      if (!mindMap) return;
       viewRestoring = true;
       try { mindMap.view.setTransformData(state); }
       finally { viewRestoring = false; }
-      schedulePush();
     };
     window.__locateMindMap = (target) => {
-      const path = Array.isArray(target) ? target : target.path;
+      const path = Array.isArray(target) ? target : (target.path || []);
       const savedUid = Array.isArray(target) ? null : target.uid;
       const generation = ++searchLocationGeneration;
       let attempts = 0;
@@ -509,16 +536,44 @@
         let tree = mindMap && mindMap.getData();
         for (const index of path) tree = tree && (tree.children || [])[index];
         const uid = savedUid || (tree && tree.data && tree.data.uid);
-        if (uid && mindMap.renderer.root) {
-          mindMap.renderer.goTargetNode(uid);
+        let exists = false;
+        if (mindMap) walkSearchTree(mindMap.renderer.renderTree, node => {
+          if (node.data && node.data.uid === uid) exists = true;
+        });
+        if (uid && mindMap.renderer.root && exists) {
+          if (!searchViewOrigin) searchViewOrigin = mindMap.view.getTransformData();
+          const before = new Map();
+          walkSearchTree(mindMap.renderer.renderTree, node => {
+            if (node.data) before.set(node.data.uid, node.data.expand);
+          });
+          searchLocating = true;
+          mindMap.renderer.goTargetNode(uid, () => { searchLocating = false; });
+          walkSearchTree(mindMap.renderer.renderTree, node => {
+            if (node.data && !before.get(node.data.uid) && node.data.expand === true && !searchExpanded.has(node.data.uid)) {
+              searchExpanded.set(node.data.uid, before.get(node.data.uid));
+            }
+          });
         } else if (++attempts < 40) {
           setTimeout(locate, 50);
         }
       };
       locate();
     };
+    window.__searchSnapshot = () => {
+      if (!mindMap) return null;
+      if (pendingPush) { clearTimeout(pendingPush); pendingPush = null; }
+      const tree = collectTree();
+      return JSON.stringify({tree, images: newImages});
+    };
 
     function wireMindMap() {
+      const exec = mindMap.execCommand.bind(mindMap);
+      mindMap.execCommand = (command, ...args) => {
+        // Explicit user collapse/expand owns its value; returning must not undo it.
+        if (command === 'SET_NODE_EXPAND' && args[0]) searchExpanded.delete(args[0].getData('uid'));
+        if (command === 'EXPAND_ALL' || command === 'UNEXPAND_TO_LEVEL') searchExpanded.clear();
+        return exec(command, ...args);
+      };
       mindMap.on('data_change', () => {
         if (applyingFromHost) return;
         schedulePush();
@@ -536,7 +591,8 @@
     }
 
     function onViewChanged() {
-      if (applyingFromHost || viewRestoring) return;
+      if (applyingFromHost || viewRestoring || searchLocating) return;
+      searchViewOrigin = null; // A later user pan/zoom takes ownership of the view.
       schedulePush();
     }
 
@@ -551,7 +607,7 @@
     }
 
     function collectTree() {
-      const tree = mindMap.getData();
+      const tree = JSON.parse(JSON.stringify(mindMap.getData()));
       newImages = {};
       // A picture pasted onto the canvas is moved into the library's own
       // key table, which leaves an ``smm_img_key_*`` placeholder in the
@@ -563,6 +619,11 @@
         if (data) {
           data.text = plainText(data.text);
           delete data.isActive;
+          if (searchExpanded.has(data.uid) && data.expand === true) {
+            const original = searchExpanded.get(data.uid);
+            if (original === undefined) delete data.expand;
+            else data.expand = original;
+          }
           let url = data.image;
           if (typeof url === 'string' && imgMap[url]) url = imgMap[url];
           if (typeof url === 'string' && url.startsWith('data:')) {
@@ -589,7 +650,7 @@
       if (tree && tree.data) delete tree.data.imgMap;
       tree._prism_layout = document.getElementById('layout').value;
       if (mindMap.view && mindMap.view.getTransformData) {
-        tree._prism_view = mindMap.view.getTransformData();
+        tree._prism_view = searchViewOrigin || mindMap.view.getTransformData();
       }
       return tree;
     }

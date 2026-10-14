@@ -61,6 +61,19 @@ def with_anchor(func):
 
 class BaseItemMixin:
 
+    def _invalidate_geometry(self):
+        scene = self.scene()
+        if scene is not None and hasattr(scene, '_invalidate_view_bounds'):
+            scene._invalidate_view_bounds()
+
+    def setPixmap(self, pixmap):
+        self.prepareGeometryChange()
+        super().setPixmap(pixmap)
+
+    def prepareGeometryChange(self):
+        self._invalidate_geometry()
+        super().prepareGeometryChange()
+
     @with_anchor
     def setScale(self, value):
         if value <= 0:
@@ -151,7 +164,10 @@ class SelectableMixin(BaseItemMixin):
         self.setAcceptHoverEvents(True)
         self.setFlags(
             QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsMovable
-            | QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+            | QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            | QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
+        if isinstance(self, QtWidgets.QGraphicsTextItem):
+            self.document().contentsChanged.connect(self._invalidate_geometry)
 
         self.viewport_scale = 1
         self.active_mode = None
@@ -215,6 +231,8 @@ class SelectableMixin(BaseItemMixin):
                 painter, self.select_handle_free_center(), 255, 0, 255)
 
     def paint_selectable(self, painter, option, widget):
+        if getattr(self.scene(), '_overview_recording_owner', None) is not None:
+            return
         self.paint_debug(painter, option, widget)
 
         if not self.has_selection_outline():
@@ -617,11 +635,19 @@ class SelectableMixin(BaseItemMixin):
         super().mouseReleaseEvent(event)
 
     def on_view_scale_change(self):
-        self.prepareGeometryChange()
+        # Only selection handles change; content bounds stay the same.
+        QGraphicsItem.prepareGeometryChange(self)
 
     def itemChange(self, change, value):
+        if change in (
+                QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged,
+                QGraphicsItem.GraphicsItemChange.ItemTransformHasChanged,
+                QGraphicsItem.GraphicsItemChange.ItemRotationHasChanged,
+                QGraphicsItem.GraphicsItemChange.ItemScaleHasChanged,
+                QGraphicsItem.GraphicsItemChange.ItemVisibleHasChanged):
+            self._invalidate_geometry()
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
-            self.prepareGeometryChange()
+            QGraphicsItem.prepareGeometryChange(self)
             if hasattr(self, 'on_selected_change'):
                 self.on_selected_change(value)
         return super().itemChange(change, value)

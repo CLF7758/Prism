@@ -58,7 +58,8 @@ def test_on_scene_changed_when_items(hide_mock, view):
     view.scale(2, 2)
     with patch('prism.view.PrismGraphicsView.recalc_scene_rect') as r:
         view.on_scene_changed(None)
-        r.assert_called_once_with()
+        r.assert_not_called()
+        assert not view._recalc_timer.isActive()
         hide_mock.assert_called_once_with()
         assert view.get_scale() == 2
 
@@ -68,7 +69,8 @@ def test_on_scene_changed_when_no_items(show_mock, view):
     view.scale(2, 2)
     with patch('prism.view.PrismGraphicsView.recalc_scene_rect') as r:
         view.on_scene_changed(None)
-        r.assert_called()
+        r.assert_not_called()
+        assert not view._recalc_timer.isActive()
         show_mock.assert_called_once_with()
         assert view.get_scale() == 1
 

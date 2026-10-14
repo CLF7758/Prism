@@ -82,6 +82,7 @@ class GroupFrame(QtWidgets.QGraphicsObject):
         if (rect != self._rect or header != self._header or
                 note != self._note or zoom != self._zoom):
             self.prepareGeometryChange()
+            scene._invalidate_view_bounds()
             self._rect, self._header = rect, header
             self._note, self._zoom = note, zoom
             self.update()
@@ -145,18 +146,34 @@ class GroupManager(QtCore.QObject):
         self.frames = {}
         self.timer = QtCore.QTimer(self)
         self.timer.setSingleShot(True)
-        self.timer.timeout.connect(self.refresh)
+        self._structure_dirty = True
+        self.timer.timeout.connect(self._refresh_tick)
         scene.changed.connect(self.schedule)
+        scene.assets_changed.connect(self.schedule_structure)
 
     def reset(self):
         self.timer.stop()
         self.frames.clear()  # QGraphicsScene.clear owns destruction.
 
+    def schedule_structure(self, *_):
+        self._structure_dirty = True
+        self.schedule()
+
+    def _refresh_tick(self):
+        if self._structure_dirty:
+            self.refresh()
+        else:
+            for frame in self.frames.values():
+                frame.sync(frame.members)
+
     def schedule(self, *_):
+        if not self.frames and not self._structure_dirty:
+            return
         if not self.timer.isActive():
             self.timer.start(0)
 
     def refresh(self):
+        self._structure_dirty = False
         groups = {}
         for item in self.scene.items_for_save():
             group_id = getattr(item, '_group_id', None)

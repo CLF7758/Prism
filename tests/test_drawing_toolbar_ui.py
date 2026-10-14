@@ -222,7 +222,9 @@ def test_can_still_draw_after_a_middle_drag(view, bar):
 
 def test_the_toolbar_stays_visible_after_a_middle_drag(view, bar):
     drag(view, (300, 300), (20, 40, 60), button=Qt.MouseButton.MiddleButton)
-    assert bar.isVisible()
+    # The fixed toolbar replaces the floating one in the current main window.
+    assert view.window().canvas_toolbar.isVisible()
+    assert view.active_mode == view.DRAW_MODE
 
 
 def test_middle_drag_outside_drawing_mode_leaves_it_off(view):

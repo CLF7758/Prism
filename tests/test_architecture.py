@@ -34,7 +34,7 @@ FORBIDDEN_IN_UI = {
 
 def imports_of(path):
     """这个文件 import 了哪些顶层模块。"""
-    with open(path, encoding='utf-8') as handle:
+    with open(path, encoding='utf-8-sig') as handle:
         tree = ast.parse(handle.read(), filename=path)
     names = set()
     for node in ast.walk(tree):
@@ -89,7 +89,7 @@ def test_widgets_do_not_import_the_prism_sqlite_module():
     """更直接的一条：界面不许 import `prism.fileio.sql`。"""
     offenders = []
     for path in modules_below(os.path.join('prism', 'widgets')):
-        with open(path, encoding='utf-8') as handle:
+        with open(path, encoding='utf-8-sig') as handle:
             source = handle.read()
         if 'from prism.fileio.sql' in source or \
                 'prism.fileio import sql' in source:
@@ -110,7 +110,7 @@ def test_the_view_does_not_import_the_file_format_modules():
         relative = os.path.relpath(path, ROOT).replace('\\', '/')
         if not relative.endswith('prism/view.py'):
             continue
-        with open(path, encoding='utf-8') as handle:
+        with open(path, encoding='utf-8-sig') as handle:
             source = handle.read()
         for module in ('import_docx', 'import_xmind', 'document_export',
                        'mindmap_export'):
@@ -130,6 +130,8 @@ SERVICES = {
     'prism/project_load_service.py': 'ProjectLoadService',
     'prism/duplicate_scan.py': 'DuplicateScanService',
     'prism/fileio/video_service.py': 'VideoFrameService',
+    'prism/source_store.py': None,
+    'prism/image_decode.py': 'DisplayDecoder',
     'prism/asset_import_service.py': None,   # 目前是函数模块
 }
 
@@ -144,7 +146,7 @@ def test_services_do_not_import_the_ui(relative):
     Qt 信号和线程是允许的（服务要报进度和取消），但**界面控件**不行。
     """
     path = os.path.join(ROOT, relative)
-    with open(path, encoding='utf-8') as handle:
+    with open(path, encoding='utf-8-sig') as handle:
         source = handle.read()
     offenders = [module for module in WIDGET_MODULES
                  if f'import {module}' in source or f'from {module}' in source]

@@ -520,6 +520,12 @@ QTabWidget::pane {
     top: -1px;
 }
 
+QTabWidget#workspaceTabs::pane {
+    border: none;
+    border-radius: 0;
+    top: 0;
+}
+
 QTabBar::tab {
     background-color: transparent;
     padding: 6px 14px;

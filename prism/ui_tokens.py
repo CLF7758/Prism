@@ -374,7 +374,7 @@ LAYOUT = {
     'right-panel-min': 272,
     'right-panel-max': 400,
     'centre-min-width': 520,        # 双侧栏模式
-    'statusbar-height': 24,
+    'statusbar-height': 36,
     'splitter-width': 1,
     'splitter-hotzone': 6,
     'page-toolbar-height': 40,

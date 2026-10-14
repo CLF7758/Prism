@@ -22,6 +22,7 @@ from prism.widgets.tag_panel import tag_signals
 from prism.widgets import components
 from prism.widgets.components.icons import icon
 from prism.widgets.components.flow_layout import FlowLayout
+from prism.item_lifecycle import is_pixmap_item
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class DetailPanel(QtWidgets.QWidget):
         self.view = view
         self.scene = view.scene
         self._item = None
+        self._search_result = None
         self._displayed_tags = set()
         self._setup_ui()
         self.scene.selectionChanged.connect(self._on_selection_changed)
@@ -203,7 +205,7 @@ class DetailPanel(QtWidgets.QWidget):
         from prism.widgets.components.icons import icon_button
         self._add_tag_button = icon_button('plus', '添加标签', size=24)
         self._add_tag_button.clicked.connect(self._show_tag_search)
-        tag_header.addWidget(self._add_tag_button)
+        self._add_tag_button.hide()
         # 「标签管理」的齿轮按钮原来在这儿。用户要求去掉右侧这一个：
         # 属性面板管的是"选中素材的属性"，而标签目录是全工程的东西，
         # 归左侧素材库那一栏管（那边还有一个齿轮，保留）。
@@ -223,7 +225,7 @@ class DetailPanel(QtWidgets.QWidget):
         self._tag_search.textChanged.connect(self._filter_tag_choices)
         self._tag_search.returnPressed.connect(self._add_typed_tag)
         self._body_layout.addWidget(self._tag_search)
-        self._tag_search.hide()
+        self._tag_search.show()
         self._tags_container = QtWidgets.QWidget()
         self._tags_layout = FlowLayout(self._tags_container)
         self._tags_layout.setContentsMargins(0, 0, 0, 0)
@@ -441,6 +443,13 @@ class DetailPanel(QtWidgets.QWidget):
         self._tag_search.setFocus()
 
     def show_collection(self, title, count, size=None):
+        self._search_result = None
+        self._item = None
+        if hasattr(self, '_search_info'):
+            self._search_info.hide()
+            self._search_thumbnail.hide()
+            self._search_open.hide()
+            self._search_original.hide()
         self._scroll.hide()
         self._collection.show()
         self._collection_title.setText(title)
@@ -448,11 +457,74 @@ class DetailPanel(QtWidgets.QWidget):
         self._collection_size.setText('占用空间                    ' + (f'{size / (1024 * 1024):.2f} MB' if size is not None else '未知'))
         self._selection_count.clear()
 
+    def show_search_result(self, result, open_result, open_original, item=None):
+        """Inspect a reference without selecting or editing its source item."""
+        from prism.widgets.search_canvas import TYPE_LABELS, result_kind
+        self.show_collection(result['title'], len(result.get('matches', [])), None)
+        self._collection_count.setText(_(TYPE_LABELS.get(result_kind(result), 'Assets')))
+        self._collection_size.setText(result.get('path', ''))
+        if not hasattr(self, '_search_info'):
+            self._search_thumbnail = QtWidgets.QLabel()
+            self._search_thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._search_thumbnail.setFixedHeight(160)
+            self._search_info = QtWidgets.QTextBrowser()
+            self._search_info.setOpenExternalLinks(False)
+            self._search_open = QtWidgets.QPushButton(_('Preview / open content'))
+            self._search_original = QtWidgets.QPushButton(_('Open original location'))
+            layout = self._collection.layout()
+            for widget in (self._search_thumbnail, self._search_info, self._search_open, self._search_original):
+                layout.insertWidget(layout.count()-1, widget)
+            self._search_open.clicked.connect(lambda: self._search_open_callback())
+            self._search_original.clicked.connect(lambda: self._search_original_callback())
+        self._search_open_callback = open_result
+        self._search_original_callback = open_original
+        fields = sorted({m['field'] for m in result.get('matches', [])})
+        labels = {'body': 'Document text', 'node': 'Mind map node', 'canvas_item': 'Canvas object',
+                  'asset': 'Asset information', 'title': 'Name', 'path': 'Location', 'tags': 'Tags'}
+        self._search_info.setPlainText(
+            _('Matched in') + ': ' + ', '.join(_(labels.get(f, f)) for f in fields) + '\n' +
+            _('{count} matches').format(count=len(result.get('matches', []))) + '\n\n' +
+            result.get('snippet', ''))
+        if item is not None:
+            pm = getattr(item, '_preview_pixmap', None)
+            if (pm is None or pm.isNull()) and hasattr(item, 'pixmap'):
+                pm = item.pixmap()
+            if pm is not None and not pm.isNull():
+                self._search_thumbnail.setPixmap(pm.scaled(260, 150, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            else:
+                self._search_thumbnail.clear()
+            self._search_info.append(_('Tags') + ': ' + ', '.join(getattr(item, '_tags', [])))
+            self._search_info.append(_('Rating') + ': ' + '★'*getattr(item, '_rating', 0))
+            self._search_info.append(str(getattr(item, '_notes', '') or ''))
+        self._search_thumbnail.setVisible(item is not None)
+        for widget in (self._search_info, self._search_open, self._search_original):
+            widget.show()
+
+    def _search_controller(self):
+        controller = getattr(self.view.parent, 'search_controller', None)
+        if (controller is not None and controller.active
+                and controller.window.tabs.currentWidget() is controller.page):
+            return controller
+        return None
+
+    def _selected_items(self):
+        controller = self._search_controller()
+        if controller is not None:
+            if self._search_result is None:
+                return []
+            item = controller.resolve_asset(self._search_result)
+            return [item] if item is not None else []
+        return self.scene.selectedItems(user_only=True)
+
+    def show_search_asset(self, result):
+        self._search_result = dict(result)
+        self._on_selection_changed()
+
     def _on_selection_changed(self):
         self._scroll.show()
         self._collection.hide()
         self._rebuild_tag_checks()
-        selected = self.scene.selectedItems(user_only=True)
+        selected = self._selected_items()
         self._update_tag_scope(len(selected))
         if len(selected) != 1:
             self._show_empty()
@@ -499,7 +571,7 @@ class DetailPanel(QtWidgets.QWidget):
         system = tags.tag_system(self.scene)
         if not text:
             names = set()
-            for item in self.scene.selectedItems(user_only=True):
+            for item in self._selected_items():
                 names.update(getattr(item, '_tags', []))
             return sorted(names, key=str.casefold)
 
@@ -537,7 +609,7 @@ class DetailPanel(QtWidgets.QWidget):
             hint = components.RoleLabel(
                 _('No tag matches “{text}”.  Press Enter to create it.')
                 .format(text=typed) if typed else
-                _('No tags yet - use + in the Tags group on the left'),
+                '输入标签后按回车添加',
                 role='secondary')
             hint.setWordWrap(True)
             self._tags_layout.addWidget(hint)
@@ -581,7 +653,7 @@ class DetailPanel(QtWidgets.QWidget):
 
     def _sync_tag_checks(self, checked_tags, enabled):
         """Tick the tags the current selection carries."""
-        selected = self.scene.selectedItems(user_only=True)
+        selected = self._selected_items()
         for name, box in self._tag_checks.items():
             box.blockSignals(True)
             count = sum(name in getattr(item, '_tags', []) for item in selected)
@@ -603,10 +675,10 @@ class DetailPanel(QtWidgets.QWidget):
         self._rebuild_tag_checks()
         self._sync_tag_checks(
             self._tags_of_selection(), enabled=bool(self._item) or bool(
-                self.scene.selectedItems(user_only=True)))
+                self._selected_items()))
 
     def _tags_of_selection(self):
-        selected = self.scene.selectedItems(user_only=True)
+        selected = self._selected_items()
         if not selected:
             return set()
         common = set(getattr(selected[0], '_tags', []))
@@ -616,7 +688,7 @@ class DetailPanel(QtWidgets.QWidget):
 
     def _add_typed_tag(self):
         name = self._tag_search.text().strip()
-        if not name or not self.scene.selectedItems(user_only=True):
+        if not name or not self._selected_items():
             return
         names = list(self.scene.tag_names)
         name = next((tag for tag in names if tag.casefold() == name.casefold()), name)
@@ -625,11 +697,11 @@ class DetailPanel(QtWidgets.QWidget):
             self.view.mark_content_dirty()
         self._on_tag_box_toggled(name, True)
         self._tag_search.clear()
-        self._tag_search.hide()
+        self._tag_search.show()
         self._refresh()
 
     def _on_tag_box_toggled(self, name, checked):
-        items = self.scene.selectedItems(user_only=True)
+        items = self._selected_items()
         if not items:
             return
         changed = []
@@ -665,7 +737,7 @@ class DetailPanel(QtWidgets.QWidget):
 
     @staticmethod
     def _inspection_pixmap(item):
-        if isinstance(item, PrismPixmapItem) and not item._preview_adjusted:
+        if is_pixmap_item(item) and not item._preview_adjusted:
             preview = item._preview_pixmap
             if preview is not None and not preview.isNull():
                 return preview
@@ -745,7 +817,7 @@ class DetailPanel(QtWidgets.QWidget):
         self._folder_button.setToolTip(self._folder_button.text())
 
         # Info grid
-        if isinstance(item, PrismPixmapItem):
+        if is_pixmap_item(item):
             self._type_label.setText('\u56fe\u7247')
             if pm and not pm.isNull():
                 self._dims_label.setText(
@@ -798,7 +870,7 @@ class DetailPanel(QtWidgets.QWidget):
         self._copy_source.setEnabled(bool(source))
         self._source_row.setVisible(bool(source))
         # Text and tag edits must not recalculate the same image statistics.
-        if isinstance(item, PrismPixmapItem):
+        if is_pixmap_item(item):
             if visuals_changed:
                 self._build_color_distribution(item)
         else:
@@ -807,7 +879,7 @@ class DetailPanel(QtWidgets.QWidget):
             self._set_color_widgets_visible(False)
 
         # Histogram (only for images)
-        if isinstance(item, PrismPixmapItem):
+        if is_pixmap_item(item):
             if visuals_changed:
                 self._hist_widget.update_from_pixmap(pm)
         else:
@@ -913,11 +985,21 @@ class DetailPanel(QtWidgets.QWidget):
         self._set_color_widgets_visible(True)
 
     def _open_item_canvas(self):
+        controller = self._search_controller()
+        if controller is not None and self._search_result is not None:
+            controller.open_result(self._search_result)
+            return
         if self._item is None:
             return
         canvas_id = getattr(self._item, '_canvas_id', None) or getattr(self.view, 'current_canvas_id', None)
         if canvas_id:
-            self.view.category_panel.workspace_requested.emit('canvas', canvas_id)
+            item = self._item
+            window = self.view.window()
+            window.open_workspace_page('canvas', canvas_id)
+            self.view.scene.clearSelection()
+            item.setVisible(True)
+            item.setSelected(True)
+            self.view.centerOn(item)
 
     def _on_title_changed(self, text):
         if not self._item:
@@ -940,7 +1022,7 @@ class DetailPanel(QtWidgets.QWidget):
             commands.ChangeMetadata([self._item], 'notes', [new_notes]))
 
     def _on_category_changed(self, index):
-        selected = self.scene.selectedItems(user_only=True)
+        selected = self._selected_items()
         new_cats = self._cat_combo.currentData()
         if not selected or new_cats is None:
             return
@@ -954,7 +1036,7 @@ class DetailPanel(QtWidgets.QWidget):
             self.view.category_panel.update_counts()
 
     def _set_rating(self, rating):
-        selected = self.scene.selectedItems(user_only=True)
+        selected = self._selected_items()
         changed = [item for item in selected
                    if getattr(item, '_rating', 0) != rating]
         if changed:

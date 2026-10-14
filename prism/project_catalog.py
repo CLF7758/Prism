@@ -152,8 +152,9 @@ class ProjectAssetCatalog:
 
         跨所有画布和嵌套文件夹，不随当前画布切换而变为局部数量。
         """
+        deleted_pages = self._deleted_page_ids()
         for item in self.asset_items():
-            if self.is_active(item):
+            if self.is_active(item) and getattr(item, '_canvas_id', None) not in deleted_pages:
                 yield item
 
     def deleted_items(self) -> Iterator:
@@ -165,9 +166,38 @@ class ProjectAssetCatalog:
 
     # ── 计数 ─────────────────────────────────────────────────
 
+    def count_snapshot(self):
+        result = dict(total=0, unclassified=0, untagged=0, trash=0, visible=0, canvases={})
+        known = self._known_canvas_ids()
+        deleted_pages = self._deleted_page_ids()
+        for item in self.asset_items():
+            if self.is_annotation(item):
+                continue
+            if self.is_deleted(item):
+                if getattr(item, '_canvas_id', None) not in deleted_pages:
+                    result['trash'] += 1
+                continue
+            if getattr(item, '_canvas_id', None) in deleted_pages:
+                continue
+            result['total'] += 1
+            result['visible'] += item.isVisible()
+            result['untagged'] += not self._has_valid_tags(item)
+            cid = self._effective_canvas_id(item, known)
+            result['unclassified'] += cid in ('default-canvas', UNASSIGNED_CANVAS)
+            result['canvases'][cid] = result['canvases'].get(cid, 0)+1
+        result['trash'] += len(self._top_level_trashed_nodes())
+        return result
+
     def total_count(self) -> int:
         """活跃素材总数（方案 §5.1）。"""
         return sum(1 for _ in self.active_items())
+
+    def unclassified_count(self):
+        known = self._known_canvas_ids()
+        return sum(self.is_unclassified(i, known) for i in self.active_items())
+
+    def is_unclassified(self, item, known=None):
+        return self._effective_canvas_id(item, known) in ('default-canvas', UNASSIGNED_CANVAS)
 
     def untagged_count(self) -> int:
         """无有效素材标签的活跃素材数。
@@ -194,8 +224,9 @@ class ProjectAssetCatalog:
         test_eagle_sidebars.test_tree_counts_roll_up_nested_canvas_folders）。
         """
         counts: dict = {}
+        known = self._known_canvas_ids()
         for item in self.active_items():
-            cid = self._effective_canvas_id(item)
+            cid = self._effective_canvas_id(item, known)
             counts[cid] = counts.get(cid, 0) + 1
         return counts
 
@@ -300,6 +331,8 @@ class ProjectAssetCatalog:
         scope_set = set(canvas_scope) if canvas_scope is not None else None
 
         results: list = []
+        known = self._known_canvas_ids()
+        paths = {}
         source = self.asset_items()
         for item in source:
             if not (hasattr(item, 'save_id') or getattr(item, '_asset_source', None)):
@@ -313,7 +346,7 @@ class ProjectAssetCatalog:
                 # include_deleted=True 时只返回删除项（回收站视图）
                 continue
 
-            cid = self._effective_canvas_id(item)
+            cid = self._effective_canvas_id(item, known)
             if scope_set is not None and cid not in scope_set:
                 continue
 
@@ -335,7 +368,9 @@ class ProjectAssetCatalog:
                 if not all(word in haystack for word in text_words):
                     continue
 
-            results.append(self._build_result(item, cid, item_tags, rating, deleted))
+            if cid not in paths:
+                paths[cid] = self.canvas_path(cid)
+            results.append(self._build_result(item, cid, item_tags, rating, deleted, paths[cid]))
             if limit is not None and len(results) >= limit:
                 break
 
@@ -344,19 +379,15 @@ class ProjectAssetCatalog:
 
     @staticmethod
     def _text_haystack(item, item_tags) -> str:
-        parts = [
-            str(getattr(item, '_title', '') or ''),
-            str(getattr(item, 'filename', '') or ''),
-            str(getattr(item, '_notes', '') or ''),
-        ]
-        parts.extend(str(t) for t in item_tags)
-        return ' '.join(parts).casefold()
+        from prism.project_search import asset_search_text
+        return (asset_search_text(item) + ' ' + ' '.join(str(t) for t in item_tags)).casefold()
 
-    def _build_result(self, item, canvas_id, item_tags, rating, deleted) -> AssetResult:
+    def _build_result(self, item, canvas_id, item_tags, rating, deleted, path=None) -> AssetResult:
         title = (getattr(item, '_title', '') or
                  getattr(item, 'filename', '') or
                  '未命名')
-        path = self.canvas_path(canvas_id)
+        if path is None:
+            path = self.canvas_path(canvas_id)
         return AssetResult(
             item=item,
             title=str(title),
@@ -372,7 +403,7 @@ class ProjectAssetCatalog:
 
     # ── 画布归属与路径 ───────────────────────────────────────
 
-    def _effective_canvas_id(self, item) -> str:
+    def _effective_canvas_id(self, item, known=None) -> str:
         """素材的有效画布 ID。
 
         - `_canvas_id` 为 None → UNASSIGNED_CANVAS
@@ -387,7 +418,8 @@ class ProjectAssetCatalog:
         cid = getattr(item, '_canvas_id', None)
         if cid is None:
             return UNASSIGNED_CANVAS
-        known = self._known_canvas_ids()
+        if known is None:
+            known = self._known_canvas_ids()
         if cid in known or cid == 'default-canvas':
             return cid
         return UNASSIGNED_CANVAS

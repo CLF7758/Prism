@@ -46,16 +46,16 @@
   },
   {
     "name": "PyQt6-sip",
-    "version": "13.12.0",
+    "version": "13.13.0",
     "license": "BSD-2-Clause",
     "project_urls": [],
     "notices": [
-      "pyqt6_sip-13.12.0.dist-info__licenses__LICENSE"
+      "pyqt6_sip-13.13.0.dist-info__licenses__LICENSE"
     ]
   },
   {
     "name": "av",
-    "version": "19.0.0",
+    "version": "19.0.1",
     "license": "BSD-3-Clause",
     "project_urls": [
       "Bug Tracker, https://github.com/PyAV-Org/PyAV/issues",
@@ -63,14 +63,14 @@
       "homepage, https://pyav.basswood.io"
     ],
     "notices": [
-      "av-19.0.0.dist-info__licenses__AUTHORS.py",
-      "av-19.0.0.dist-info__licenses__AUTHORS.rst",
-      "av-19.0.0.dist-info__licenses__LICENSE.txt"
+      "av-19.0.1.dist-info__licenses__AUTHORS.py",
+      "av-19.0.1.dist-info__licenses__AUTHORS.rst",
+      "av-19.0.1.dist-info__licenses__LICENSE.txt"
     ]
   },
   {
     "name": "numpy",
-    "version": "2.5.3",
+    "version": "2.5.4",
     "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
     "project_urls": [
       "homepage, https://numpy.org",
@@ -81,23 +81,23 @@
       "release notes, https://numpy.org/doc/stable/release"
     ],
     "notices": [
-      "numpy-2.5.3.dist-info__licenses__LICENSE.txt",
-      "numpy-2.5.3.dist-info__licenses__numpy___core__include__numpy__libdivide__LICENSE.txt",
-      "numpy-2.5.3.dist-info__licenses__numpy___core__src__common__pythoncapi-compat__COPYING",
-      "numpy-2.5.3.dist-info__licenses__numpy___core__src__highway__LICENSE",
-      "numpy-2.5.3.dist-info__licenses__numpy___core__src__multiarray__dragon4_LICENSE.txt",
-      "numpy-2.5.3.dist-info__licenses__numpy___core__src__npysort__x86-simd-sort__LICENSE.md",
-      "numpy-2.5.3.dist-info__licenses__numpy___core__src__umath__svml__LICENSE",
-      "numpy-2.5.3.dist-info__licenses__numpy__fft__pocketfft__LICENSE.md",
-      "numpy-2.5.3.dist-info__licenses__numpy__linalg__lapack_lite__LICENSE.txt",
-      "numpy-2.5.3.dist-info__licenses__numpy__ma__LICENSE",
-      "numpy-2.5.3.dist-info__licenses__numpy__random__LICENSE.md",
-      "numpy-2.5.3.dist-info__licenses__numpy__random__src__distributions__LICENSE.md",
-      "numpy-2.5.3.dist-info__licenses__numpy__random__src__mt19937__LICENSE.md",
-      "numpy-2.5.3.dist-info__licenses__numpy__random__src__pcg64__LICENSE.md",
-      "numpy-2.5.3.dist-info__licenses__numpy__random__src__philox__LICENSE.md",
-      "numpy-2.5.3.dist-info__licenses__numpy__random__src__sfc64__LICENSE.md",
-      "numpy-2.5.3.dist-info__licenses__numpy__random__src__splitmix64__LICENSE.md",
+      "numpy-2.5.4.dist-info__licenses__LICENSE.txt",
+      "numpy-2.5.4.dist-info__licenses__numpy___core__include__numpy__libdivide__LICENSE.txt",
+      "numpy-2.5.4.dist-info__licenses__numpy___core__src__common__pythoncapi-compat__COPYING",
+      "numpy-2.5.4.dist-info__licenses__numpy___core__src__highway__LICENSE",
+      "numpy-2.5.4.dist-info__licenses__numpy___core__src__multiarray__dragon4_LICENSE.txt",
+      "numpy-2.5.4.dist-info__licenses__numpy___core__src__npysort__x86-simd-sort__LICENSE.md",
+      "numpy-2.5.4.dist-info__licenses__numpy___core__src__umath__svml__LICENSE",
+      "numpy-2.5.4.dist-info__licenses__numpy__fft__pocketfft__LICENSE.md",
+      "numpy-2.5.4.dist-info__licenses__numpy__linalg__lapack_lite__LICENSE.txt",
+      "numpy-2.5.4.dist-info__licenses__numpy__ma__LICENSE",
+      "numpy-2.5.4.dist-info__licenses__numpy__random__LICENSE.md",
+      "numpy-2.5.4.dist-info__licenses__numpy__random__src__distributions__LICENSE.md",
+      "numpy-2.5.4.dist-info__licenses__numpy__random__src__mt19937__LICENSE.md",
+      "numpy-2.5.4.dist-info__licenses__numpy__random__src__pcg64__LICENSE.md",
+      "numpy-2.5.4.dist-info__licenses__numpy__random__src__philox__LICENSE.md",
+      "numpy-2.5.4.dist-info__licenses__numpy__random__src__sfc64__LICENSE.md",
+      "numpy-2.5.4.dist-info__licenses__numpy__random__src__splitmix64__LICENSE.md",
       "numpy___core__include__numpy__random__LICENSE.txt",
       "numpy__ma__LICENSE",
       "numpy__random__LICENSE.md"
@@ -122,15 +122,15 @@
   },
   {
     "name": "lxml",
-    "version": "6.1.0",
+    "version": "6.1.3",
     "license": "BSD-3-Clause",
     "project_urls": [
       "Source, https://github.com/lxml/lxml",
       "Bug Tracker, https://bugs.launchpad.net/lxml"
     ],
     "notices": [
-      "lxml-6.1.0.dist-info__licenses__LICENSE.txt",
-      "lxml-6.1.0.dist-info__licenses__LICENSES.txt"
+      "lxml-6.1.3.dist-info__licenses__LICENSE.txt",
+      "lxml-6.1.3.dist-info__licenses__LICENSES.txt"
     ]
   },
   {
@@ -172,21 +172,6 @@
     "project_urls": [],
     "notices": [
       "rectangle_packer-2.0.2.dist-info__LICENSE.md"
-    ]
-  },
-  {
-    "name": "OpenImageIO",
-    "version": "3.1.17.0",
-    "license": "Apache-2.0",
-    "project_urls": [
-      "Homepage, https://openimageio.org/",
-      "Source, https://github.com/AcademySoftwareFoundation/OpenImageIO",
-      "Documentation, https://docs.openimageio.org",
-      "Issues, https://github.com/AcademySoftwareFoundation/OpenImageIO/issues"
-    ],
-    "notices": [
-      "openimageio-3.1.17.0.dist-info__licenses__LICENSE.md",
-      "openimageio-3.1.17.0.dist-info__licenses__THIRD-PARTY.md"
     ]
   },
   {

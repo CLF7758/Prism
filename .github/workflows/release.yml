@@ -23,17 +23,6 @@ jobs:
         run: |
           python -m pip install -r requirements/windows-lock.txt -r requirements/build.txt
           python -m pip install --no-deps -e .
-      - name: Restore pinned bundled AI model
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $manifest = Get-Content prism/assets/ai/model-manifest.json -Raw | ConvertFrom-Json
-          gh release download $manifest.release_tag --repo $env:GITHUB_REPOSITORY --pattern $manifest.release_asset --dir prism/assets/ai
-          if ($LASTEXITCODE -ne 0) { throw 'Bundled model download failed' }
-          Move-Item -LiteralPath "prism/assets/ai/$($manifest.release_asset)" -Destination "prism/assets/ai/$($manifest.filename)"
-          $actual = (Get-FileHash "prism/assets/ai/$($manifest.filename)" -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -ne $manifest.sha256) { throw 'Bundled model checksum mismatch' }
       - name: Build installer
         shell: pwsh
         run: |
@@ -59,9 +48,14 @@ jobs:
           if (!$logs) { throw 'Packaged application did not create a startup log' }
           $bad = $logs | Select-String -Pattern 'Unhandled exception|Traceback|ModuleNotFoundError'
           if ($bad) { throw "Packaged startup errors: $bad" }
-          $model = 'dist/Prism/_internal/prism/assets/ai/model.onnx'
-          $expected = (Get-Content prism/assets/ai/model-manifest.json -Raw | ConvertFrom-Json).sha256
-          if ((Get-FileHash $model -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Packaged model checksum mismatch' }
+          $result = Join-Path $smokeDir 'duplicate-worker.json'
+          $worker = Start-Process -FilePath $exe -ArgumentList @('--packaged-duplicate-smoke', $result) -PassThru -WindowStyle Hidden
+          if (!$worker.WaitForExit(60000)) {
+            Stop-Process -Id $worker.Id
+            throw 'Packaged duplicate-worker check timed out'
+          }
+          if ($worker.ExitCode -ne 0 -or !(Test-Path -LiteralPath $result)) { throw 'Packaged duplicate-worker check failed' }
+          if (!(Get-Content $result -Raw | ConvertFrom-Json).ok) { throw 'Packaged fingerprints differ' }
       - name: Export matching project source
         run: git archive --format=zip --output=release/Prism-source.zip HEAD
       - name: Save reviewable artifacts

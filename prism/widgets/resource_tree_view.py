@@ -24,6 +24,7 @@ class _NameEditor(QtWidgets.QLineEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._preedit = ''
+        self.setStyleSheet('QLineEdit { padding: 0 4px; min-height: 0px; font-size: 12px; }')
 
     @property
     def composing(self):
@@ -107,6 +108,11 @@ class _BlankAreaDelegate(QtWidgets.QStyledItemDelegate):
         # 全选要等视图把文字填进编辑器之后再排队做一次。
         QtCore.QTimer.singleShot(0, editor.selectAll)
         return editor
+
+    def updateEditorGeometry(self, editor, option, index):
+        rect = option.rect.adjusted(2, 0, -34, 0)
+        editor.setGeometry(rect)
+        editor.setTextMargins(2, 0, 2, 0)
 
     def setModelData(self, editor, model, index):
         self._refused = False
@@ -437,7 +443,9 @@ class ResourceTreeView(QtWidgets.QTreeView):
             self.tag_requested.emit(index.data(TAG_NAME_ROLE))
         if index.data(NODE_TYPE_ROLE) == 'page':
             node_id = index.data(NODE_ID_ROLE)
-            node = self.model().service._by_id(node_id)
+            node = self.model().service._by_id(node_id) or self.model()._implicit_records.get(node_id)
+            if node is None:
+                return
             self.open_page_requested.emit(node['section'], node['pageId'])
 
     def mousePressEvent(self, event):
@@ -458,6 +466,10 @@ class ResourceTreeView(QtWidgets.QTreeView):
     def menu_for_index(self, index):
         """Build the menu from hit-tested section, never last selection."""
         menu = QtWidgets.QMenu(self)
+        node = self.model()._nodes.get(index.data(NODE_ID_ROLE), {}) if index.isValid() else {}
+        if index.isValid() and (index.data(NODE_ID_ROLE) in self.model()._implicit_records or node.get('pageId') == 'default-canvas'):
+            menu.addAction('打开画布', lambda: self._open_current(index))
+            return menu
         # 选了好几个的时候，先把"批量"这件事说清楚（§7.5）。
         selected = self.selected_ids()
         if len(selected) > 1:
@@ -584,7 +596,8 @@ class ResourceTreeView(QtWidgets.QTreeView):
         """Enter：页面就打开它；文件夹不自动展开（免得碰出重型编辑器）。"""
         if index.data(NODE_TYPE_ROLE) != 'page':
             return
-        node = self.model().service._by_id(index.data(NODE_ID_ROLE))
+        node_id = index.data(NODE_ID_ROLE)
+        node = self.model().service._by_id(node_id) or self.model()._implicit_records.get(node_id)
         if node and node.get('pageId'):
             self.open_page_requested.emit(node['section'], node['pageId'])
 

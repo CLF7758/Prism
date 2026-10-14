@@ -8,6 +8,25 @@ import threading
 from unittest.mock import Mock
 
 import pytest
+
+
+@pytest.mark.parametrize('width,height', [(1, 296), (296, 1)])
+def test_extremely_thin_image_keeps_at_least_one_display_pixel(qapp, tmp_path, width, height):
+    from prism import image_decode, thumbnail_cache, lod
+    from prism.items import PrismPixmapItem
+    image = QtGui.QImage(width, height, QtGui.QImage.Format.Format_RGB32)
+    image.fill(QtGui.QColor('red'))
+    path = tmp_path / 'thin.png'
+    assert image.save(str(path))
+    decoded, size = image_decode.decode(path=str(path), max_side=64)
+    assert not decoded.isNull()
+    assert min(decoded.width(), decoded.height()) == 1
+    assert max(decoded.width(), decoded.height()) == 64
+    assert size == image.size()
+    assert not thumbnail_cache.make_preview(image, 64).isNull()
+    item = PrismPixmapItem(image)
+    lod.retain_thumbnail(item, QtGui.QPixmap.fromImage(image))
+    assert lod.thumbnail_pixmap(item) is not None
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from prism import fileio, image_decode, thumbnail_cache
@@ -69,6 +88,8 @@ def test_paint_queues_decode_without_reading_source(view, qtbot, tmp_path,
     view.scene.addItem(item)
     if missing_preview:
         item._preview_pixmap = None
+        from prism import lod
+        lod.cache().invalidate(item)
     real_decode = image_decode.decode
     worker_threads = []
 
@@ -84,13 +105,19 @@ def test_paint_queues_decode_without_reading_source(view, qtbot, tmp_path,
     try:
         display, _ = item._pixmap_for_painting(painter)
         assert not item.has_full_pixmap()
-        assert display.isNull() == missing_preview
-        qtbot.waitUntil(lambda: item._display_decode_request is None, timeout=5000)
+        assert not display.isNull()
+        if missing_preview:
+            from prism import lod
+            assert max(display.width(), display.height()) <= 192
+        from prism import lod
+        qtbot.waitUntil(lambda: lod.cache().get(item, 2048) is not None, timeout=5000)
         if missing_preview:
             assert item._preview_pixmap is not None
-            item._pixmap_for_painting(painter)
-            qtbot.waitUntil(item.has_full_pixmap, timeout=5000)
-        assert item.has_full_pixmap()
+        assert not item.has_full_pixmap()
+        assert lod.cache().get(item, 2048).size() == QtCore.QSize(1600, 900)
+        # A display level must not replace the complete-pixels/export API.
+        image_decode.request_display(item)
+        qtbot.waitUntil(item.has_full_pixmap, timeout=5000)
         assert QtWidgets.QGraphicsPixmapItem.pixmap(item).size() == QtCore.QSize(1600, 900)
         assert worker_threads
         assert all(thread != QtWidgets.QApplication.instance().thread()

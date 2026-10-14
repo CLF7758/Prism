@@ -21,12 +21,11 @@ from collections import defaultdict
 from functools import cached_property
 import logging
 import os
-from pathlib import Path
 import sqlite3
 import tempfile
 import time
 
-from PyQt6 import QtCore, QtGui, QtWidgets, sip
+from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, QUrl
 
 
@@ -62,6 +61,10 @@ from prism.glb_preview import (FAST_QUALITY_TRIANGLES, GLBError,
                                parse_gltf, render_mesh)
 from prism.i18n import _
 from prism.selection import SelectableMixin
+from prism.item_metadata import ItemMetadataMixin
+from prism.image_source import ImageSourceMixin
+from prism.image_crop import ImageCropMixin
+from prism.item_lifecycle import is_deleted, is_pixmap_item
 
 
 logger = logging.getLogger(__name__)
@@ -282,7 +285,7 @@ def sort_by_filename(items):
     return items_by_filename + items_by_save_id + items_remaining
 
 
-class PrismItemMixin(SelectableMixin):
+class PrismItemMixin(ItemMetadataMixin, SelectableMixin):
     """Base for all items added by the user."""
 
     def set_pos_center(self, pos):
@@ -312,116 +315,6 @@ class PrismItemMixin(SelectableMixin):
 
     # ── Metadata: categories, tags, notes ──────────────────────────────
 
-    @property
-    def categories(self):
-        return self._categories
-
-    @categories.setter
-    def categories(self, value):
-        self._categories = list(value) if value else []
-        self._notify_metadata_changed()
-
-    @property
-    def tags(self):
-        return self._tags
-
-    @tags.setter
-    def tags(self, value):
-        self._tags = list(value) if value else []
-        self._notify_metadata_changed()
-
-    @property
-    def rating(self):
-        return self._rating
-
-    @rating.setter
-    def rating(self, value):
-        self._rating = max(0, min(5, int(value or 0)))
-        self._notify_metadata_changed()
-
-    @property
-    def notes(self):
-        return self._notes
-
-    @notes.setter
-    def notes(self, value):
-        self._notes = value or ''
-        self._notify_metadata_changed()
-
-    @property
-    def title(self):
-        return self._title
-
-    @title.setter
-    def title(self, value):
-        self._title = value or ''
-        self._notify_metadata_changed()
-
-    @property
-    def canvas_id(self):
-        """素材属于哪个画布页 —— 拖到左栏另一个画布时改的就是它。
-
-        `ChangeMetadata` 靠这个名字读旧值，所以它得是个真属性，
-        不能只留一个 `_canvas_id`。
-        """
-        return self._canvas_id
-
-    @canvas_id.setter
-    def canvas_id(self, value):
-        self._canvas_id = value
-        self._notify_metadata_changed()
-
-    def init_metadata(self):
-        """Initialise metadata fields with empty defaults."""
-        self._group_id = None
-        self._group_note = ''
-        if not hasattr(self, '_categories'):
-            self._categories = []
-        if not hasattr(self, '_tags'):
-            self._tags = []
-        if not hasattr(self, '_rating'):
-            self._rating = 0
-        if not hasattr(self, '_notes'):
-            self._notes = ''
-        if not hasattr(self, '_title'):
-            self._title = ''
-        if not hasattr(self, '_canvas_id'):
-            self._canvas_id = 'default-canvas'
-        if not hasattr(self, '_deleted_at'):
-            self._deleted_at = None
-
-    def _notify_metadata_changed(self):
-        if self.scene() and hasattr(self.scene(), 'metadata_changed'):
-            self.scene().metadata_changed.emit()
-
-    def get_metadata_save_data(self):
-        data = {'categories': list(self._categories),
-                'lastUsed': getattr(self, '_last_used', ''),
-                'tags': list(self._tags),
-                'rating': self._rating,
-                'notes': self._notes,
-                'title': self._title,
-                'canvasId': self._canvas_id,
-                'groupId': self._group_id,
-                'groupNote': self._group_note}
-        # 软删除标记只有素材被丢进回收站时才存在；正常素材不写这个键，
-        # 老文件读进来也不受影响。
-        deleted_at = getattr(self, '_deleted_at', None)
-        if deleted_at is not None:
-            data['deletedAt'] = deleted_at
-        return data
-
-    def load_metadata_from_data(self, data):
-        self._last_used = data.get('lastUsed', '')
-        self._group_id = data.get('groupId')
-        self._group_note = data.get('groupNote', '')
-        self._categories = list(data.get('categories', []))
-        self._tags = list(data.get('tags', []))
-        self._rating = max(0, min(5, int(data.get('rating', 0) or 0)))
-        self._notes = data.get('notes', '')
-        self._title = data.get('title', '')
-        self._canvas_id = data.get('canvasId', 'default-canvas')
-        self._deleted_at = data.get('deletedAt')
 
     def apply_deleted_state(self):
         """按 `_deleted_at` 把素材显示成"在回收站里"或"正常"。
@@ -502,8 +395,9 @@ def release_stale_pixmaps(scene, budget_pixels=LOADED_PIXEL_BUDGET,
         return 0
     loaded = []
     total = 0
-    for item in scene.items():
-        if not isinstance(item, PrismPixmapItem):
+    resident = QtWidgets.QGraphicsScene.items(scene)
+    for item in resident:
+        if not is_pixmap_item(item):
             continue
         if not item.has_original_source():
             continue
@@ -516,18 +410,18 @@ def release_stale_pixmaps(scene, budget_pixels=LOADED_PIXEL_BUDGET,
     released = 0
     if total > budget_pixels:
         loaded.sort(key=lambda entry: entry[0])
-        for _stamp, pixels, item in loaded[:max(0, len(loaded) - keep_recent)]:
+        for _stamp, pixels, item in loaded:
             if total <= budget_pixels:
                 break
-            if item.release_full_pixmap():
+            if not item.crop_mode and item.release_full_pixmap():
                 total -= pixels
                 released += 1
     # Second pass: release compressed source bytes for items that
     # already dropped their full pixmap and can re-read the blob
     # on demand (via _source_path or _prism_source).
     blob_released = 0
-    for item in scene.items():
-        if not isinstance(item, PrismPixmapItem):
+    for item in resident:
+        if not is_pixmap_item(item):
             continue
         if item.has_full_pixmap():
             continue
@@ -547,7 +441,7 @@ def _schedule_budget_check(scene):
     Deferred to the event loop: dropping an image while the scene is
     painting it would be asking for trouble.
     """
-    if scene is None or sip.isdeleted(scene):
+    if scene is None or is_deleted(scene):
         return
     count = getattr(scene, '_prism_budget_counter', 0) + 1
     if count < BUDGET_CHECK_INTERVAL:
@@ -561,7 +455,7 @@ def _schedule_budget_check(scene):
 
 
 def _run_budget_check(scene):
-    if scene is None or sip.isdeleted(scene):
+    if scene is None or is_deleted(scene):
         return
     scene._prism_budget_scheduled = False
     try:
@@ -578,7 +472,7 @@ def _schedule_opening_check(scene):
     waiting until the first painting is done means the first check does
     not fight with the opening itself.
     """
-    if scene is None or sip.isdeleted(scene):
+    if scene is None or is_deleted(scene):
         return
     if getattr(scene, '_prism_opening_check', False):
         return
@@ -588,7 +482,7 @@ def _schedule_opening_check(scene):
 
 
 @register_item
-class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
+class PrismPixmapItem(ImageSourceMixin, ImageCropMixin, PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
     """Class for images added by the user."""
 
     TYPE = 'pixmap'
@@ -642,6 +536,9 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         item = kwargs.pop('item')
         data = kwargs.pop('data', {})
         item.filename = item.filename or data.get('filename')
+        from prism.lod import restore_overview
+        restore_overview(item, data.get('displayOverview'))
+        item._display_thumbnail = data.get('displayThumbnail')
         if 'crop' in data:
             item.crop = QtCore.QRectF(*data['crop'])
         item.setOpacity(data.get('opacity', 1))
@@ -746,6 +643,13 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
                          self.crop.height()],
                 'imageWidth': self._image_size.width(),
                 'imageHeight': self._image_size.height()}
+        from prism.lod import overview_data
+        overview = overview_data(self)
+        if overview is not None:
+            data['displayOverview'] = overview
+        thumbnail = getattr(self, '_display_thumbnail', None)
+        if thumbnail is not None and not getattr(self, '_preview_adjusted', False):
+            data['displayThumbnail'] = thumbnail
         if self.color_group:
             data['colorGroup'] = self.color_group
         if self.dominant_color:
@@ -771,15 +675,6 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
             self._perceptual_hash = difference_hash(image)
         return self._perceptual_hash
 
-    def get_filename_for_export(self, imgformat, save_id_default=None):
-        save_id = self.save_id or save_id_default
-        assert save_id is not None
-
-        if self.filename:
-            basename = os.path.splitext(os.path.basename(self.filename))[0]
-            return f'{save_id:04}-{basename}.{imgformat}'
-        else:
-            return f'{save_id:04}.{imgformat}'
 
     def get_imgformat(self, img):
         """Determines the format for storing this image."""
@@ -819,126 +714,6 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         img.save(buffer, imgformat.upper(), quality=90)
         return (barray.data(), imgformat)
 
-    @staticmethod
-    def _normalise_format(value):
-        if not value:
-            return None
-        value = str(value).lower().strip()
-        return value[1:] if value.startswith('.') else value
-
-    @staticmethod
-    def _format_from_filename(filename):
-        if not filename:
-            return None
-        return PrismPixmapItem._normalise_format(
-            os.path.splitext(str(filename))[1])
-
-    def set_source_blob(self, blob, source_format=None):
-        """Keep the bytes that were imported as the lossless source.
-
-        The canvas may use a decoded or adjusted QPixmap, but this payload
-        is never rewritten merely because the project is saved or the
-        preview controls change.  It is also intentionally independent of
-        the current storage-format preference.
-        """
-        self._grayscale_cache = None
-        self._display_decode_request = None
-        self._display_decode_failed = False
-        if blob is None:
-            self._source_blob = None
-            self._source_format = None
-            self._source_path = None
-            self._prism_source = None
-            self._preview_adjusted = False
-            return
-        self._source_blob = bytes(blob)
-        self._source_format = (
-            self._normalise_format(source_format)
-            or self._format_from_filename(self.filename)
-            or self._format_from_bytes(self._source_blob)
-            or 'png')
-        self._preview_adjusted = False
-
-    @staticmethod
-    def _format_from_bytes(blob):
-        signatures = ((b'\x89PNG\r\n\x1a\n', 'png'),
-                      (b'\xff\xd8\xff', 'jpg'),
-                      (b'GIF87a', 'gif'),
-                      (b'GIF89a', 'gif'),
-                      (b'RIFF', 'webp'),
-                      (b'BM', 'bmp'))
-        for signature, format_name in signatures:
-            if blob.startswith(signature):
-                return format_name
-        return None
-
-    def original_bytes(self):
-        """Return the imported bytes, or ``None`` for generated images.
-
-        When the source blob was deferred (only the file path or the
-        .prism archive reference was kept during import/load), read the
-        original bytes from disk on demand.  This keeps import memory
-        usage low while still preserving the exact original file bytes
-        when saving.
-        """
-        if self._source_blob is not None:
-            return self._source_blob
-        if self._source_path and os.path.isfile(self._source_path):
-            try:
-                with open(self._source_path, 'rb') as f:
-                    self._source_blob = f.read()
-                if self._source_format is None:
-                    self._source_format = (
-                        self._format_from_filename(self._source_path)
-                        or self._format_from_bytes(self._source_blob)
-                        or 'png')
-                return self._source_blob
-            except (OSError, TypeError):
-                logger.debug('Could not read deferred source %s',
-                             self._source_path, exc_info=True)
-        if self._prism_source:
-            prism_path, item_id = self._prism_source
-            try:
-                import sqlite3
-                conn = sqlite3.connect(
-                    Path(prism_path).resolve().as_uri() + '?mode=ro', uri=True)
-                try:
-                    row = conn.execute(
-                        'SELECT data FROM sqlar WHERE item_id = ?',
-                        (item_id,)).fetchone()
-                finally:
-                    conn.close()
-                if row and row[0]:
-                    self._source_blob = row[0]
-                    if self._source_format is None:
-                        self._source_format = (
-                            self._format_from_bytes(self._source_blob)
-                            or 'png')
-                    return self._source_blob
-            except Exception:
-                logger.debug('Could not read deferred source from %s',
-                             prism_path, exc_info=True)
-        return None
-
-    def original_format(self):
-        return self._source_format or self._format_from_filename(self.filename)
-
-    def has_original_source(self):
-        return bool(self._source_blob) or (
-            self._source_path and os.path.isfile(self._source_path)) or (
-            self._prism_source is not None)
-
-    def materialize_source(self):
-        """Force deferred source bytes into memory.
-
-        Call before the source file might disappear (e.g. staging
-        directory cleanup in zip imports).  After this call the blob
-        lives in ``_source_blob`` regardless of whether the file still
-        exists.
-        """
-        if self._source_blob is not None:
-            return
-        self.original_bytes()
 
     def set_preview_pixmap(self, pixmap, adjusted=True):
         """Replace display pixels without throwing away the original.
@@ -947,6 +722,10 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         destructive operation for callers that intentionally replace an
         image's contents.
         """
+        self._display_source_revision = getattr(self, '_display_source_revision', 0)+1
+        self._display_thumbnail = None
+        if hasattr(self, '_overview_payload'):
+            self._overview_payload = None
         self._grayscale_cache = None
         self._display_decode_request = None
         self._display_decode_failed = False
@@ -1081,6 +860,11 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         self.reset_crop()
 
     def setPixmap(self, pixmap):
+        self.prepareGeometryChange()
+        self._display_source_revision = getattr(self, '_display_source_revision', 0)+1
+        self._display_thumbnail = None
+        if hasattr(self, '_overview_payload'):
+            self._overview_payload = None
         self._grayscale_cache = None
         self._display_decode_request = None
         self._display_decode_failed = False
@@ -1105,7 +889,7 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         self.setPixmap(pixmap)
         self.set_source_blob(data)
 
-    def _pixmap_for_painting(self, painter):
+    def _pixmap_for_painting(self, painter, widget=None):
         """Return (pixmap, source rect) to draw the cropped image.
 
         The preview stands in for the original as long as it is at least
@@ -1113,21 +897,19 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         decoded, which is what makes zooming in on a big project load
         only the images that are actually looked at.
         """
-        pixmap = QtWidgets.QGraphicsPixmapItem.pixmap(self)
-        if not pixmap.isNull():
-            return pixmap, QtCore.QRectF(self.crop)
-        preview = self._preview_pixmap
-        if preview is not None:
-            if not self._preview_is_detailed_enough(painter, preview):
-                image_decode.request_display(self)
-            return preview, self._preview_source_rect(preview)
+        from prism import lod
         scene = self.scene()
-        busy = scene and (scene._import_in_progress or scene._interaction_in_progress)
-        if not busy and (self._source_blob or self._source_path or self._prism_source):
-            # Painting only queues immutable source references. File reads and
-            # decoding run off-thread; QPixmap creation returns to the GUI.
-            image_decode.request_display(self, thumbnail_cache.PREVIEW_MAX_SIDE)
-        return pixmap, QtCore.QRectF(self.crop)
+        pixels = lod.shown_pixels(self, painter)
+        if scene and scene._import_in_progress:
+            pixels = min(192, pixels)
+        owner = next((view for view in scene.views()
+                      if view.viewport() is widget and view.isVisible()), None) if scene else None
+        if owner is None and scene is not None:
+            owner = getattr(scene, '_overview_recording_owner', None)
+        pixmap = lod.display_pixmap(self, pixels, owner)
+        if pixmap is None:
+            pixmap = QtGui.QPixmap()
+        return pixmap, lod.source_rect(self, pixmap)
 
     def _preview_is_detailed_enough(self, painter, preview):
         scene = self.scene()
@@ -1310,123 +1092,22 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
     def copy_to_clipboard(self, clipboard):
         clipboard.setPixmap(self.pixmap())
 
-    def reset_crop(self):
-        size = self._image_size
-        self.crop = QtCore.QRectF(0, 0, size.width(), size.height())
-
-    @property
-    def crop_handle_size(self):
-        return self.fixed_length_for_viewport(self.CROP_HANDLE_SIZE)
-
-    def crop_handle_topleft(self):
-        topleft = self.crop_temp.topLeft()
-        return QtCore.QRectF(
-            topleft.x(),
-            topleft.y(),
-            self.crop_handle_size,
-            self.crop_handle_size)
-
-    def crop_handle_bottomleft(self):
-        bottomleft = self.crop_temp.bottomLeft()
-        return QtCore.QRectF(
-            bottomleft.x(),
-            bottomleft.y() - self.crop_handle_size,
-            self.crop_handle_size,
-            self.crop_handle_size)
-
-    def crop_handle_bottomright(self):
-        bottomright = self.crop_temp.bottomRight()
-        return QtCore.QRectF(
-            bottomright.x() - self.crop_handle_size,
-            bottomright.y() - self.crop_handle_size,
-            self.crop_handle_size,
-            self.crop_handle_size)
-
-    def crop_handle_topright(self):
-        topright = self.crop_temp.topRight()
-        return QtCore.QRectF(
-            topright.x() - self.crop_handle_size,
-            topright.y(),
-            self.crop_handle_size,
-            self.crop_handle_size)
-
-    def crop_handles(self):
-        return (self.crop_handle_topleft,
-                self.crop_handle_bottomleft,
-                self.crop_handle_bottomright,
-                self.crop_handle_topright)
-
-    def crop_edge_top(self):
-        topleft = self.crop_temp.topLeft()
-        return QtCore.QRectF(
-            topleft.x() + self.crop_handle_size,
-            topleft.y(),
-            self.crop_temp.width() - 2 * self.crop_handle_size,
-            self.crop_handle_size)
-
-    def crop_edge_left(self):
-        topleft = self.crop_temp.topLeft()
-        return QtCore.QRectF(
-            topleft.x(),
-            topleft.y() + self.crop_handle_size,
-            self.crop_handle_size,
-            self.crop_temp.height() - 2 * self.crop_handle_size)
-
-    def crop_edge_bottom(self):
-        bottomleft = self.crop_temp.bottomLeft()
-        return QtCore.QRectF(
-            bottomleft.x() + self.crop_handle_size,
-            bottomleft.y() - self.crop_handle_size,
-            self.crop_temp.width() - 2 * self.crop_handle_size,
-            self.crop_handle_size)
-
-    def crop_edge_right(self):
-        topright = self.crop_temp.topRight()
-        return QtCore.QRectF(
-            topright.x() - self.crop_handle_size,
-            topright.y() + self.crop_handle_size,
-            self.crop_handle_size,
-            self.crop_temp.height() - 2 * self.crop_handle_size)
-
-    def crop_edges(self):
-        return (self.crop_edge_top,
-                self.crop_edge_left,
-                self.crop_edge_bottom,
-                self.crop_edge_right)
-
-    def get_crop_handle_cursor(self, handle):
-        """Gets the crop cursor for the given handle."""
-
-        is_topleft_or_bottomright = handle in (
-            self.crop_handle_topleft, self.crop_handle_bottomright)
-        return self.get_diag_cursor(is_topleft_or_bottomright)
-
-    def get_crop_edge_cursor(self, edge):
-        """Gets the crop edge cursor for the given edge."""
-
-        top_or_bottom = edge in (
-            self.crop_edge_top, self.crop_edge_bottom)
-        sideways = (45 < self.rotation() < 135
-                    or 225 < self.rotation() < 315)
-
-        if top_or_bottom is sideways:
-            return Qt.CursorShape.SizeHorCursor
-        else:
-            return Qt.CursorShape.SizeVerCursor
-
-    def draw_crop_rect(self, painter, rect):
-        """Paint a dotted rectangle for the cropping UI."""
-        pen = QtGui.QPen(QtGui.QColor(255, 255, 255))
-        pen.setWidth(2)
-        pen.setCosmetic(True)
-        painter.setPen(pen)
-        painter.drawRect(rect)
-        pen.setColor(QtGui.QColor(0, 0, 0))
-        pen.setStyle(Qt.PenStyle.DotLine)
-        painter.setPen(pen)
-        painter.drawRect(rect)
 
     def paint(self, painter, option, widget):
+        overview_recording = (self.scene() is not None
+                              and getattr(self.scene(), '_overview_recording_owner', None) is not None)
+        if (widget is not None or overview_recording) and not self.crop_mode and not self.isSelected():
+            from prism.lod import OVERVIEW_MAX_PIXELS, overview_pixmap
+            screen = painter.combinedTransform().mapRect(self.crop)
+            if max(screen.width(), screen.height()) <= OVERVIEW_MAX_PIXELS:
+                # Keep distant images recognizable without decoding or selection work.
+                pm = overview_pixmap(self)
+                if pm is not None and not pm.isNull():
+                    painter.setRenderHint(painter.RenderHint.SmoothPixmapTransform, False)
+                    painter.drawPixmap(self.crop, pm, self._preview_source_rect(pm))
+                else:
+                    painter.fillRect(self.crop, QtGui.QColor(self.dominant_color or '#617080'))
+                return
         # Remembered so that the memory budget knows which images the
         # user is actually looking at.
         self._last_painted = time.monotonic()
@@ -1435,9 +1116,8 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
             # We want image smoothing, but only for images where we
             # are not zoomed in a lot. This is to ensure that for
             # example icons and pixel sprites can be viewed correctly.
-            scene = self.scene()
             painter.setRenderHint(painter.RenderHint.SmoothPixmapTransform,
-                                  not (scene and scene._interaction_in_progress))
+                                  True)
 
         if self.crop_mode:
             self.paint_debug(painter, option, widget)
@@ -1459,167 +1139,12 @@ class PrismPixmapItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
                 self.draw_crop_rect(painter, handle())
             self.draw_crop_rect(painter, self.crop_temp)
         else:
-            pm, source = self._pixmap_for_painting(painter)
+            pm, source = self._pixmap_for_painting(painter, widget)
             if not pm.isNull():
                 painter.drawPixmap(self.crop, pm, source)
+            elif widget is not None:
+                painter.fillRect(self.crop, QtGui.QColor(self.dominant_color or '#617080'))
             self.paint_selectable(painter, option, widget)
-
-    def enter_crop_mode(self):
-        logger.debug(f'Entering crop mode on {self}')
-        self.prepareGeometryChange()
-        self.crop_mode = True
-        self.crop_temp = QtCore.QRectF(self.crop)
-        self.crop_mode_move = None
-        self.crop_mode_event_start = None
-        self.grabKeyboard()
-        self.update()
-        self.scene().crop_item = self
-
-    def exit_crop_mode(self, confirm):
-        logger.debug(f'Exiting crop mode with {confirm} on {self}')
-        if confirm and self.crop != self.crop_temp:
-            self.scene().undo_stack.push(
-                commands.CropItem(self, self.crop_temp))
-        self.prepareGeometryChange()
-        self.crop_mode = False
-        self.crop_temp = None
-        self.crop_mode_move = None
-        self.crop_mode_event_start = None
-        self.ungrabKeyboard()
-        self.update()
-        self.scene().crop_item = None
-
-    def keyPressEvent(self, event):
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self.exit_crop_mode(confirm=True)
-        elif event.key() == Qt.Key.Key_Escape:
-            self.exit_crop_mode(confirm=False)
-        else:
-            super().keyPressEvent(event)
-
-    def hoverMoveEvent(self, event):
-        if not self.crop_mode:
-            return super().hoverMoveEvent(event)
-
-        for handle in self.crop_handles():
-            if handle().contains(event.pos()):
-                self.set_cursor(self.get_crop_handle_cursor(handle))
-                return
-        for edge in self.crop_edges():
-            if edge().contains(event.pos()):
-                self.set_cursor(self.get_crop_edge_cursor(edge))
-                return
-        self.unset_cursor()
-
-    def mousePressEvent(self, event):
-        if not self.crop_mode:
-            return super().mousePressEvent(event)
-
-        event.accept()
-        for handle in self.crop_handles():
-            # Click into a handle?
-            if handle().contains(event.pos()):
-                self.crop_mode_event_start = event.pos()
-                self.crop_mode_move = handle
-                return
-        for edge in self.crop_edges():
-            # Click into an edge handle?
-            if edge().contains(event.pos()):
-                self.crop_mode_event_start = event.pos()
-                self.crop_mode_move = edge
-                return
-        # Click not in handle, end cropping mode:
-        self.exit_crop_mode(
-            confirm=self.crop_temp.contains(event.pos()))
-
-    def ensure_point_within_crop_bounds(self, point, handle):
-        """Returns the point, or the nearest point within the pixmap."""
-
-        if handle == self.crop_handle_topleft:
-            topleft = QtCore.QPointF(0, 0)
-            bottomright = self.crop_temp.bottomRight()
-        if handle == self.crop_handle_bottomleft:
-            topleft = QtCore.QPointF(0, self.crop_temp.top())
-            bottomright = QtCore.QPointF(
-                self.crop_temp.right(), self.pixmap().size().height())
-        if handle == self.crop_handle_bottomright:
-            topleft = self.crop_temp.topLeft()
-            bottomright = QtCore.QPointF(
-                self.pixmap().size().width(), self.pixmap().size().height())
-        if handle == self.crop_handle_topright:
-            topleft = QtCore.QPointF(self.crop_temp.left(), 0)
-            bottomright = QtCore.QPointF(
-                self.pixmap().size().width(), self.crop_temp.bottom())
-        if handle == self.crop_edge_top:
-            topleft = QtCore.QPointF(0, 0)
-            bottomright = QtCore.QPointF(
-                self.pixmap().size().width(), self.crop_temp.bottom())
-        if handle == self.crop_edge_bottom:
-            topleft = QtCore.QPointF(0, self.crop_temp.top())
-            bottomright = QtCore.QPointF(
-                self.pixmap().size().width(), self.pixmap().size().height())
-        if handle == self.crop_edge_left:
-            topleft = QtCore.QPointF(0, 0)
-            bottomright = QtCore.QPointF(
-                self.crop_temp.right(), self.pixmap().size().height())
-        if handle == self.crop_edge_right:
-            topleft = QtCore.QPointF(self.crop_temp.left(), 0)
-            bottomright = QtCore.QPointF(
-                self.pixmap().size().width(), self.pixmap().size().height())
-
-        point.setX(min(bottomright.x(), max(topleft.x(), point.x())))
-        point.setY(min(bottomright.y(), max(topleft.y(), point.y())))
-
-        return point
-
-    def mouseMoveEvent(self, event):
-        if self.crop_mode and self.crop_mode_event_start:
-            diff = event.pos() - self.crop_mode_event_start
-            if self.crop_mode_move == self.crop_handle_topleft:
-                new = self.ensure_point_within_crop_bounds(
-                    self.crop_temp.topLeft() + diff, self.crop_mode_move)
-                self.crop_temp.setTopLeft(new)
-            if self.crop_mode_move == self.crop_handle_bottomleft:
-                new = self.ensure_point_within_crop_bounds(
-                    self.crop_temp.bottomLeft() + diff, self.crop_mode_move)
-                self.crop_temp.setBottomLeft(new)
-            if self.crop_mode_move == self.crop_handle_bottomright:
-                new = self.ensure_point_within_crop_bounds(
-                    self.crop_temp.bottomRight() + diff, self.crop_mode_move)
-                self.crop_temp.setBottomRight(new)
-            if self.crop_mode_move == self.crop_handle_topright:
-                new = self.ensure_point_within_crop_bounds(
-                    self.crop_temp.topRight() + diff, self.crop_mode_move)
-                self.crop_temp.setTopRight(new)
-            if self.crop_mode_move == self.crop_edge_top:
-                new = self.ensure_point_within_crop_bounds(
-                    self.crop_temp.topLeft() + diff, self.crop_mode_move)
-                self.crop_temp.setTop(new.y())
-            if self.crop_mode_move == self.crop_edge_left:
-                new = self.ensure_point_within_crop_bounds(
-                    self.crop_temp.topLeft() + diff, self.crop_mode_move)
-                self.crop_temp.setLeft(new.x())
-            if self.crop_mode_move == self.crop_edge_bottom:
-                new = self.ensure_point_within_crop_bounds(
-                    self.crop_temp.bottomLeft() + diff, self.crop_mode_move)
-                self.crop_temp.setBottom(new.y())
-            if self.crop_mode_move == self.crop_edge_right:
-                new = self.ensure_point_within_crop_bounds(
-                    self.crop_temp.topRight() + diff, self.crop_mode_move)
-                self.crop_temp.setRight(new.x())
-            self.update()
-            self.crop_mode_event_start = event.pos()
-            event.accept()
-        else:
-            super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        if self.crop_mode:
-            self.crop_mode_move = None
-            self.crop_mode_event_start = None
-            event.accept()
-        else:
-            super().mouseReleaseEvent(event)
 
 
 @register_item
@@ -1888,6 +1413,7 @@ class PrismPathItem(PrismItemMixin, QtWidgets.QGraphicsPathItem):
             path.moveTo(*self._points[0])
             for point in self._points[1:]:
                 path.lineTo(*point)
+        self.prepareGeometryChange()
         self.setPath(path)
 
         pen = QtGui.QPen(QtGui.QColor(self._color), max(0.5, self._width))
@@ -1990,7 +1516,29 @@ class PrismPathItem(PrismItemMixin, QtWidgets.QGraphicsPathItem):
         # `option.state` 要打开 Enabled，不然 Qt 会把颜色调淡
         # （它以为这个图元被禁用了）。
         option.state = QtWidgets.QStyle.StateFlag.State_Enabled
-        super().paint(painter, option, widget)
+        ends = self._endpoints()
+        if self._arrow != ARROW_NONE and ends is not None:
+            start, end = ends
+            delta = end-start
+            length = (delta.x()**2+delta.y()**2)**.5
+            if length > 1e-6:
+                unit = delta/length
+                trim = min(self._arrow_size(), length*.8)*.75
+                if self._arrow in (ARROW_START, ARROW_BOTH):
+                    start += unit*trim
+                if self._arrow in (ARROW_END, ARROW_BOTH):
+                    end -= unit*trim
+                remaining = end-start
+                if remaining.x()*unit.x()+remaining.y()*unit.y() > self.pen().widthF()/2:
+                    path = QtGui.QPainterPath(start)
+                    path.lineTo(end)
+                    painter.save()
+                    painter.setPen(self.pen())
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawPath(path)
+                    painter.restore()
+        else:
+            super().paint(painter, option, widget)
         self._paint_arrows(painter)
         # 选中框和缩放手柄 —— 少了这一句，选中的线看不出被选中了
         self.paint_selectable(painter, option, widget)

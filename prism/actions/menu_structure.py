@@ -115,8 +115,6 @@ menu_structure = [
             'change_opacity',
             'grayscale',
             MENU_SEPARATOR,
-            'sample_color',
-            MENU_SEPARATOR,
             'find_duplicates',
         ],
     },

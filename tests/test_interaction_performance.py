@@ -33,6 +33,32 @@ def test_paint_detail_decision_never_checks_disk(view, tmp_path, monkeypatch):
         painter.end()
 
 
+def test_zoom_gesture_keeps_cached_sharp_level_and_smoothing(view, tmp_path, monkeypatch):
+    from prism import lod, image_decode
+    item = preview_item(tmp_path, view)
+    sharp = QtGui.QPixmap(1024, 576)
+    sharp.fill(QtGui.QColor('blue'))
+    lod.cache().store(item, 1024, sharp, notify=False)
+    request = Mock()
+    monkeypatch.setattr(image_decode, 'request_display', request)
+    canvas = QtGui.QImage(1024, 576, QtGui.QImage.Format.Format_RGB32)
+    painter = QtGui.QPainter(canvas)
+    painter.scale(.6, .6)
+    try:
+        view.scene._interaction_in_progress = True
+        during, _ = item._pixmap_for_painting(painter, view.viewport())
+        assert during.width() == 1024
+        item.paint(painter, QtWidgets.QStyleOptionGraphicsItem(), view.viewport())
+        assert painter.testRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
+        view.scene._interaction_in_progress = False
+        after, _ = item._pixmap_for_painting(painter, view.viewport())
+        assert during.cacheKey() == after.cacheKey()
+        request.assert_not_called()
+    finally:
+        view.scene._interaction_in_progress = False
+        painter.end()
+
+
 def test_selection_inspector_uses_preview_without_decoding(view, tmp_path, monkeypatch):
     item = preview_item(tmp_path, view)
     with monkeypatch.context() as patch:

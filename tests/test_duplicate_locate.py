@@ -62,6 +62,23 @@ def test_a_normal_photo_is_located_and_says_so(view, qapp):
     dialog.close()
 
 
+def test_locating_from_public_assets_opens_owning_canvas(main_window):
+    w = main_window
+    page = w.workspace_service.add('canvas', 'Duplicate target')
+    item = _photo()
+    item._canvas_id = page['id']
+    w.view.scene.addItem(item)
+    w.asset_browser.open('all')
+    dialog = DuplicateFinderDialog(w.view, [[item, item]])
+    dialog.image_list.setCurrentRow(0)
+    dialog._locate_selected_images()
+    assert w.tabs.currentWidget() is w.canvas_page
+    assert w.current_page_id == page['id']
+    assert item.isSelected()
+    assert not any(b.isChecked() for b in w.view.category_panel._nav_buttons.values())
+    dialog.close()
+
+
 def test_a_photo_without_a_size_does_not_claim_success(view, qapp):
     """``boundingRect()`` 为空的图元会让 ``fit_rect()`` 静默什么都不做。
 

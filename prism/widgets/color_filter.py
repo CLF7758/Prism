@@ -20,12 +20,13 @@ import logging
 import time
 import weakref
 
-from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets, sip
 from PyQt6.QtCore import Qt
 
 from prism.items import COLOR_GROUPS, PrismPixmapItem, PrismVideoItem
 from prism.i18n import _
 from prism import ui_tokens
+from prism.item_lifecycle import is_deleted, is_pixmap_item
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,17 @@ class ColorFilterBar(QtWidgets.QWidget):
         self._analysis_timer.timeout.connect(self._analyze_pending)
         self.setObjectName('colorFilterBar')
         self._build_ui()
+        from prism.lod import cache
+        cache().changed.connect(self._preview_ready)
+
+    @QtCore.pyqtSlot(object)
+    def _preview_ready(self, item):
+        if (not is_deleted(item) and is_pixmap_item(item)
+                and item.scene() is self.view.scene and not item.color_group
+                and item.canvas_id == self.view.current_canvas_id):
+            self._analysis_pending.setdefault(id(item), weakref.ref(item))
+            if not self._analysis_timer.isActive():
+                self._analysis_timer.start()
 
     def _build_ui(self):
         layout = QtWidgets.QHBoxLayout(self)
@@ -169,7 +181,7 @@ class ColorFilterBar(QtWidgets.QWidget):
         for item in self._current_media():
             if not hasattr(item, 'save_id'):
                 continue
-            is_pixmap = isinstance(item, PrismPixmapItem)
+            is_pixmap = is_pixmap_item(item)
             is_video = isinstance(item, PrismVideoItem)
             if not (is_pixmap or is_video):
                 continue
@@ -198,7 +210,7 @@ class ColorFilterBar(QtWidgets.QWidget):
 
     def _analyze_pending(self):
         from PyQt6 import sip
-        if sip.isdeleted(self.view) or sip.isdeleted(self.view.scene):
+        if is_deleted(self.view) or is_deleted(self.view.scene):
             self._analysis_pending.clear()
             self._analysis_timer.stop()
             return
@@ -210,7 +222,7 @@ class ColorFilterBar(QtWidgets.QWidget):
                 break
             key = next(iter(self._analysis_pending))
             item = self._analysis_pending.pop(key)()
-            if (item is not None and not sip.isdeleted(item)
+            if (item is not None and not is_deleted(item)
                     and item.scene() is self.view.scene
                     and item.canvas_id == self.view.current_canvas_id):
                 if not item.color_group:
@@ -263,7 +275,7 @@ class ColorFilterBar(QtWidgets.QWidget):
         for item in self._current_media():
             if not hasattr(item, 'save_id'):
                 continue
-            if isinstance(item, (PrismPixmapItem, PrismVideoItem)):
+            if (is_pixmap_item(item) or isinstance(item, PrismVideoItem)):
                 item_color = getattr(item, 'color_group', None)
                 if item_color != group_id:
                     item.setOpacity(DIM_OPACITY)
@@ -288,12 +300,12 @@ class ColorFilterBar(QtWidgets.QWidget):
     def _current_media(self):
         canvas = getattr(self.view, 'current_canvas_id', 'default-canvas')
         return [item for item in self.view.scene.items_for_save()
-                if isinstance(item, (PrismPixmapItem, PrismVideoItem))
+                if (is_pixmap_item(item) or isinstance(item, PrismVideoItem))
                 and item.canvas_id == canvas]
 
     def _current_images(self):
         return [item for item in self._current_media()
-                if isinstance(item, PrismPixmapItem)]
+                if is_pixmap_item(item)]
 
     def sync_canvas(self):
         canvas = getattr(self.view, 'current_canvas_id', 'default-canvas')

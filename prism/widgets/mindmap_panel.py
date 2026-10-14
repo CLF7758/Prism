@@ -260,6 +260,7 @@ class MindMapPanel(QtWidgets.QWidget):
     # ── Board <-> panel ──────────────────────────────────────────
 
     def load_from_scene(self):
+        self._search_epoch = getattr(self, '_search_epoch', 0) + 1
         """Push the board's stored tree into the editing surface."""
         if not mindmap_available():
             return
@@ -532,6 +533,7 @@ class MindMapPanel(QtWidgets.QWidget):
         self._update_status()
 
     def _on_tree_changed(self, payload):
+        self._content_revision = getattr(self, '_content_revision', 0) + 1
         tree, images = parse_tree_payload(payload)
         if tree is None:
             return
@@ -551,6 +553,35 @@ class MindMapPanel(QtWidgets.QWidget):
         library = getattr(self.view, 'category_panel', None)
         if library is not None:
             library.search_content_changed()
+
+    def search_snapshot(self, callback):
+        if not self._ready or self.web_view is None:
+            callback(True)
+            return
+        if self._pending_tree is not None:
+            callback(False)
+            return
+        project_id = self.view.scene.project_id
+        epoch = getattr(self, '_search_epoch', 0)
+        revision = getattr(self, '_content_revision', 0)
+        def finished(payload):
+            if self.view.scene.project_id != project_id or epoch != getattr(self, '_search_epoch', 0) or not isinstance(payload, str):
+                callback(False)
+                return
+            if revision == getattr(self, '_content_revision', 0):
+                self._on_tree_changed(payload)
+            callback(True)
+        self.web_view.page().runJavaScript('window.__searchSnapshot ? window.__searchSnapshot() : null', finished)
+
+    def editor_history(self, redo=False):
+        if self._ready:
+            self.web_view.page().runJavaScript('window.__mindMap && window.__mindMap.execCommand(' +
+                                              json.dumps('FORWARD' if redo else 'BACK') + ')')
+
+    def end_search_location(self):
+        self._pending_search = None
+        if self._ready and self.web_view is not None:
+            self.web_view.page().runJavaScript('window.__endSearchLocation && window.__endSearchLocation()')
 
     def locate_search_result(self, node_path):
         self._pending_search = node_path

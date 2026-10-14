@@ -114,7 +114,7 @@ def make_preview(image, max_side=PREVIEW_MAX_SIDE):
     scale = max_side / longest
     return image.scaled(
         max(1, round(width * scale)), max(1, round(height * scale)),
-        QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+        QtCore.Qt.AspectRatioMode.IgnoreAspectRatio,
         QtCore.Qt.TransformationMode.SmoothTransformation)
 
 

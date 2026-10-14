@@ -23,6 +23,7 @@ from prism.widgets.resource_tree_model import (
 from prism.widgets.resource_tree_view import ResourceTreeView
 from prism.workspace_service import ResourceTreeService, legacy_page_nodes
 from prism.project_search import plain_text as plain_text_of, text_of_tree
+from prism.item_lifecycle import is_deleted
 
 
 logger = logging.getLogger(__name__)
@@ -85,7 +86,8 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self._recount_timer.setSingleShot(True)
         self._recount_timer.setInterval(300)
         self._recount_timer.timeout.connect(self.update_counts)
-        self.scene.changed.connect(self._schedule_recount)
+        self.scene.assets_changed.connect(self._schedule_recount)
+        self.scene.items_trashed.connect(self._schedule_recount)
         tag_panel.tag_signals().changed.connect(self.refresh_tags)
         self.update_counts()
 
@@ -96,7 +98,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         the interpreter shuts down. Without this check those late callbacks
         touch a deleted C++ object and log an unhandled RuntimeError.
         """
-        return self.scene is not None and not sip.isdeleted(self.scene)
+        return self.scene is not None and not is_deleted(self.scene)
 
     def _schedule_recount(self):
         if not self._scene_alive():
@@ -137,7 +139,13 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self.search.textChanged.connect(self._on_project_search)
         from prism.widgets.components.icons import icon
         self.search.addAction(icon('search'), QtWidgets.QLineEdit.ActionPosition.LeadingPosition)
-        layout.addWidget(self.search)
+        self.search_kind = 'all'
+        self.search_type = self.make_search_type_combo()
+        search_row = QtWidgets.QHBoxLayout()
+        search_row.setSpacing(4)
+        search_row.addWidget(self.search_type)
+        search_row.addWidget(self.search, 1)
+        layout.addLayout(search_row)
         self._navigation = QtWidgets.QButtonGroup(self)
         self._navigation.setExclusive(True)
         self._nav_counts = {}
@@ -147,7 +155,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         navigation_layout.setContentsMargins(0, 0, 0, 0)
         navigation_layout.setSpacing(2)
         for key, name, glyph in (
-                ('all', '全部', 'library'),
+                ('all', _('All assets'), 'library'),
                 ('unclassified', '未分类', 'unclassified'),
                 ('untagged', '未标签', 'tag-outline'),
                 ('recent', '最近使用', 'clock'),
@@ -250,8 +258,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(180)
         self._search_timer.timeout.connect(self._on_search_timer)
-        self.resource_tree.tag_requested.connect(
-            lambda name: self.search.setText('tag:' + json.dumps(name, ensure_ascii=False)))
+        self.resource_tree.tag_requested.connect(self._browse_tag)
         self.resource_tree.rename_tag_requested.connect(self.rename_tag)
         self.resource_tree.delete_tag_requested.connect(self.delete_tag)
 
@@ -275,8 +282,11 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self.scene.metadata_changed.connect(self._on_metadata_changed)
 
     def _browse_folder(self, index):
+        controller = getattr(self.view.window(), 'search_controller', None)
         if index.data(NODE_TYPE_ROLE) != 'folder' or index.data(SECTION_ROLE) != 'canvas':
             return
+        if controller is not None and controller.active:
+            controller.exit()
         window = self.view.window()
         if not hasattr(window, 'asset_browser'):
             return
@@ -286,6 +296,31 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         window.asset_browser.saved_rule = None
         window.asset_browser.search.clear()
         window.asset_browser.open('all', pages, str(index.data()))
+
+    def _browse_tag(self, name):
+        window = self.view.window()
+        browser = getattr(window, 'asset_browser', None)
+        if browser is None:
+            self.set_project_query('tag:' + json.dumps(name, ensure_ascii=False))
+            return
+        controller = getattr(window, 'search_controller', None)
+        if controller is not None and controller.active:
+            controller.exit()
+        self.set_search_kind('asset')
+        self._active_tags.clear()
+        self._active_filter = None
+        self._min_rating = 0
+        browser.search.clear()
+        browser.saved_rule = {'tag_expression': json.dumps(name, ensure_ascii=False)}
+        browser.open('all', title=name)
+
+    def set_project_query(self, text):
+        controller = getattr(self.view.window(), 'search_controller', None)
+        if controller is not None:
+            controller.input.setText(text)
+            controller.submit()
+        else:
+            self.search.setText(text)
 
     def _filter_directories(self, text):
         needle = text.strip().casefold()
@@ -304,12 +339,25 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         walk(QtCore.QModelIndex())
 
     def _navigate(self, target):
+        controller = getattr(self.view.window(), 'search_controller', None)
+        if controller is not None and target != 'trash':
+            self.set_search_kind('asset')
+        if controller is not None and controller.active and target != 'trash':
+            controller.set_scope('navigation', target, str(self._nav_buttons[target].text()))
+            return
         if target == 'trash':
             self.resource_tree.trash_requested.emit()
         elif hasattr(self.view.window(), 'asset_browser'):
             browser = self.view.window().asset_browser
             browser.saved_rule = None
             browser.search.clear()
+            self._active_tags.clear()
+            self._min_rating = 0
+            self._active_filter = None
+            if controller is not None:
+                controller.scope = ('project', None)
+                controller.scope_combo.setCurrentIndex(0)
+                controller.min_rating, controller.color, controller.active_tags = 0, None, set()
             browser.open(target)
         elif target in ('all', 'untagged'):
             # 方案 §6：全部/未标签进入全项目结果模式，不再只过滤当前画布。
@@ -338,35 +386,45 @@ class MediaLibraryPanel(QtWidgets.QWidget):
                 if key in self._nav_counts:
                     self._nav_counts[key].setText('0')
             return
-        total = self.catalog.total_count()
-        untagged = self.catalog.untagged_count()
-        trash = self.catalog.trash_top_level_count()
+        snapshot = self.catalog.count_snapshot()
+        total, untagged, trash = snapshot['total'], snapshot['untagged'], snapshot['trash']
         self._nav_counts['all'].setText(f'{total:,}')
+        self._nav_counts['unclassified'].setText(f'{snapshot["unclassified"]:,}')
         self._nav_counts['untagged'].setText(f'{untagged:,}')
         # 需求 1：左栏「标签管理」入口已删除，`_nav_counts` 不再有 'tags'。
         if 'trash' in self._nav_counts:
             self._nav_counts['trash'].setText(str(trash))
         browser = getattr(self.view.window(), 'asset_browser', None)
-        mode = browser.mode if browser is not None and browser.isVisible() else self._result_mode
+        is_browser = browser is not None and self.view.window().tabs.currentWidget() is browser
+        mode = browser.mode if is_browser and browser.scope_pages is None and not browser.saved_rule else None
         self._navigation.setExclusive(False)
         for key, button in self._nav_buttons.items():
             if button.isCheckable():
                 button.setChecked(key == mode)
         self._navigation.setExclusive(True)
+        if mode is not None:
+            self.resource_tree.clearSelection()
+            self.resource_tree.setCurrentIndex(QtCore.QModelIndex())
         active = (self._min_rating or self._untagged_only
                   or self._active_tags or self._active_filter)
         self.filter_button.setToolTip('按名称筛选左侧目录；素材筛选在顶部漏斗中')
         # 资源树计数：全项目口径，含 UNASSIGNED_CANVAS 桶。
         # set_asset_counts 已经实现文件夹层级的递归 roll-up。
-        page_counts = self.catalog.canvas_counts()
+        page_counts = snapshot['canvases']
         self.resource_tree.model().set_asset_counts(page_counts)
 
     def _install_resource_service(self):
         project_id = self.scene.project_id
         nodes = getattr(self.scene, 'workspace_nodes', []) or []
+        previous = getattr(self, 'resource_service', None)
+        if (previous is not None and previous.project_id != project_id
+                and nodes is previous.nodes):
+            # Legacy loads can change project id without supplying nodes.
+            # The live service still belongs to the previous/new scene.
+            nodes = []
         if not nodes:
             nodes = legacy_page_nodes(
-                self._pages_with_implicit_defaults(), project_id)
+                getattr(self.scene, 'workspace_pages', []) or [], project_id)
         self.resource_service = ResourceTreeService(project_id, nodes, self)
         self.scene.workspace_nodes = self.resource_service.nodes
         self.resource_service.changed.connect(self._on_resource_nodes_changed)
@@ -384,6 +442,12 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self.search_content_changed()
 
     def search_content_changed(self):
+        controller = getattr(self.view.window(), 'search_controller', None)
+        if controller is not None:
+            controller.content_changed()
+        browser = getattr(self.view.window(), 'asset_browser', None)
+        if browser is not None and browser.search.text().strip():
+            browser.schedule()
         if self.search.text().strip():
             self._search_timer.start()
 
@@ -431,17 +495,50 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         elif self._result_mode == 'search':
             self._refresh_project_search()
 
-    def _refresh_project_search(self):
+    def make_search_type_combo(self):
+        combo = QtWidgets.QComboBox()
+        for key, label in [('all', 'All content'), ('asset', 'Assets'),
+                           ('document', 'Documents'), ('mindmap', 'Mind maps'), ('canvas', 'Canvases')]:
+            combo.addItem(_(label), key)
+        combo.setToolTip(_('Search content type'))
+        combo.setMaximumWidth(100)
+        combo.currentIndexChanged.connect(lambda _index: self.set_search_kind(combo.currentData()))
+        return combo
+
+    def set_search_kind(self, kind):
+        self.search_kind = kind
+        browser = getattr(self.view.window(), 'asset_browser', None)
+        for combo in [self.search_type, getattr(browser, 'search_type', None)]:
+            if combo is not None:
+                blocker = QtCore.QSignalBlocker(combo)
+                combo.setCurrentIndex(combo.findData(kind))
+                del blocker
+        if self.search.text().strip():
+            self._refresh_project_search()
+        controller = getattr(self.view.window(), 'search_controller', None)
+        if controller is not None:
+            controller.type_changed(kind)
+        if browser is not None and (controller is None or self.view.window().tabs.currentWidget() is browser):
+            browser.refresh()
+
+    def project_search_results(self, text):
         from prism.project_search import search_project
-        if not self.search.text().strip() or not self._scene_alive():
-            return
         window = self.view.window()
         panels = list(getattr(window, '_page_panels', {}).values())
         panels += [p for p in (getattr(window, 'document_panel', None),
                                getattr(window, 'mindmap_panel', None)) if p is not None]
-        query, expression = self._split_query(self.search.text())
+        query, expression = self._split_query(text)
         results = search_project(self.scene, self.resource_service, query, panels, expression,
-                                 self._pages_with_implicit_defaults())
+                                 self._pages_with_implicit_defaults(),
+                                 allow_empty=self.search_kind != 'all')
+        kind = self.search_kind
+        return [r for r in results if kind == 'all' or
+                ('asset' if r['kind'] == 'asset' else r.get('page_kind', r['kind'])) == kind]
+
+    def _refresh_project_search(self):
+        if (not self.search.text().strip() and self.search_kind == 'all') or not self._scene_alive():
+            return
+        results = self.project_search_results(self.search.text())
         self.search_results.clear()
         titles = {'asset': '素材', 'canvas': '画布', 'mindmap': '脑图',
             'mindmap_node': '脑图节点', 'document': '文档', 'document_text': '文档正文',
@@ -469,7 +566,10 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         if isinstance(result, AssetResult):
             self._locate_asset_result(result)
             return
-        # 综合项目搜索（原有逻辑）：dict 结果
+        self.activate_project_result(result)
+
+    def activate_project_result(self, result):
+        # Both search surfaces navigate through the same targets.
         window = self.view.window()
         kind = result['kind']
         if kind == 'tag':
@@ -487,11 +587,18 @@ class MediaLibraryPanel(QtWidgets.QWidget):
             self.resource_tree.scrollTo(index)
             return
         page_id = result.get('page_id')
+        if page_id and any(n.get('pageId') == page_id and n.get('deletedAt')
+                           for n in self.resource_service.nodes):
+            return
+        if kind == 'asset':
+            item = result.get('item')
+            if item is None or is_deleted(item) or item.scene() is not self.scene or getattr(item, '_deleted_at', None):
+                return
         if hasattr(window, 'open_workspace_page'):
             window.open_workspace_page(result.get('page_kind', 'canvas'), page_id or window._first_canvas_id())
         if kind == 'asset':
             item = result['item']
-            if sip.isdeleted(item):
+            if is_deleted(item):
                 self._refresh_project_search()
                 return
             item._keep_visible = True
@@ -521,7 +628,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
           页面和选择/视角"）
         """
         item = result.item
-        if item is None or sip.isdeleted(item):
+        if item is None or is_deleted(item):
             self._refresh_result_mode()
             return
         window = self.view.window()
@@ -619,7 +726,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self.search.blockSignals(False)
         # 取消 pin 住的素材
         for item in getattr(self, '_search_pinned_items', []):
-            if not sip.isdeleted(item):
+            if not is_deleted(item):
                 item._keep_visible = False
         self._search_pinned_items = []
         # 恢复原页面/视角
@@ -633,7 +740,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
                 self.view.centerOn(origin[3])
             else:
                 panel = getattr(self, '_search_origin_panel', None)
-                if panel is not None and not sip.isdeleted(panel):
+                if panel is not None and not is_deleted(panel):
                     panel.restore_search_view(
                         getattr(self, '_search_origin_view', None))
         # 恢复资源树展开状态和滚动位置
@@ -648,7 +755,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         """按当前 _result_mode 重新渲染结果列表。"""
         if self._result_mode is None:
             return
-        if self._result_mode == 'search':
+        if self._result_mode == 'search' or self.search_kind != 'all':
             self._refresh_project_search()
             return
         # 'all' / 'untagged'：走 catalog 查询
@@ -829,7 +936,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         """
         pages = list(getattr(self.scene, 'workspace_pages', []))
         page_ids = {page.get('id') for page in pages}
-        if 'default-canvas' not in page_ids and self._canvas_item_count('default-canvas'):
+        if 'default-canvas' not in page_ids:
             pages.insert(0, {'id': 'default-canvas', 'kind': 'canvas',
                              'title': '默认画布', 'tags': [],
                              'permanent': True})
@@ -855,7 +962,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
             self._install_resource_service()
         else:
             known = {n.get('pageId') for n in self.resource_service.nodes}
-            for page in self._pages_with_implicit_defaults():
+            for page in getattr(self.scene, 'workspace_pages', []) or []:
                 if page['id'] not in known:
                     self.resource_service.createPage(
                         page['kind'], page['title'], page['id'])
@@ -1087,10 +1194,10 @@ class MediaLibraryPanel(QtWidgets.QWidget):
                     vp.setUpdatesEnabled(True)
                 self.scene.changed.emit([QtCore.QRectF()])
 
-        self.hint.setText(
-            _('{count} items shown').format(count=visible)
-            if visible else
-            _('No matching items'))
+        if self._result_mode is None:
+            self.hint.setText(
+                _('{count} items shown').format(count=visible)
+                if visible else _('No matching items'))
         if self.search.text().strip():
             self.search_content_changed()
 

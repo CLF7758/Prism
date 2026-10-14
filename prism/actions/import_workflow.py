@@ -417,10 +417,12 @@ def _import_assets(view, plan, outcome, staging):
 
 def _on_assets_loaded(view, plan, outcome, before_ids, errors, staging):
     outcome.errors.extend(errors)
+    view._load_scheduler.finish(
+        lambda: _finish_assets_loaded(view, plan, outcome, before_ids, staging))
+
+
+def _finish_assets_loaded(view, plan, outcome, before_ids, staging):
     try:
-        # The last progress signal precedes the last queued item. Flush it
-        # before assigning canvases or measuring the batch for packing.
-        view.scene.add_queued_items()
         _assign_new_assets(view, before_ids, outcome.asset_targets)
         inserted = [item for item in view.scene.items_for_save()
                     if id(item) not in before_ids]

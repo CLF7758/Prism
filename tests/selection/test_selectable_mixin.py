@@ -17,9 +17,13 @@ def test_init_selectable(view):
 
 
 def test_on_view_scale_change(view, item):
-    with patch('prism.items.PrismPixmapItem.prepareGeometryChange') as m:
-        item.on_view_scale_change()
-        m.assert_called_once()
+    view.scene.addItem(item)
+    item.setSelected(True)
+    bounds = QtCore.QRectF(view._content_bounds())
+    item.on_view_scale_change()
+    assert view._cached_scene_bounds == bounds
+    view.scale(2, 2)
+    assert view._cached_scene_bounds == bounds
 
 
 def test_fixed_length_for_viewport_when_default_scale(view, item):

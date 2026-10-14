@@ -33,6 +33,8 @@ def test_toolbar_filters_legacy_canvas_with_new_pages(main_window):
     assert not any(item.isVisible() for item in images)
     window._reload_workspace_pages()
     assert window.current_page_id == 'default-canvas'
+    # Reload lands in the public asset browser; explicitly edit the real canvas.
+    window.open_workspace_page('canvas', 'default-canvas')
     window.canvas_toolbar.gray.click()
     assert all(item.grayscale for item in images)
     assert window.canvas_toolbar.gray.isChecked()

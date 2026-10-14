@@ -16,6 +16,7 @@
 from functools import partial
 import logging
 import math
+import time
 from queue import Queue
 import uuid
 import weakref
@@ -23,13 +24,14 @@ import weakref
 from PyQt6 import QtCore, QtWidgets, QtGui
 from PyQt6.QtCore import Qt
 
-import rpack
 
 from prism import commands
 from prism.config import PrismSettings
 from prism.items import item_registry, PrismErrorItem, PrismPixmapItem, sort_by_filename
 from prism.selection import MultiSelectItem, RubberbandItem
 from prism.tags import name_index, tag_system
+from prism.item_lifecycle import is_record, logical_item
+from prism.item_lifecycle import is_pixmap_item
 
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,7 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
     cursor_changed = QtCore.pyqtSignal(QtGui.QCursor)
     cursor_cleared = QtCore.pyqtSignal()
     metadata_changed = QtCore.pyqtSignal()
+    assets_changed = QtCore.pyqtSignal()
     filter_changed = QtCore.pyqtSignal()
     #: 素材被软删除 / 从回收站恢复后发出，让回收站面板和左栏计数刷新。
     items_trashed = QtCore.pyqtSignal()
@@ -48,6 +51,8 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
 
     def __init__(self, undo_stack):
         super().__init__()
+        self._asset_revision = 0
+        self._item_count = 0
         self.active_mode = None
         self.undo_stack = undo_stack
         self.max_z = 0
@@ -72,6 +77,9 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         self.workspace_pages = []
         self.workspace_nodes = []
         self.project_id = uuid.uuid4().hex
+        from prism.viewport_items import ViewportItems
+        self._viewport_items = ViewportItems(self)
+        self._next_sequence = 0
         self.clear()
         self._clear_ongoing = False
         self._active_filter_categories = []
@@ -91,32 +99,73 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         self.edit_item = None
         self.crop_item = None
         self._clear_ongoing = True
+        self._viewport_items.clear()
+        while not self.items_to_add.empty():
+            self.items_to_add.get_nowait()
         self._invalidate_view_bounds()
         super().clear()
+        self._item_count = 0
+        self._asset_revision += 1
+        self.assets_changed.emit()
         self.internal_clipboard = []
         self.rubberband_item = RubberbandItem()
         self.multi_select_item = MultiSelectItem()
         self._clear_ongoing = False
 
     def _invalidate_view_bounds(self):
+        self._bounds_revision = getattr(self, '_bounds_revision', 0) + 1
         for view in self.views():
             view._cached_scene_bounds = None
 
     def addItem(self, item):
-        logger.debug(f'Adding item {item}')
+        logger.trace('Adding item %r', item)
         self._invalidate_view_bounds()
+        existed = item.scene() is self
+        if not existed:
+            self._next_sequence += 1
+            item._sequence = self._next_sequence
+        if is_record(item):
+            if not existed:
+                self._viewport_items.add(item)
+                self._item_count += 1
+                self._asset_revision += 1
+                self.assets_changed.emit()
+            return
         super().addItem(item)
-        if isinstance(item, PrismPixmapItem):
+        self._viewport_items.schedule()
+        if not existed:
+            self._item_count += 1
+            if hasattr(item, 'save_id') or getattr(item, '_asset_source', None):
+                self._asset_revision += 1
+                self.assets_changed.emit()
+        if is_pixmap_item(item):
             item._sync_grayscale_effect()
+            from prism.lod import cache
+            cache().track_preview(item)
 
     def removeItem(self, item):
+        item = logical_item(item)
         self._invalidate_view_bounds()
-        logger.debug(f'Removing item {item}')
-        if self.edit_item is item:
+        logger.trace('Removing item %r', item)
+        if logical_item(self.edit_item) is item:
             item.exit_edit_mode(commit=False)
-        if self.crop_item is item:
+        if logical_item(self.crop_item) is item:
             self.cancel_crop_mode()
-        super().removeItem(item)
+        existed = item.scene() is self
+        selected_record = is_record(item) and item.isSelected()
+        if is_record(item):
+            self._viewport_items.remove(item)
+        else:
+            super().removeItem(item)
+            self._viewport_items.schedule()
+        if existed:
+            self._item_count = max(0, self._item_count-1)
+            if hasattr(item, 'save_id') or getattr(item, '_asset_source', None):
+                self._asset_revision += 1
+                self.assets_changed.emit()
+
+        if selected_record:
+            self.selectionChanged.emit()
 
     def cancel_active_modes(self):
         """Cancels ongoing crop modes, rubberband modes etc, if there are
@@ -251,6 +300,7 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
             items = sort_by_filename(self.selectedItems(user_only=True))
         else:
             items = sort_by_filename(items)
+        items = self._arrangement_items(items)
         if len(items) < 2:
             return
 
@@ -293,6 +343,7 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
 
         if items is None:
             items = self.selectedItems(user_only=True)
+        items = self._arrangement_items(items)
         if len(items) < 2:
             return
 
@@ -304,23 +355,12 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
             sizes.append((round(rect.width() + gap),
                           round(rect.height() + gap)))
 
-        # The minimal area the items need if they could be packed optimally;
-        # we use this as a starting shape for the packing algorithm
-        min_area = sum(map(lambda s: s[0] * s[1], sizes))
-        width = math.ceil(math.sqrt(min_area))
-
-        positions = None
-        while not positions:
-            try:
-                positions = rpack.pack(
-                    sizes, max_width=width, max_height=width)
-            except rpack.PackingImpossibleError:
-                width = math.ceil(width * 1.2)
+        from prism.compact_layout import pack_sizes
+        positions, bounds = pack_sizes(sizes)
 
         # We want the items to center around the selection's center,
         # not (0, 0)
         center = self.itemsBoundingRect(items=items).center()
-        bounds = rpack.bbox_size(sizes, positions)
         diff = center - QtCore.QPointF(bounds[0]/2, bounds[1]/2)
         positions = [QtCore.QPointF(*pos) + diff for pos in positions]
 
@@ -336,6 +376,8 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
             items = sort_by_filename(self.selectedItems(user_only=True))
         else:
             items = sort_by_filename(items)
+
+        items = self._arrangement_items(items)
 
         if len(items) < 2:
             return
@@ -366,6 +408,12 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
                     break
 
         self.undo_stack.push(commands.ArrangeItems(self, items, positions))
+
+    @staticmethod
+    def _arrangement_items(items):
+        """Annotations stay where the user drew them, even in a mixed selection."""
+        return [item for item in items
+                if getattr(item, 'TYPE', '') not in ('path', 'text')]
 
     def flip_items(self, vertical=False):
         """Flip selected items."""
@@ -424,6 +472,14 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         return False
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._viewport_items.records:
+            hit = self.itemAt(event.scenePos(), self.views()[0].transform())
+            if not event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier):
+                if hit is None or not hit.isSelected():
+                    self.clearSelection()
+            if is_record(hit):
+                hit.graphics_item()
+                self._viewport_items.rebuild_layers()
         if event.button() == Qt.MouseButton.RightButton:
             # Right-click invokes the context menu on the
             # GraphicsView. We don't need it here.
@@ -441,13 +497,13 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
                 return
 
             if self.edit_item:
-                if item_at_pos != self.edit_item:
+                if item_at_pos != logical_item(self.edit_item):
                     self.edit_item.exit_edit_mode()
                 else:
                     super().mousePressEvent(event)
                     return
             if self.crop_item:
-                if item_at_pos != self.crop_item:
+                if item_at_pos != logical_item(self.crop_item):
                     self.cancel_crop_mode()
                 else:
                     super().mousePressEvent(event)
@@ -528,10 +584,94 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         User items are items that have a ``save_id`` attribute.
         """
 
-        items = super().selectedItems()
+        items = [logical_item(item) for item in super().selectedItems()]
+        items.extend(record for record in self._viewport_items.selected if record not in items)
         if user_only:
             return list(filter(lambda i: hasattr(i, 'save_id') or getattr(i, '_asset_source', None), items))
         return items
+
+    def clearSelection(self):
+        selected = list(self._viewport_items.selected)
+        if not selected:
+            return super().clearSelection()
+        blocked = self.blockSignals(True)
+        try:
+            for record in selected:
+                record.setSelected(False)
+            super().clearSelection()
+        finally:
+            self.blockSignals(blocked)
+        if not blocked and selected:
+            self.selectionChanged.emit()
+
+    def setSelectionArea(self, path, *args, **kwargs):
+        if not self._viewport_items.records:
+            return super().setSelectionArea(path, *args, **kwargs)
+        blocked = self.blockSignals(True)
+        try:
+            super().setSelectionArea(path, *args, **kwargs)
+            mode = kwargs.get('mode', next((a for a in args if isinstance(a, Qt.ItemSelectionMode)), Qt.ItemSelectionMode.IntersectsItemShape))
+            operation = kwargs.get('selectionOperation', next((a for a in args if isinstance(a, Qt.ItemSelectionOperation)), Qt.ItemSelectionOperation.ReplaceSelection))
+            candidates = self._viewport_items.in_area(path, mode)
+            for record in candidates | self._viewport_items.selected:
+                record.setSelected(record in candidates or operation == Qt.ItemSelectionOperation.AddToSelection and record.isSelected())
+        finally:
+            self.blockSignals(blocked)
+        if not blocked:
+            self.selectionChanged.emit()
+
+    def items(self, *args, **kwargs):
+        native = [logical_item(item) for item in super().items(*args, **kwargs)
+                  if not getattr(item, '_is_record_layer', False)]
+        if not self._viewport_items.records:
+            return native
+        query = args[0] if args else None
+        if isinstance(query, QtCore.QPointF):
+            rect = QtCore.QRectF(query-QtCore.QPointF(.001, .001), QtCore.QSizeF(.002, .002))
+            records = [r for r in self._viewport_items.index.query(rect)
+                       if r.isVisible() and r.shape().contains(r.mapFromScene(query))]
+        elif isinstance(query, (QtCore.QRectF, QtGui.QPainterPath, QtGui.QPolygonF)):
+            path = QtGui.QPainterPath(query) if isinstance(query, QtGui.QPainterPath) else QtGui.QPainterPath()
+            if isinstance(query, QtCore.QRectF):
+                path.addRect(query)
+            elif isinstance(query, QtGui.QPolygonF):
+                path.addPolygon(query)
+            mode = kwargs.get('mode', next((a for a in args if isinstance(a, Qt.ItemSelectionMode)), Qt.ItemSelectionMode.IntersectsItemShape))
+            records = self._viewport_items.in_area(path, mode)
+        else:
+            records = self._viewport_items.records.values()
+        present = set(native)
+        native.extend(r for r in records if r not in present)
+        order = kwargs.get('order', args[-1] if args and isinstance(args[-1], Qt.SortOrder) else Qt.SortOrder.DescendingOrder)
+        native.sort(key=self._viewport_items.stack_key, reverse=order == Qt.SortOrder.DescendingOrder)
+        return native
+
+    def itemAt(self, position, transform):
+        if not self._viewport_items.records:
+            return super().itemAt(position, transform)
+        items = self.items(position, Qt.ItemSelectionMode.IntersectsItemShape, Qt.SortOrder.DescendingOrder, transform)
+        return items[0] if items else None
+
+    def render(self, *args, **kwargs):
+        if not self._viewport_items.records:
+            return super().render(*args, **kwargs)
+        self._viewport_items.rebuild_layers()
+        exporting = getattr(self, '_overview_recording_owner', None) is None
+        previous = getattr(self, '_exporting_records', False)
+        effects = []
+        self._exporting_records = exporting
+        try:
+            if exporting:
+                for record in self._viewport_items.materialized:
+                    effect = record._graphics.graphicsEffect()
+                    if effect is not None and effect.isEnabled():
+                        effects.append(effect)
+                        effect.setEnabled(False)
+            return super().render(*args, **kwargs)
+        finally:
+            self._exporting_records = previous
+            for effect in effects:
+                effect.setEnabled(True)
 
     def items_by_type(self, itype):
         """Returns all items of the given type."""
@@ -714,7 +854,7 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
 
         self.items_to_add.put((itemdata, selected))
 
-    def add_queued_items(self):
+    def add_queued_items(self, max_items=None, time_budget_ms=None):
         """Adds items added via ``add_item_later``
 
         All scene mutations are batched: signals are blocked and
@@ -723,12 +863,6 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         once at the end instead of per-item.
         """
         if self.items_to_add.empty():
-            return
-
-        collected = []
-        while not self.items_to_add.empty():
-            collected.append(self.items_to_add.get())
-        if not collected:
             return
 
         # Suppress per-item signal cascades during batch insertion.
@@ -745,7 +879,13 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
             vp.setUpdatesEnabled(False)
         try:
             created = []
-            for data, selected in collected:
+            started = time.perf_counter()
+            while not self.items_to_add.empty():
+                if created and ((max_items is not None and len(created) >= max_items)
+                        or (time_budget_ms is not None and
+                            (time.perf_counter()-started)*1000 >= time_budget_ms)):
+                    break
+                data, selected = self.items_to_add.get_nowait()
                 typ = data.pop('type')
                 cls = item_registry.get(typ)
                 if not cls:
@@ -753,8 +893,11 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
                         f'Encountered item of unknown type: {typ}')
                     cls = PrismErrorItem
                     data['data'] = {'text': f'Item of unknown type: {typ}'}
-                item = cls.create_from_data(**data)
-                item.update_from_data(**data)
+                if is_record(data.get('item')):
+                    item = data['item']
+                else:
+                    item = cls.create_from_data(**data)
+                    item.update_from_data(**data)
                 self.addItem(item)
                 created.append((item, selected))
 
@@ -776,5 +919,7 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
             if vp is not None:
                 vp.setUpdatesEnabled(updates_enabled)
             if not was_blocked:
-                self.selectionChanged.emit()
+                self.assets_changed.emit()
+                if self.items_to_add.empty() or any(selected for _item, selected in created):
+                    self.selectionChanged.emit()
                 self.changed.emit([QtCore.QRectF()])

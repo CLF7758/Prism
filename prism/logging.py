@@ -56,9 +56,8 @@ class PrismRotatingFileHandler(logging.handlers.RotatingFileHandler):
     PermissionError and the logging module dumps the whole traceback to
     stderr for every single record - which buries the real errors.
 
-    A failed rotation is harmless: the log just keeps growing until a later
-    attempt succeeds.  The important part is reopening our own stream, since
-    the base class closes it before it tries to rename.
+    Failed rotation retains a bounded active file and reopens our stream,
+    since the base class closes it before trying to rename.
     """
 
     def __init__(self, filename, **kwargs):
@@ -69,6 +68,16 @@ class PrismRotatingFileHandler(logging.handlers.RotatingFileHandler):
         try:
             super().doRollover()
         except OSError:
+            # A second process/native crash descriptor can lock the filename.
+            # Retain a hard cap rather than letting failed rotation grow forever.
+            try:
+                with open(self.baseFilename, 'r+b') as bounded:
+                    bounded.seek(0, 2)
+                    if self.maxBytes > 0 and bounded.tell() >= self.maxBytes*2:
+                        bounded.seek(0)
+                        bounded.truncate()
+            except OSError:
+                pass
             if self.stream is None:
                 try:
                     self.stream = self._open()

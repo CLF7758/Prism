@@ -33,6 +33,8 @@ import tempfile
 import time
 import uuid
 
+from prism.performance_trace import measured
+
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtCore import QUrl
 
@@ -264,6 +266,7 @@ class SQLiteIO:
                 self.ex(schema)
 
     @handle_sqlite_errors
+    @measured('project.sql_read', 0)
     def read(self):
         has_metadata = self.fetchone(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='prism_metadata'")
@@ -308,6 +311,10 @@ class SQLiteIO:
         if self.worker:
             self.worker.begin_processing.emit(len(rows))
 
+        from prism import asset_records
+        virtual_images = sum(row[1] == 'pixmap' for row in rows) >= asset_records.MIN_VIRTUAL_IMAGES
+        empty_originals = {row[0] for row in self.fetchall('SELECT item_id FROM sqlar WHERE data IS NULL OR length(data)=0')}
+
         for i, row in enumerate(rows):
             data = {
                 'save_id': row[0],
@@ -322,18 +329,43 @@ class SQLiteIO:
             }
 
             if data['type'] == 'pixmap':
+                missing_original = (row[0] in empty_originals and not os.path.isfile(data['data'].get('filename') or ''))
+                if virtual_images and not missing_original:
+                    extra = data['data']
+                    if not (extra.get('imageWidth') and extra.get('imageHeight')):
+                        from prism.image_decode import native_reader
+                        from prism.source_store import read_archive
+                        with native_reader(blob=read_archive((self.filename, row[0]))) as header:
+                            size = header.size()
+                            if header.transformation().value & 4:
+                                size.transpose()
+                        if size.isValid() and not size.isEmpty():
+                            extra['imageWidth'], extra['imageHeight'] = size.width(), size.height()
+                    if extra.get('imageWidth') and extra.get('imageHeight'):
+                        item = asset_records.ImageRecord(data, (self.filename, row[0]))
+                        self.scene._prism_archive_items.add(item)
+                        data['item'] = item
+                        self.scene.add_item_later(data)
+                        if self.worker:
+                            if i % 32 == 0 or i == len(rows)-1:
+                                self.worker.progress.emit(i)
+                            if self.worker.canceled:
+                                self.worker.finished.emit('', [])
+                                return
+                        continue
                 item = PrismPixmapItem(QtGui.QImage())
+                item.filename = data['data'].get('filename')
                 self.scene._prism_archive_items.add(item)
                 # Deferred blob loading: the original bytes stay in the
                 # .prism archive until save/export/painting needs them.
                 item._prism_source = (self.filename, row[0])
                 img_w = data['data'].get('imageWidth', 0)
                 img_h = data['data'].get('imageHeight', 0)
-                loaded = True
-                if img_w and img_h:
+                loaded = not missing_original
+                if loaded and img_w and img_h:
                     item._image_size = QtCore.QSize(img_w, img_h)
                     item.reset_crop()
-                else:
+                elif loaded:
                     # Legacy files have no dimensions. Read one image at a
                     # time for a preview, then release the original bytes.
                     blob = item.original_bytes()
@@ -353,7 +385,8 @@ class SQLiteIO:
                     item = data['data']['text'] = (
                         f'Image could not be loaded: {clue}\n'
                         f'(item {row[0]})\n'
-                        + IMG_LOADING_ERROR_MSG)
+                        + ('原图数据为空，原文件也无法找到。请重新连接原图所在磁盘或恢复原文件。'
+                           if missing_original else IMG_LOADING_ERROR_MSG))
                     data['type'] = PrismErrorItem.TYPE
                     data['data']['_asset_source'] = (self.filename, row[0])
                 data['item'] = item
@@ -443,14 +476,16 @@ class SQLiteIO:
             self.worker.finished.emit(self.filename, [])
 
     @handle_sqlite_errors
+    @measured('project.sql_write', 0)
     def write(self):
         if self.readonly:
             raise sqlite3.OperationalError(
                 'Attempt to write to a readonly database')
+        previous_ids = [(item, item.save_id) for item in self.scene.items_for_save()]
         try:
             self.create_schema_on_new()
             self.write_data()
-        except Exception:
+        except sqlite3.DatabaseError:
             if self.retry:
                 # Trying to recover failed
                 raise
@@ -462,6 +497,10 @@ class SQLiteIO:
                 self.create_new = True
                 self._close_connection()
                 self.write()
+        except Exception:
+            for item, save_id in previous_ids:
+                item.save_id = save_id
+            raise
 
     def write_data(self):
         self._batch_write = True
@@ -567,8 +606,6 @@ class SQLiteIO:
             return
         self.delete_items(to_delete)
         self.write_board_extras()
-        self.connection.commit()
-        self.ex('VACUUM')
         self.connection.commit()
         for item in saved:
             if getattr(item, 'TYPE', None) == 'pixmap' and item.save_id:
@@ -814,6 +851,8 @@ class SQLiteIO:
             pixmap = item.original_bytes() if hasattr(item, 'original_bytes') else None
             imgformat = item.original_format() if pixmap and hasattr(item, 'original_format') else None
             if not pixmap:
+                if getattr(item, '_source_path', None) or getattr(item, '_prism_source', None):
+                    raise PrismFileIOError(msg='Original image is missing; saving was stopped to preserve the project.', filename=item.filename)
                 pixmap, imgformat = item.pixmap_to_bytes()
             imgformat = imgformat or 'png'
             name = item.get_filename_for_export(imgformat)

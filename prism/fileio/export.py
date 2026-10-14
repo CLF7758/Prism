@@ -301,7 +301,8 @@ class ImagesToDirectoryExporter(ExporterBase):
         self.scene = scene
         self.dirname = dirname
         self.adjusted = adjusted
-        self.items = list(self.scene.items_by_type(PrismPixmapItem.TYPE))
+        self.items = [item for item in self.scene.items_by_type(PrismPixmapItem.TYPE)
+                      if not getattr(item, '_deleted_at', None)]
         self.max_save_id = 0
         for item in self.items:
             if item.save_id:

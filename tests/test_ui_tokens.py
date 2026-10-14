@@ -230,7 +230,7 @@ def test_layout_geometry_matches_the_spec():
     assert t.LAYOUT['header-height'] == 48
     assert t.LAYOUT['left-panel-width'] == 248
     assert t.LAYOUT['right-panel-width'] == 304
-    assert t.LAYOUT['statusbar-height'] == 24
+    assert t.LAYOUT['statusbar-height'] == 36
     assert t.LAYOUT['centre-min-width'] == 520
     assert t.LAYOUT['window-default'] == (1440, 900)
     assert t.LAYOUT['window-min'] == (900, 600)

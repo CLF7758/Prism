@@ -77,7 +77,7 @@ def save_prism(filename, scene, create_new=False, worker=None):
     logger.info('End save')
 
 
-def _load_image_item(filename):
+def _load_image_item(filename, as_record=False):
     local = filename if isinstance(filename, str) else (
         filename.toLocalFile() if filename.isLocalFile() else None)
     if local and os.path.isfile(local):
@@ -93,6 +93,14 @@ def _load_image_item(filename):
         size = reader.size()
         if size.isValid() and not size.isEmpty():
             rotation = bool(reader.transformation().value & 4)
+            if as_record:
+                from prism.asset_records import ImageRecord
+                if rotation:
+                    size.transpose()
+                item = ImageRecord({'data': {'filename': os.path.normpath(local),
+                    'imageWidth': size.width(), 'imageHeight': size.height()}}, None)
+                item._source_path = retained
+                return item
             if max(size.width(), size.height()) > PREVIEW_MAX_SIDE:
                 reader.setScaledSize(size.scaled(
                     PREVIEW_MAX_SIDE, PREVIEW_MAX_SIDE,
@@ -122,10 +130,13 @@ def load_images(filenames, pos, scene, worker):
     errors = []
     items = []
     worker.begin_processing.emit(len(filenames))
+    from prism.asset_records import MIN_VIRTUAL_IMAGES
+    virtual_images = len(filenames) >= MIN_VIRTUAL_IMAGES
     for i, filename in enumerate(filenames):
         logger.info(f'Loading image from file {filename}')
-        item = _load_image_item(filename)
-        worker.progress.emit(i)
+        item = _load_image_item(filename, as_record=True) if virtual_images else _load_image_item(filename)
+        if i % 32 == 0 or i == len(filenames)-1:
+            worker.progress.emit(i)
         if item is None:
             logger.info(f'Could not load file {filename}')
             errors.append(filename)
@@ -138,7 +149,8 @@ def load_images(filenames, pos, scene, worker):
         if worker.canceled:
             break
         # Give main thread time to process items:
-        worker.msleep(10)
+        if (i + 1) % 32 == 0:
+            worker.msleep(1)
 
     scene.undo_stack.push(
         commands.InsertItems(scene, items, ignore_first_redo=True))
@@ -183,6 +195,8 @@ def load_media(filenames, pos, scene, worker):
     errors = []
     items = []
     worker.begin_processing.emit(len(filenames))
+    from prism.asset_records import MIN_VIRTUAL_IMAGES
+    virtual_images = len(filenames) >= MIN_VIRTUAL_IMAGES
     for i, filename in enumerate(filenames):
         if i % 50 == 0 or i == len(filenames) - 1:
             worker.progress.emit(i)
@@ -232,7 +246,7 @@ def load_media(filenames, pos, scene, worker):
             items.append(item)
         else:
             logger.info(f'Loading image from file {filename}')
-            item = _load_image_item(filename)
+            item = _load_image_item(filename, as_record=True) if virtual_images else _load_image_item(filename)
             if item is None:
                 logger.info(f'Could not load file {filename}')
                 errors.append(str(filename))
@@ -245,7 +259,7 @@ def load_media(filenames, pos, scene, worker):
         if worker.canceled:
             break
         if (i + 1) % 50 == 0:
-            worker.msleep(20)
+            worker.msleep(1)
 
     scene.undo_stack.push(
         commands.InsertItems(scene, items, ignore_first_redo=True))

@@ -49,6 +49,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         self._draft = None
         self._tag_records = {}
         self._asset_counts = {}
+        self._implicit_records = {}
         self._load()
         service.changed.connect(self._on_service_changed)
 
@@ -56,7 +57,14 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         self._draft = None
         self._nodes = {node['id']: dict(node) for node in self.service.nodes
                        if node.get('deletedAt') is None}
+        if not any(n.get('pageId') == 'default-canvas' for n in self._nodes.values()):
+            self._implicit_records = {'implicit:default-canvas': dict(
+                id='implicit:default-canvas', section='canvas', nodeType='page',
+                title='默认画布', pageId='default-canvas', parentId=None, order=-1)}
+        else:
+            self._implicit_records = {}
         self._nodes.update(self._tag_records)
+        self._nodes.update(self._implicit_records)
         self._children = {None: list(UI_SECTIONS)}
         for section in UI_SECTIONS:
             self._children[section] = []
@@ -188,7 +196,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
                 return None
             return None
         node = self._nodes.get(key)
-        if role == Qt.ItemDataRole.DisplayRole:
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             return SECTION_TITLES[key] if node is None else node['title']
         if role == Qt.ItemDataRole.SizeHintRole:
             return QSize(0, 32 if node is None else 28)
@@ -220,6 +228,8 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
         key = self._key(index)
+        if key in self._implicit_records:
+            return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         if key in UI_SECTIONS:
             return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsDropEnabled
         if key.startswith(BLANK_PREFIX):
@@ -235,6 +245,17 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
                 Qt.ItemFlag.ItemIsDropEnabled)
 
     def set_asset_counts(self, counts):
+        implicit = {}
+        known = {n.get('pageId') for n in self.service.nodes if not n.get('deletedAt')}
+        if 'default-canvas' not in known:
+            implicit['implicit:default-canvas'] = dict(id='implicit:default-canvas',
+                section='canvas', nodeType='page', title='默认画布', pageId='default-canvas',
+                parentId=None, order=-1)
+        if implicit != self._implicit_records:
+            self.beginResetModel()
+            self._implicit_records = implicit
+            self._load()
+            self.endResetModel()
         if self._asset_counts == counts:
             return
         self._asset_counts = dict(counts)
@@ -253,7 +274,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             return False
         if key.startswith(DRAFT_PREFIX):
             return self._commit_draft(value)
-        if key in self._tag_records:
+        if key in self._tag_records or key in self._implicit_records:
             return False
         try:
             self.service.rename(key, value)
@@ -492,6 +513,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         new_nodes = {node['id']: dict(node) for node in self.service.nodes
                      if node.get('deletedAt') is None}
         new_nodes.update(self._tag_records)
+        new_nodes.update(self._implicit_records)
         new_children = {None: list(UI_SECTIONS)}
         for section in UI_SECTIONS:
             new_children[section] = []

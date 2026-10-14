@@ -42,6 +42,8 @@ class DuplicateFinderDialog(QtWidgets.QDialog):
         super().__init__(parent or view.window())
         self.view = view
         self.groups = groups
+        # Keep the original matches so undoing a canvas deletion restores rows.
+        self._scan_groups = [list(group) for group in groups]
         self.scope = scope
         self.setWindowTitle(_('Duplicate Photos'))
         self.resize(840, 520)
@@ -92,6 +94,39 @@ class DuplicateFinderDialog(QtWidgets.QDialog):
         self._update_summary()
         if self.group_list.count():
             self.group_list.setCurrentRow(0)
+        self.view.scene.items_trashed.connect(self._refresh_results)
+        self.view.undo_stack.indexChanged.connect(self._refresh_results)
+
+    def _refresh_results(self, *_args):
+        from prism.item_lifecycle import is_deleted, logical_item
+        live = {id(logical_item(item)) for item in self.view.scene.items_for_save()}
+        remaining = []
+        for group in self._scan_groups:
+            kept = []
+            for source in group:
+                item = self._canvas_item(source)
+                if item is None:
+                    # Detached page attachments have no canvas item to delete.
+                    kept.append(source)
+                    continue
+                item = logical_item(item)
+                if is_deleted(item):
+                    continue
+                if id(item) in live and not getattr(item, '_deleted_at', None):
+                    kept.append(source)
+            if len(kept) > 1:
+                remaining.append(kept)
+        if remaining == self.groups:
+            return
+        current_row = self.group_list.currentRow()
+        self.groups = remaining
+        self._fill_groups()
+        self._update_summary()
+        if remaining:
+            self.group_list.setCurrentRow(min(max(current_row, 0), len(remaining)-1))
+        else:
+            self.image_list.clear()
+            self._update_buttons()
 
     # ── Filling ───────────────────────────────────────────────
 
@@ -163,7 +198,8 @@ class DuplicateFinderDialog(QtWidgets.QDialog):
             where = canvas_label(scene_item, self._pages())
             row = QtWidgets.QListWidgetItem(
                 title + '\n' + (where or _('Uncategorised')))
-            pixmap = getattr(scene_item, 'pixmap', lambda: None)()
+            from prism import lod
+            pixmap = lod.display_pixmap(scene_item, 96)
             if pixmap is not None and not pixmap.isNull():
                 row.setIcon(QtGui.QIcon(pixmap))
             row.setToolTip(filename or title)
@@ -275,10 +311,16 @@ class DuplicateFinderDialog(QtWidgets.QDialog):
         # below so locating a cross-page duplicate never makes the canvas
         # appear empty or silently switches its category.
         library = self.view.category_panel
+        window = self.view.window()
+        if hasattr(window, 'open_workspace_page'):
+            kind, page_id = library.catalog.locate(items[0])
+            window.open_workspace_page(kind, page_id)
+            items = [item for item in items
+                     if library.catalog.locate(item) == (kind, page_id)]
         library.update_counts()
-        tabs = getattr(self.view.parent, 'tabs', None)
+        tabs = getattr(window, 'tabs', None)
         if tabs is not None:
-            tabs.setCurrentWidget(self.view)
+            tabs.setCurrentWidget(getattr(window, 'canvas_page', self.view))
         # Selecting and showing them is done with the scene's signals off.
         # Both make QGraphicsScene emit ``changed``, and the sidebar answers
         # that with a recount 300 ms later - which runs the filter, which
@@ -341,22 +383,7 @@ class DuplicateFinderDialog(QtWidgets.QDialog):
         self.view.scene.deselect_all_items()
         # 查重删的是素材，走软删除进回收站（可恢复），和画布上按 Delete 一致。
         self.view.undo_stack.push(commands.TrashItems(self.view.scene, items))
-        removed = set(id(item) for item in items)
-
-        # Drop the deleted photos from the results and forget empty groups.
-        remaining = []
-        for group in self.groups:
-            kept = [item for item in group if id(item) not in removed]
-            if len(kept) > 1:
-                remaining.append(kept)
-        self.groups = remaining
-        self._fill_groups()
-        self._update_summary()
-        if self.group_list.count():
-            self.group_list.setCurrentRow(0)
-        else:
-            self.image_list.clear()
-            self._update_buttons()
+        self._refresh_results()
         # Say what happened, and how to take it back - deletions go through
         # the undo stack, so Ctrl+Z restores them.
         self._report(

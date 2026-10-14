@@ -51,7 +51,7 @@ def test_move_and_trash_do_not_reset_model(qapp):
     assert moved_rows == [True]
     service.trash([b['id']], '2026-10-01')
     assert not model.index_for_id(page['id']).isValid()
-    assert model.rowCount(model.index(0, 0)) == 2
+    assert model.rowCount(model.index(0, 0)) == 3  # A, permanent default canvas, creation row
     assert removed_rows == [True]
     assert resets == []
     service.restore_deleted([b['id']])

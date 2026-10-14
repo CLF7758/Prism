@@ -34,6 +34,7 @@ from prism import tags
 from prism.i18n import _
 from prism.widgets import components
 from prism.widgets.components.icons import icon
+from prism.item_lifecycle import is_deleted
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +271,7 @@ class TagEdit(QtGui.QUndoCommand):
         return list(getattr(self.scene, 'tag_names', []) or [])
 
     def _apply(self, names, table, values):
-        if self.scene is None or sip.isdeleted(self.scene):
+        if self.scene is None or is_deleted(self.scene):
             return
         self.scene.tag_names = list(names)
         if table is not None:
@@ -692,7 +693,7 @@ class TagPanel(QtWidgets.QDialog):
     # ── Building the tree ─────────────────────────────────────────────
 
     def _alive(self):
-        return self.scene is not None and not sip.isdeleted(self.scene)
+        return self.scene is not None and not is_deleted(self.scene)
 
     def _refresh(self):
         if self._building or not self._alive():

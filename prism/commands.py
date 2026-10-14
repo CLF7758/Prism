@@ -15,6 +15,7 @@
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 from prism.i18n import _
+from prism.item_lifecycle import logical_item
 
 
 class InsertItems(QtGui.QUndoCommand):
@@ -22,7 +23,7 @@ class InsertItems(QtGui.QUndoCommand):
     def __init__(self, scene, items, position=None, ignore_first_redo=False):
         super().__init__(_('Insert items'))
         self.scene = scene
-        self.items = items
+        self.items = [logical_item(item) for item in items]
         self.position = position
         self.ignore_first_redo = ignore_first_redo
 
@@ -56,7 +57,7 @@ class DeleteItems(QtGui.QUndoCommand):
     def __init__(self, scene, items):
         super().__init__(_('Delete items'))
         self.scene = scene
-        self.items = items
+        self.items = [logical_item(item) for item in items]
 
     def redo(self):
         for item in self.items:
@@ -111,7 +112,7 @@ class TrashItems(QtGui.QUndoCommand):
     def __init__(self, scene, items):
         super().__init__(_('Move items to trash'))
         self.scene = scene
-        self.items = list(items)
+        self.items = [logical_item(item) for item in items]
         self._stamp = None
 
     def redo(self):
@@ -141,7 +142,7 @@ class RestoreItems(QtGui.QUndoCommand):
     def __init__(self, scene, items):
         super().__init__(_('Restore items from trash'))
         self.scene = scene
-        self.items = list(items)
+        self.items = [logical_item(item) for item in items]
         self._stamps = {}
 
     def redo(self):
@@ -196,7 +197,7 @@ class MoveItemsBy(QtGui.QUndoCommand):
 
     def __init__(self, items, delta, ignore_first_redo=False):
         super().__init__(_('Move items'))
-        self.items = items
+        self.items = [logical_item(item) for item in items]
         self.delta = delta
         self.ignore_first_redo = ignore_first_redo
 
@@ -218,7 +219,7 @@ class ScaleItemsBy(QtGui.QUndoCommand):
     def __init__(self, items, factor, anchor, ignore_first_redo=False):
         super().__init__(_('Scale items'))
         self.ignore_first_redo = ignore_first_redo
-        self.items = items
+        self.items = [logical_item(item) for item in items]
         self.factor = factor
         self.anchor = anchor
 
@@ -242,7 +243,7 @@ class RotateItemsBy(QtGui.QUndoCommand):
     def __init__(self, items, delta, anchor, ignore_first_redo=False):
         super().__init__(_('Rotate items'))
         self.ignore_first_redo = ignore_first_redo
-        self.items = items
+        self.items = [logical_item(item) for item in items]
         self.delta = delta
         self.anchor = anchor
 
@@ -265,7 +266,7 @@ class NormalizeItems(QtGui.QUndoCommand):
 
     def __init__(self, items, scale_factors):
         super().__init__(_('Normalize items'))
-        self.items = items
+        self.items = [logical_item(item) for item in items]
         self.scale_factors = scale_factors
 
     def redo(self):
@@ -283,7 +284,7 @@ class FlipItems(QtGui.QUndoCommand):
 
     def __init__(self, items, anchor, vertical):
         super().__init__(_('Flip items'))
-        self.items = items
+        self.items = [logical_item(item) for item in items]
         self.anchor = anchor
         self.vertical = vertical
 
@@ -299,7 +300,7 @@ class ResetScale(QtGui.QUndoCommand):
 
     def __init__(self, items):
         super().__init__(_('Reset Scale'))
-        self.items = items
+        self.items = [logical_item(item) for item in items]
 
     def redo(self):
         self.old_scale_factors = []
@@ -316,7 +317,7 @@ class ResetRotation(QtGui.QUndoCommand):
 
     def __init__(self, items):
         super().__init__(_('Reset Rotation'))
-        self.items = items
+        self.items = [logical_item(item) for item in items]
 
     def redo(self):
         self.old_rotations = []
@@ -333,7 +334,7 @@ class ResetFlip(QtGui.QUndoCommand):
 
     def __init__(self, items):
         super().__init__(_('Reset Flip'))
-        self.items = items
+        self.items = [logical_item(item) for item in items]
 
     def redo(self):
         self.old_flips = []
@@ -352,7 +353,7 @@ class ResetCrop(QtGui.QUndoCommand):
 
     def __init__(self, items):
         super().__init__(_('Reset Crop'))
-        self.items = [item for item in items if item.is_image]
+        self.items = [logical_item(item) for item in items if item.is_image]
 
     def redo(self):
         self.old_crops = []
@@ -369,7 +370,7 @@ class ResetTransforms(QtGui.QUndoCommand):
 
     def __init__(self, items):
         super().__init__(_('Reset All Transformations'))
-        self.items = items
+        self.items = [logical_item(item) for item in items]
 
     def redo(self):
         self.old_values = []
@@ -404,7 +405,7 @@ class ArrangeItems(QtGui.QUndoCommand):
     def __init__(self, scene, items, positions):
         super().__init__(_('Arrange items'))
         self.scene = scene
-        self.items = items
+        self.items = [logical_item(item) for item in items]
         self.positions = positions
 
     def redo(self):
@@ -424,7 +425,7 @@ class ArrangeItems(QtGui.QUndoCommand):
 class CropItem(QtGui.QUndoCommand):
     def __init__(self, item, crop):
         super().__init__(_('Crop item'))
-        self.item = item
+        self.item = logical_item(item)
         self.crop = crop
 
     def redo(self):
@@ -439,7 +440,7 @@ class ChangeText(QtGui.QUndoCommand):
 
     def __init__(self, item, new_text, old_text):
         super().__init__(_('Change text'))
-        self.item = item
+        self.item = logical_item(item)
         self.new_text = new_text
         self.old_text = old_text
 
@@ -460,7 +461,7 @@ class ChangeTextStyle(QtGui.QUndoCommand):
 
     def __init__(self, item, new_style, old_style=None):
         super().__init__(_('Change text style'))
-        self.item = item
+        self.item = logical_item(item)
         self.new_style = dict(new_style)
         self.old_style = dict(old_style if old_style is not None
                               else item.style())
@@ -478,7 +479,7 @@ class ChangeOpacity(QtGui.QUndoCommand):
     def __init__(self, items, opacity, ignore_first_redo=False):
         super().__init__(_('Change Opacity'))
         self.ignore_first_redo = ignore_first_redo
-        self.items = list(filter(lambda item: item.is_image, items))
+        self.items = [logical_item(item) for item in items if item.is_image]
         self.opacity = opacity
         self.old_opacities = [
             getattr(item, '_filter_original_opacity', item.opacity())
@@ -506,7 +507,7 @@ class ToggleGrayscale(QtGui.QUndoCommand):
 
     def __init__(self, items, grayscale):
         super().__init__(_('Toggle Grayscale'))
-        self.items = list(filter(lambda item: item.is_image, items))
+        self.items = [logical_item(item) for item in items if item.is_image]
         self.grayscale = grayscale
         self.old_grayscales = [item.grayscale for item in items]
 
@@ -524,7 +525,7 @@ class ChangeMetadata(QtGui.QUndoCommand):
 
     def __init__(self, items, field, new_values):
         super().__init__(f'Change {field}')
-        self.items = list(items)
+        self.items = [logical_item(item) for item in items]
         self.field = field
         self.new_values = list(new_values)
         self.old_values = [getattr(item, field) for item in items]

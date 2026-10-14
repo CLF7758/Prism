@@ -20,6 +20,9 @@ import os.path
 import re
 import tempfile
 
+from prism.performance_trace import record as trace_record
+import time as trace_time
+
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt
 
@@ -36,22 +39,24 @@ from prism.items import (ARROW_NONE, ARROW_STYLES, DEFAULT_PEN_COLOR,
                          DRAW_TOOL_LINE, DRAW_TOOL_PEN, LINE_SOLID,
                          LINE_STYLES, PrismPathItem,
                          PrismPixmapItem, PrismTextItem)
+from prism.actions.drawing_workflow import CanvasDrawingMixin, DRAW_TOOLBAR_MARGIN
+from prism.canvas_overview import CanvasOverviewRenderer
+from prism.canvas_navigation import CanvasNavigationMixin
 from prism.main_controls import MainControlsMixin
 from prism.scene import PrismGraphicsScene
+from prism.scene_loading import SceneLoadScheduler
 from prism.export_service import ExportService
 from prism.workspace_service import WorkspaceService
 from prism.utils import qcolor_to_hex
 from prism.widgets.drawing_toolbar import DrawingToolbar
 
-#: 悬浮绘制工具条离画布顶部多远（像素）。
-DRAW_TOOLBAR_MARGIN = 12
-
-
 commandline_args = CommandlineArgs()
 logger = logging.getLogger(__name__)
 
 
-class PrismGraphicsView(MainControlsMixin,
+class PrismGraphicsView(CanvasDrawingMixin,
+                      CanvasNavigationMixin,
+                      MainControlsMixin,
                       QtWidgets.QGraphicsView,
                       ActionsMixin):
 
@@ -122,7 +127,8 @@ class PrismGraphicsView(MainControlsMixin,
         self.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
 
-        self.undo_stack = QtGui.QUndoStack(self)
+        from prism.undo import UndoStack
+        self.undo_stack = UndoStack(self)
         self.undo_stack.setUndoLimit(100)
         self.undo_stack.canRedoChanged.connect(self.on_can_redo_changed)
         self.undo_stack.canUndoChanged.connect(self.on_can_undo_changed)
@@ -155,12 +161,14 @@ class PrismGraphicsView(MainControlsMixin,
         self._press_stack_count = 0
 
         self.scene = PrismGraphicsScene(self.undo_stack)
+        self._load_scheduler = SceneLoadScheduler(self)
         self.scene.setParent(self)
         self.scene.changed.connect(self.on_scene_changed)
         self.scene.selectionChanged.connect(self.on_selection_changed)
         self.scene.cursor_changed.connect(self.on_cursor_changed)
         self.scene.cursor_cleared.connect(self.on_cursor_cleared)
         self.setScene(self.scene)
+        self._overview_renderer = CanvasOverviewRenderer(self)
         # Page data has one owner.  The main window adapts its signals into
         # tabs and the page rail; it must not edit the list behind the
         # service's back.
@@ -252,8 +260,7 @@ class PrismGraphicsView(MainControlsMixin,
             self.parent._title_bar.update_title(title)
 
     def on_scene_changed(self, region):
-        self._cached_scene_bounds = None
-        if not self.scene.items():
+        if not self.scene._item_count:
             logger.debug('No items in scene')
             self.setTransform(QtGui.QTransform())
             self.welcome_overlay.setFocus()
@@ -268,7 +275,11 @@ class PrismGraphicsView(MainControlsMixin,
             self.actiongroup_set_enabled('active_when_items_in_scene', True)
         # Debounce: batch operations fire this hundreds of times;
         # the timer coalesces into a single recalculation.
-        self._recalc_timer.start()
+        if self._cached_scene_bounds is None:
+            moving = self.scene.active_mode == self.scene.MOVE_MODE
+            loading = (self._import_in_progress or not self.scene.items_to_add.empty()
+                       or self._load_scheduler.finished is not None)
+            self._recalc_timer.start(120 if moving or loading or self.active_mode == self.DRAW_MODE else 0)
 
     def on_can_redo_changed(self, can_redo):
         self.actiongroup_set_enabled('active_when_can_redo', can_redo)
@@ -328,10 +339,6 @@ class PrismGraphicsView(MainControlsMixin,
         self._draw_menu_action.triggered.connect(self.start_draw_mode)
 
         # AI 打标签（仅当有选中素材时显示）
-        if self.scene.selectedItems(user_only=True):
-            ai_tag_action = self.context_menu.addAction("AI 打标签")
-            ai_tag_action.triggered.connect(self.on_action_ai_tag_selected)
-            self._ai_tag_action = ai_tag_action
 
     def pick_pen_colour(self):
         """选画笔颜色（右键菜单里那项）。"""
@@ -383,6 +390,11 @@ class PrismGraphicsView(MainControlsMixin,
                              round(self.size().height() / 2))
 
     def clear_scene(self):
+        renderer = getattr(self, '_overview_renderer', None)
+        if renderer is not None:
+            renderer.tiles.reset()
+        self._project_opening = False
+        self._load_scheduler.cancel()
         logging.debug('Clearing scene...')
         self.cancel_active_modes()
         if hasattr(self.parent, 'color_filter'):
@@ -402,276 +414,14 @@ class PrismGraphicsView(MainControlsMixin,
 
     def reset_canvas(self):
         """Reset camera to fit all items in view (PureRef-style)."""
+        if self._material_canvas() is not None:
+            self.parent.canvas_toolbar.fit_all()
+            return
         if self.scene.items():
             self.fit_rect(self.scene.itemsBoundingRect())
         else:
             self.setTransform(QtGui.QTransform())
         logger.debug('Camera reset - fit to scene')
-
-    def start_draw_mode(self):
-        """进绘制模式：显示悬浮工具条，带回上次用的工具。
-
-        需求：点击「绘制工具」后关闭右键菜单、进绘制模式、在画布顶部
-        居中显示悬浮工具条、默认选中**上一次使用的**绘制工具、第一次
-        使用时默认自由画笔、鼠标指针切成十字光标。
-        """
-        self.cancel_active_modes()
-        self.active_mode = self.DRAW_MODE
-        self._mode_before_transient = None
-        self._draw_points = []
-        self._draw_item = None
-        bar = getattr(self, '_drawing_toolbar', None)
-        if bar is not None:
-            bar.set_tool(self._drawing_tool)
-            bar.set_colour(self._pen_color)
-            bar.set_width(self._pen_width)
-            bar.set_arrow(self._arrow)
-            bar.setVisible(not hasattr(self, '_fixed_canvas_toolbar'))
-            self._position_drawing_toolbar()
-            bar.raise_()
-        self._update_draw_cursor()
-        logger.debug('Draw mode started (tool=%s)', self._drawing_tool)
-        self.drawing_state_changed.emit()
-
-    def cancel_draw_mode(self):
-        """退出绘制模式。
-
-        需求：退出模式、隐藏工具条、恢复普通鼠标、停掉没画完的那一笔、
-        **已完成的绘制内容继续保留**（不清空）、也**不改**当前的颜色 /
-        粗细 / 箭头设置。
-        """
-        self._discard_pending_stroke()
-        self._text_tool_armed = False
-        self.active_mode = None
-        self._mode_before_transient = None
-        self.viewport().unsetCursor()
-        bar = getattr(self, '_drawing_toolbar', None)
-        if bar is not None:
-            bar.hide()
-        self.drawing_state_changed.emit()
-
-    # ── 平移 / 缩放：临时模式 ───────────────────────────────────────
-
-    def _begin_transient_mode(self, mode):
-        """切到平移 / 缩放这类临时模式，并记下原来是什么模式。
-
-        绘制模式下用中键拖一下画布是很自然的动作。松开之后必须回到
-        绘制模式：`active_mode` 被清成 None 而工具栏还挂在画布上的话，
-        用户接着按左键只会得到橡皮筋选择框，松开什么都不剩 ——
-        看起来就是"画一笔就消失""完全不能画"。
-        """
-        self._mode_before_transient = self.active_mode
-        self.active_mode = mode
-
-    def _end_transient_mode(self):
-        """回到临时模式之前的状态。非绘制模式结束就回普通状态。"""
-        previous = self._mode_before_transient
-        self._mode_before_transient = None
-        self.active_mode = (self.DRAW_MODE if previous == self.DRAW_MODE
-                            else None)
-
-    # ── 悬浮工具条 ──────────────────────────────────────────────────
-
-    def _position_drawing_toolbar(self):
-        """把工具条摆在画布顶部中央。
-
-        需求：显示在画布顶部中央、与顶部保持固定距离、窗口缩放或尺寸
-        变化时始终重新居中。工具条是 QWidget 不是场景图元，所以它天然
-        不参与画布缩放和移动，也不会被导出或被选择框选中。
-        """
-        bar = getattr(self, '_drawing_toolbar', None)
-        if bar is None:
-            return
-        if hasattr(self, '_fixed_canvas_toolbar'):
-            return
-        bar.adjustSize()
-        x = max(0, (self.width() - bar.width()) // 2)
-        bar.move(x, DRAW_TOOLBAR_MARGIN)
-        bar.raise_()
-
-    def set_drawing_tool(self, tool):
-        """切工具。三种互斥（需求第九条）。
-
-        **已经完成的**笔画不受影响（需求："工具切换过程中不得丢失已经
-        完成的笔画"）；手上没画完的那半条会丢掉 —— 它还没成形，留着
-        反而是画布上的垃圾。换工具也**不退出**绘制模式。
-        """
-        if tool not in DRAW_MODES:
-            return
-        self._discard_pending_stroke()
-        self._drawing_tool = tool
-        self.settings.setValue('Canvas/drawing_tool', tool)
-        bar = getattr(self, '_drawing_toolbar', None)
-        if bar is not None:
-            bar.set_tool(tool)
-        self._update_draw_cursor()
-
-        self.drawing_state_changed.emit()
-
-    def set_eraser(self, enabled):
-        """橡皮擦开关（旧接口，保留给测试和外部调用）。
-
-        开着的时候点中哪条线就删哪条。做成"删掉整条线"而不是"涂白"：
-        画布背景不一定是白的，涂白也盖不住底下已有的素材。删整条符合
-        "这是个草图工具"的用法，而且能撤销。
-        """
-        self.set_drawing_tool(DRAW_TOOL_ERASER if enabled else DRAW_TOOL_PEN)
-
-    def set_arrow_style(self, arrow):
-        """选箭头样式 —— **同时自动切到直线工具**（需求第八条）。"""
-        if arrow not in ARROW_STYLES:
-            return
-        self._arrow = arrow
-        self.settings.setValue('Canvas/arrow_style', arrow)
-        bar = getattr(self, '_drawing_toolbar', None)
-        if bar is not None:
-            bar.set_arrow(arrow)
-        # 需求：选了箭头样式就自动进直线工具，用户不用再点直线按钮
-        self.set_drawing_tool(DRAW_TOOL_LINE)
-
-    def set_line_style(self, line_style):
-        """选线型：实线 / 虚线 / 点线。
-
-        线型对画笔和直线都成立，所以**不切工具** —— 用户多半是想把
-        当前这支笔换个线型接着画。
-        """
-        if line_style not in LINE_STYLES:
-            return
-        self._line_style = line_style
-        self.settings.setValue('Canvas/line_style', line_style)
-        self.drawing_state_changed.emit()
-
-    def _update_draw_cursor(self):
-        """十字光标；橡皮擦换一个，让用户看得出状态不同（需求第五条）。"""
-        if self.active_mode != self.DRAW_MODE:
-            return
-        self.viewport().setCursor(
-            Qt.CursorShape.PointingHandCursor
-            if self._drawing_tool == DRAW_TOOL_ERASER
-            else Qt.CursorShape.CrossCursor)
-
-    # ── 画笔设置（颜色 / 粗细 / 工具 / 箭头）────────────────────────
-
-    def pen_settings(self):
-        """当前画笔的样子。给工具条和测试读。"""
-        return {'color': self._pen_color, 'width': self._pen_width,
-                'tool': self._drawing_tool, 'arrow': self._arrow,
-                'line_style': self._line_style,
-                'eraser': self._drawing_tool == DRAW_TOOL_ERASER}
-
-    def set_pen_color(self, color):
-        """设画笔颜色。画到一半改也行 —— 从下一条线开始生效。
-
-        需求：「新颜色只影响之后创建的笔画和直线、已经完成的绘制内容
-        不得被自动改色」—— 所以这里只记设置，不碰场景里已有的图元。
-        """
-        parsed = QtGui.QColor(str(color))
-        if not parsed.isValid():
-            return                  # 非法值当没收到（需求第十四条）
-        self._pen_color = parsed.name()
-        self.settings.setValue('Canvas/pen_color', self._pen_color)
-        bar = getattr(self, '_drawing_toolbar', None)
-        if bar is not None:
-            bar.set_colour(self._pen_color)
-
-        self.drawing_state_changed.emit()
-
-    def set_pen_width(self, width):
-        try:
-            width = float(width)
-        except (TypeError, ValueError):
-            return                  # 非数字当没收到（需求第七条）
-        # 需求：最小 0.5、最大 50
-        self._pen_width = max(0.5, min(50.0, width))
-        self.settings.setValue('Canvas/pen_width', self._pen_width)
-        bar = getattr(self, '_drawing_toolbar', None)
-        if bar is not None:
-            bar.set_width(self._pen_width)
-
-        self.drawing_state_changed.emit()
-
-    # ── 画一笔的三个步骤 ────────────────────────────────────────────
-
-    def _scene_pen_width(self):
-        """把「屏幕像素」的线宽换算成当前视图下的场景线宽。
-
-        工具条上的线宽预设（1/2/4/8/16/24）和数值框（0.5–50）都是用户
-        按**屏幕**理解的粗细。但图元活在场景坐标里 —— 大工程里
-        ``Fit view`` 会把视图压得很小（实测 11464 单位宽的工程压到
-        0.095），同一个线宽在屏幕上只剩不到一个像素：点一下等于什么
-        都没画，用户看到的就是"画完就消失"。
-
-        所以存进图元之前先除以当前缩放，让屏幕上量到的粗细等于用户
-        选的那个数。缩放视图之后线会跟着画面一起放大缩小，和图片一样
-        —— 那是"画面的一部分"该有的行为。
-        """
-        scale = self.transform().m11()
-        if scale <= 0:
-            return self._pen_width
-        return self._pen_width / scale
-
-    def _begin_stroke(self, scene_pos):
-        """按下鼠标：开一笔。图元**这时就进场景**（需求第十三条）。"""
-        self._ensure_current_canvas()
-        # 上一笔要是还挂着就先把引用收干净 —— 直接覆盖的话那半条线会
-        # 留在场景里没人认领（切工具时也删不掉它了）。
-        self._finish_pending_stroke()
-        point = (scene_pos.x(), scene_pos.y())
-        self._draw_points = [point]
-        if self._drawing_tool == DRAW_TOOL_LINE:
-            # 直线一开始就得有两个点，不然预览画不出来（路径只有一个
-            # moveTo 是空的，用户会以为工具坏了）。
-            self._draw_points.append(point)
-        is_line = self._drawing_tool == DRAW_TOOL_LINE
-        self._draw_item = PrismPathItem(
-            self._draw_points,
-            color=self._pen_color,
-            width=self._scene_pen_width(),
-            tool=DRAW_TOOL_LINE if is_line else DRAW_TOOL_PEN,
-            # 箭头只对直线有意义；画笔画出来的是手绘轨迹，带箭头很怪
-            arrow=self._arrow if is_line else ARROW_NONE,
-            line_style=self._line_style)
-        self._draw_item._canvas_id = self.current_canvas_id
-        self._draw_item.setZValue(9999)
-        self.scene.addItem(self._draw_item)
-
-    def _erase_stroke(self, item):
-        """删掉一条绘制线 —— 走撤销栈。
-
-        **只删绘制内容**（需求第五条）：判断靠 `TYPE`，所以图片、视频、
-        文字、文档内容、脑图节点、分组、标签一个都不会被误删。
-
-        撤销之后线的**位置、颜色、粗细、类型、箭头**都回来 ——
-        `DeleteItems` 保留的是同一个对象，不是重建的副本。
-        """
-        if item is None or getattr(item, 'TYPE', '') != PrismPathItem.TYPE:
-            return
-        if item.scene() is not self.scene:
-            return
-        self.scene.undo_stack.push(
-            commands.DeleteItems(self.scene, [item]))
-
-    def _erase_at(self, view_pos):
-        """橡皮擦：点中哪条绘制线就删哪条；点空白什么都不做。"""
-        self._erase_stroke(self.itemAt(view_pos))
-
-    def _finish_pending_stroke(self):
-        """松开鼠标 / 切工具：结束编辑，图元留在场景里。"""
-        self._draw_points = []
-        self._draw_item = None
-
-    def _discard_pending_stroke(self):
-        """没画完就中断了（退出模式 / 切工具）。
-
-        需求第十条说"停止当前尚未完成的绘制操作"，第十四条说"绘制过程中
-        点击关闭"也要安全。一条刚按下还没放开的线没有保留的价值 ——
-        留着会成为画布上的垃圾。
-        """
-        item = self._draw_item
-        self._draw_points = []
-        self._draw_item = None
-        if item is not None and item.scene() is self.scene:
-            self.scene.removeItem(item)
 
     def reset_previous_transform(self, toggle_item=None):
         if (self.previous_transform
@@ -724,11 +474,24 @@ class PrismGraphicsView(MainControlsMixin,
             self.clear_scene()
 
     def on_action_fit_scene(self):
+        canvas = self._material_canvas()
+        if canvas is not None:
+            self.parent.canvas_toolbar.fit_all()
+            return
         visible = [i for i in self.scene.items_for_save() if i.isVisible()]
         if visible:
             self.fit_rect(self.scene.itemsBoundingRect(items=visible))
 
     def on_action_fit_selection(self):
+        canvas = self._material_canvas()
+        if canvas is not None:
+            selected = [c.sceneBoundingRect() for c in canvas.cards if c.isSelected()]
+            if selected:
+                bounds = selected[0]
+                for rect in selected[1:]:
+                    bounds = bounds.united(rect)
+                canvas.fitInView(bounds.adjusted(-20, -20, 20, 20), Qt.AspectRatioMode.KeepAspectRatio)
+            return
         self.fit_rect(self.scene.itemsBoundingRect(selection_only=True))
 
     def on_action_actual_size(self):
@@ -824,20 +587,61 @@ class PrismGraphicsView(MainControlsMixin,
         else:
             self.welcome_overlay.on_action_movewin_mode()
 
+    def _route_editor_history(self, redo):
+        focus = QtWidgets.QApplication.focusWidget()
+        if isinstance(focus, QtWidgets.QLineEdit):
+            focus.redo() if redo else focus.undo()
+            return True
+        canvas = self._material_canvas()
+        if canvas is not None and (canvas.undo_stack.canRedo() if redo else canvas.undo_stack.canUndo()):
+            canvas.undo_stack.redo() if redo else canvas.undo_stack.undo()
+            return True
+        window = self.window()
+        current = window.tabs.currentWidget() if hasattr(window, 'tabs') else None
+        controller = getattr(window, 'search_controller', None)
+        if controller is not None and current is controller.page:
+            # The only explicitly owned project history here is the canvas stack.
+            # Do not infer a document/mind-map history from a highlighted card.
+            if self.undo_stack.canRedo() if redo else self.undo_stack.canUndo():
+                window.open_workspace_page('canvas', self.current_canvas_id)
+            return False
+        if current is not None and hasattr(current, 'editor_history'):
+            current.editor_history(redo)
+            return True
+        return False
+
     def on_action_undo(self):
+        if self._route_editor_history(False):
+            return
         logger.debug('Undo: %s' % self.undo_stack.undoText())
         self.cancel_active_modes()
         self.undo_stack.undo()
 
     def on_action_redo(self):
+        if self._route_editor_history(True):
+            return
         logger.debug('Redo: %s' % self.undo_stack.redoText())
         self.cancel_active_modes()
         self.undo_stack.redo()
 
+    def _material_canvas(self):
+        browser = getattr(self.parent, 'asset_browser', None)
+        if browser is not None and self.parent.tabs.currentWidget() is browser:
+            return browser.list
+        return None
+
     def on_action_select_all(self):
+        canvas = self._material_canvas()
+        if canvas is not None:
+            canvas.select_all()
+            return
         self.scene.select_all_items()
 
     def on_action_deselect_all(self):
+        canvas = self._material_canvas()
+        if canvas is not None:
+            canvas.selectionModel().clearSelection()
+            return
         self.scene.deselect_all_items()
 
     def on_action_delete_items(self):
@@ -875,15 +679,31 @@ class PrismGraphicsView(MainControlsMixin,
 
 
     def on_action_arrange_horizontal(self):
+        canvas = self._material_canvas()
+        if canvas is not None:
+            canvas.arrange_selected('horizontal')
+            return
         self.scene.arrange()
 
     def on_action_arrange_vertical(self):
+        canvas = self._material_canvas()
+        if canvas is not None:
+            canvas.arrange_selected('vertical')
+            return
         self.scene.arrange(vertical=True)
 
     def on_action_arrange_optimal(self):
+        canvas = self._material_canvas()
+        if canvas is not None:
+            canvas.arrange_selected('optimal')
+            return
         self.scene.arrange_optimal()
 
     def on_action_arrange_square(self):
+        canvas = self._material_canvas()
+        if canvas is not None:
+            canvas.arrange_selected('square')
+            return
         self.scene.arrange_square()
 
     def on_action_change_opacity(self):
@@ -896,9 +716,9 @@ class PrismGraphicsView(MainControlsMixin,
         images = list(filter(
             lambda item: item.is_image,
             self.scene.selectedItems(user_only=True)))
-        if images:
-            self.undo_stack.push(
-                commands.ToggleGrayscale(images, checked))
+        images = [i for i in images if i.grayscale != checked]
+        if images and not self.undo_stack.executing:
+            self.undo_stack.push(commands.ToggleGrayscale(images, checked))
 
     def on_action_crop(self):
         self.scene.crop_items()
@@ -953,10 +773,16 @@ class PrismGraphicsView(MainControlsMixin,
             self.scene.sample_color_at(self.mapToScene(pos)))
 
     def on_items_loaded(self, value):
-        logger.debug('On items loaded: add queued items')
-        self.scene.add_queued_items()
+        self._load_scheduler.schedule()
 
     def on_loading_finished(self, filename, errors):
+        self._load_scheduler.finish(lambda: self._finish_loading(filename, errors))
+
+    def _finish_loading(self, filename, errors):
+        started = getattr(self, '_trace_open_started', trace_time.perf_counter())
+        trace_record('project_open_finished', filename=str(filename), failed=bool(errors),
+                     duration_ms=round((trace_time.perf_counter()-started)*1000, 3))
+        self._project_opening = False
         if errors:
             QtWidgets.QMessageBox.warning(
                 self,
@@ -964,7 +790,6 @@ class PrismGraphicsView(MainControlsMixin,
                 _('<p>Problem loading file %s</p><p>Not accessible or not a proper bee file</p>') % filename)
         else:
             self.filename = filename
-            self.scene.add_queued_items()
             self.category_panel.force_rebuild()
             self.on_action_fit_scene()
             if hasattr(self.parent, '_reload_workspace_pages'):
@@ -977,8 +802,12 @@ class PrismGraphicsView(MainControlsMixin,
             self.open_from_file(filename)
 
     def open_from_file(self, filename):
+        self._trace_open_started = trace_time.perf_counter()
+        trace_record('project_open_start', filename=str(filename))
         logger.info(f'Opening file {filename}')
+        self._project_opening = True
         self.clear_scene()
+        self._project_opening = True
         self.worker = fileio.ThreadedIO(
             fileio.load_prism, filename, self.scene)
         self.worker.progress.connect(self.on_items_loaded)
@@ -1006,6 +835,9 @@ class PrismGraphicsView(MainControlsMixin,
             self.filename = filename
 
     def on_saving_finished(self, filename, errors, silent=False):
+        started = getattr(self, '_trace_save_started', trace_time.perf_counter())
+        trace_record('project_save_finished', filename=str(filename), failed=bool(errors), silent=silent,
+                     duration_ms=round((trace_time.perf_counter()-started)*1000, 3))
         if errors:
             if silent:
                 # Autosave runs unattended; a modal warning every few
@@ -1030,6 +862,8 @@ class PrismGraphicsView(MainControlsMixin,
                     4000)
 
     def do_save(self, filename, create_new, silent=False):
+        self._trace_save_started = trace_time.perf_counter()
+        trace_record('project_save_start', filename=str(filename), create_new=create_new, silent=silent)
         # Flush editors whose debounce timer may not have fired yet.
         tabs = getattr(self.parent, 'tabs', None)
         if tabs is not None:
@@ -1312,7 +1146,7 @@ class PrismGraphicsView(MainControlsMixin,
     def on_action_debuglog(self):
         widgets.DebugLogDialog(self)
 
-    def _arrange_imported_items(self, items):
+    def _arrange_imported_items(self, items, *, optimal=False):
         """Pack each imported batch and keep it clear of existing content."""
         if not items:
             return
@@ -1325,7 +1159,7 @@ class PrismGraphicsView(MainControlsMixin,
         for item in items:
             by_canvas.setdefault(item._canvas_id, []).append(item)
         for canvas_id, group in by_canvas.items():
-            if len(group) > 200:
+            if len(group) > 200 and not optimal:
                 # Keep very large imports responsive using the linear grid.
                 self.scene.arrange_square(items=group)
             elif len(group) >= 2:
@@ -1342,6 +1176,10 @@ class PrismGraphicsView(MainControlsMixin,
                     self.undo_stack.push(commands.MoveItemsBy(group, delta))
 
     def on_insert_images_finished(self, new_scene, filename, errors):
+        self._load_scheduler.finish(
+            lambda: self._finish_insert_images(new_scene, filename, errors))
+
+    def _finish_insert_images(self, new_scene, filename, errors):
         """Callback for when loading of images is finished.
 
         :param new_scene: True if the scene was empty before, else False
@@ -1360,7 +1198,6 @@ class PrismGraphicsView(MainControlsMixin,
                 self,
                 _('Problem loading images'),
                 msg + IMG_LOADING_ERROR_MSG + errornames)
-        self.scene.add_queued_items()
 
         # Select new items only if count is manageable (avoid MultiSelectItem crash)
         existing_ids = getattr(self, '_existing_item_ids', set())
@@ -1763,7 +1600,10 @@ class PrismGraphicsView(MainControlsMixin,
         if self.scene.has_selection():
             item = self.scene.selectedItems(user_only=True)[0]
             grayscale = getattr(item, 'grayscale', False)
-            actions.actions['grayscale'].qaction.setChecked(grayscale)
+            action = actions.actions['grayscale'].qaction
+            blocker = QtCore.QSignalBlocker(action)
+            action.setChecked(grayscale)
+            del blocker
         self.viewport().update()
 
     def on_cursor_changed(self, cursor):
@@ -1773,148 +1613,6 @@ class PrismGraphicsView(MainControlsMixin,
     def on_cursor_cleared(self):
         if self.active_mode is None:
             self.viewport().unsetCursor()
-
-    @property
-    def _import_in_progress(self):
-        return getattr(self, '_import_progress_flag', False)
-
-    @_import_in_progress.setter
-    def _import_in_progress(self, value):
-        self._import_progress_flag = bool(value)
-        self.scene._import_in_progress = bool(value)
-
-    def _begin_interaction(self):
-        self.scene._interaction_in_progress = True
-        self._interaction_timer.start()
-
-    def _end_interaction(self):
-        self.scene._interaction_in_progress = False
-        self.viewport().update()
-
-    def _content_bounds(self):
-        if self._cached_scene_bounds is None:
-            self._cached_scene_bounds = self.scene.itemsBoundingRect()
-        return self._cached_scene_bounds
-
-    def recalc_scene_rect(self):
-        """Resize the scene rectangle so that it is always one view width
-        wider than all items' bounding box at each side and one view
-        width higher on top and bottom. This gives the impression of
-        an infinite canvas."""
-
-        if self.previous_transform:
-            return
-        logger.trace('Recalculating scene rectangle...')
-        try:
-            # 包围盒只算一次。itemsBoundingRect() 要遍历场景里每一项，
-            # 而剖析显示这个函数在打开工程期间被调 172 次、累计 0.62 秒
-            # —— 其中一半是拿同一个包围盒去取第二个角点。
-            bounds = self._content_bounds()
-            topleft = self.mapFromScene(bounds.topLeft())
-            topleft = self.mapToScene(QtCore.QPoint(
-                topleft.x() - self.size().width(),
-                topleft.y() - self.size().height()))
-            bottomright = self.mapFromScene(bounds.bottomRight())
-            bottomright = self.mapToScene(QtCore.QPoint(
-                bottomright.x() + self.size().width(),
-                bottomright.y() + self.size().height()))
-            self.setSceneRect(QtCore.QRectF(topleft, bottomright))
-        except OverflowError:
-            logger.info('Maximum scene size reached')
-        logger.trace('Done recalculating scene rectangle')
-
-    def get_zoom_size(self, func):
-        """Calculates the size of all items' bounding box in the view's
-        coordinates.
-
-        This helps ensure that we never zoom out too much (scene
-        becomes so tiny that items become invisible) or zoom in too
-        much (causing overflow errors).
-
-        :param func: Function which takes the width and height as
-            arguments and turns it into a number, for ex. ``min`` or ``max``.
-        """
-
-        bounds = self._content_bounds()
-        topleft = self.mapFromScene(bounds.topLeft())
-        bottomright = self.mapFromScene(bounds.bottomRight())
-        return func(bottomright.x() - topleft.x(),
-                    bottomright.y() - topleft.y())
-
-    def scale(self, *args, **kwargs):
-        super().scale(*args, **kwargs)
-        self.scene.on_view_scale_change()
-        self._recalc_timer.stop()
-        self.recalc_scene_rect()
-
-    def get_scale(self):
-        return self.transform().m11()
-
-    def pan(self, delta):
-        self._begin_interaction()
-        if not self.scene.items():
-            logger.debug('No items in scene; ignore pan')
-            return
-
-        hscroll = self.horizontalScrollBar()
-        hscroll.setValue(int(hscroll.value() + delta.x()))
-        vscroll = self.verticalScrollBar()
-        vscroll.setValue(int(vscroll.value() + delta.y()))
-
-    def zoom(self, delta, anchor):
-        self._begin_interaction()
-        if not self.scene.items():
-            logger.debug('No items in scene; ignore zoom')
-            return
-
-        # We calculate where the anchor is before and after the zoom
-        # and then move the view accordingly to keep the anchor fixed
-        # We can't use QGraphicsView's AnchorUnderMouse since it
-        # uses the current cursor position while we need the initial mouse
-        # press position for zooming with Ctrl + Middle Drag
-        anchor = QtCore.QPoint(round(anchor.x()),
-                               round(anchor.y()))
-        ref_point = self.mapToScene(anchor)
-        if delta == 0:
-            return
-        factor = 1 + abs(delta / 1000)
-        if delta > 0:
-            if self.get_zoom_size(max) < 10000000:
-                self.scale(factor, factor)
-            else:
-                logger.debug('Maximum zoom size reached')
-                return
-        else:
-            if self.get_zoom_size(min) > 50:
-                self.scale(1/factor, 1/factor)
-            else:
-                logger.debug('Minimum zoom size reached')
-                return
-
-        self.pan(self.mapFromScene(ref_point) - anchor)
-        self.reset_previous_transform()
-        self.zoom_changed.emit(self.transform().m11() * 100.0)
-
-    def wheelEvent(self, event):
-        action, inverted\
-            = self.keyboard_settings.mousewheel_action_for_event(event)
-
-        delta = event.angleDelta().y()
-        if inverted:
-            delta = delta * -1
-
-        if action == 'zoom':
-            self.zoom(delta, event.position())
-            event.accept()
-            return
-        if action == 'pan_horizontal':
-            self.pan(QtCore.QPointF(0, 0.5 * delta))
-            event.accept()
-            return
-        if action == 'pan_vertical':
-            self.pan(QtCore.QPointF(0.5 * delta, 0))
-            event.accept()
-            return
 
     def mousePressEvent(self, event):
         self._last_canvas_pos = event.position().toPoint()
@@ -2014,6 +1712,11 @@ class PrismGraphicsView(MainControlsMixin,
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if (self.active_mode == self.DRAW_MODE and self._drawing_tool == DRAW_TOOL_ERASER
+                and event.buttons() & Qt.MouseButton.LeftButton):
+            self._erase_at(event.position().toPoint())
+            event.accept()
+            return
         if event.buttons() != Qt.MouseButton.NoButton:
             self._begin_interaction()
         self._last_canvas_pos = event.position().toPoint()
@@ -2206,6 +1909,21 @@ class PrismGraphicsView(MainControlsMixin,
                 Qt.TransformationMode.SmoothTransformation))
         drag.exec(Qt.DropAction.CopyAction)
 
+    def paintEvent(self, event):
+        renderer = getattr(self, '_overview_renderer', None)
+        self._overview_active = renderer is not None and renderer.eligible()
+        self.scene._viewport_items.sync(self)
+        if self._overview_active:
+            painter = QtGui.QPainter(self.viewport())
+            try:
+                renderer.paint(painter)
+            finally:
+                painter.end()
+        else:
+            if renderer is not None:
+                renderer.invalidate()
+            super().paintEvent(event)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._recalc_timer.stop()
@@ -2293,6 +2011,16 @@ class PrismGraphicsView(MainControlsMixin,
         items = []
         for image, position_ms in frames:
             item = PrismPixmapItem(image)
+            # A decoded video frame has no imported file. Preserve its full
+            # pixels as a lossless PNG before LOD can replace the display.
+            data = QtCore.QByteArray()
+            buffer = QtCore.QBuffer(data)
+            buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
+            if not image.save(buffer, 'PNG'):
+                raise ValueError('Could not preserve extracted video frame')
+            from prism.source_store import retain_bytes
+            item._source_path = retain_bytes(bytes(data), '.png')
+            item._source_format = 'png'
             item._canvas_id = self.current_canvas_id
             if inherited:
                 item._categories = [inherited]
@@ -2311,8 +2039,13 @@ class PrismGraphicsView(MainControlsMixin,
         # InsertItems does arithmetic on the position, so it has to be a
         # QPointF - get_view_center() hands back a QPoint.
         origin = self.mapToScene(self.get_view_center())
-        self.undo_stack.push(
-            commands.InsertItems(self.scene, items, origin))
+        self.undo_stack.beginMacro(_('Add video frames'))
+        try:
+            self.undo_stack.push(
+                commands.InsertItems(self.scene, items, origin))
+            self._arrange_imported_items(items, optimal=True)
+        finally:
+            self.undo_stack.endMacro()
         for item in items:
             item.setSelected(True)
         self.scene.metadata_changed.emit()

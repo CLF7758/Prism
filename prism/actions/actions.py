@@ -302,13 +302,6 @@ actions = ActionList([
     ),
 
     Action(
-        id='sample_color',
-        text=_('Sample Color'),
-        shortcuts=['S'],
-        callback='on_action_sample_color',
-        group='active_when_items_in_scene',
-    ),
-    Action(
         id='find_duplicates',
         text=_('Find Duplicate Photos...'),
         callback='on_action_find_duplicates',
