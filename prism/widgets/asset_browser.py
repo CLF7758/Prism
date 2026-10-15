@@ -183,6 +183,7 @@ class AssetBrowser(QtWidgets.QWidget):
         trace_record('asset_scope', mode=mode, scope_pages=scope_pages, title=title)
         self.list.clear_annotations()
         self.mode = mode
+        self.sort_button.setEnabled(mode != 'visual')
         if mode == 'random':
             import random
             self._random_seed = random.randrange(2**32)
@@ -225,7 +226,7 @@ class AssetBrowser(QtWidgets.QWidget):
         self.catalog = self.view.category_panel.catalog
         text, expression = self.view.category_panel._split_query(self.search.text())
         kind = 'asset' if self.mode in ('all', 'unclassified', 'untagged') else self.view.category_panel.search_kind
-        unified = bool(self.search.text().strip()) or kind not in ('all', 'asset')
+        unified = self.mode != 'visual' and (bool(self.search.text().strip()) or kind not in ('all', 'asset'))
         results = self.catalog.query(text='' if unified else text, tag_expression=expression,
             untagged_only=self.mode == 'untagged', min_rating=self.view.category_panel._min_rating,
             canvas_scope=self.scope_pages)
@@ -261,8 +262,13 @@ class AssetBrowser(QtWidgets.QWidget):
                                 (r.get('item') in allowed if r['kind'] == 'asset' else
                                  (not asset_scope or kind in ('document', 'mindmap', 'canvas')))]
             items = [r['item'] if r['kind'] == 'asset' else r for r in self.search_hits]
-        if self.sort_key == 'name': items.sort(key=lambda i: asset_name(i).casefold())
-        if self.sort_key == 'rating': items.sort(key=lambda i: getattr(i, '_rating', 0), reverse=True)
+        if self.mode == 'visual':
+            allowed = set(items)
+            items = [item for item, score in getattr(self, 'visual_results', []) if item in allowed]
+            if getattr(self, 'visual_project', None) != self.view.scene.project_id:
+                items = []
+        elif self.sort_key == 'name': items.sort(key=lambda i: asset_name(i).casefold())
+        elif self.sort_key == 'rating': items.sort(key=lambda i: getattr(i, '_rating', 0), reverse=True)
         self._selecting = True
         if items != self.model.items:
             self.view.scene.clearSelection()

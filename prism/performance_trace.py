@@ -196,11 +196,12 @@ class PerformanceTrace(QtCore.QObject):
             self.max_dispatch = 0
             self.summary_time = now
 
-    def dispatch_finished(self, receiver, event_type, milliseconds):
+    def dispatch_finished(self, receiver, event_type, milliseconds, *, nested_loop=False):
         self.counts[str(event_type)] += 1
-        self.max_dispatch = max(self.max_dispatch, milliseconds)
+        if not nested_loop:
+            self.max_dispatch = max(self.max_dispatch, milliseconds)
         if milliseconds >= 32:
-            self.record('slow_dispatch', target=type(receiver).__name__, event_type=event_type,
+            self.record('nested_dispatch' if nested_loop else 'slow_dispatch', target=type(receiver).__name__, event_type=event_type,
                         duration_ms=round(milliseconds, 3), last_action=self.last_action)
 
     def hook_actions(self, widget):

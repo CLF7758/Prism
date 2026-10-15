@@ -23,6 +23,9 @@ from prism.widgets import components
 from prism.widgets.components.icons import icon
 from prism.widgets.components.flow_layout import FlowLayout
 from prism.item_lifecycle import is_pixmap_item
+from prism.item_lifecycle import logical_item
+from prism.inspection_preview import InspectionPreview
+from prism.performance_trace import measured
 
 
 logger = logging.getLogger(__name__)
@@ -44,6 +47,7 @@ class DetailPanel(QtWidgets.QWidget):
         self.view = view
         self.scene = view.scene
         self._item = None
+        self._inspection_session = None
         self._search_result = None
         self._displayed_tags = set()
         self._setup_ui()
@@ -399,6 +403,7 @@ class DetailPanel(QtWidgets.QWidget):
     # ── Public API ──────────────────────────────────────────────
 
     def _show_empty(self):
+        self._restore_inspection()
         self._visual_key = None
         self._item = None
         self._clear_color_distribution()
@@ -443,6 +448,7 @@ class DetailPanel(QtWidgets.QWidget):
         self._tag_search.setFocus()
 
     def show_collection(self, title, count, size=None):
+        self._restore_inspection()
         self._search_result = None
         self._item = None
         if hasattr(self, '_search_info'):
@@ -743,8 +749,12 @@ class DetailPanel(QtWidgets.QWidget):
                 return preview
         return getattr(item, 'pixmap', lambda: None)()
 
+    @measured('inspector.refresh', minimum_ms=32)
     def _refresh_item(self, item):
+        item = logical_item(item)
         changed_item = self._item is not item
+        if changed_item:
+            self._restore_inspection()
         self._item = item
         if changed_item and getattr(item, 'TYPE', '') == 'pixmap':
             for widget in (self._exposure_slider, self._channel_combo,
@@ -758,9 +768,6 @@ class DetailPanel(QtWidgets.QWidget):
                     widget.setCurrentIndex(0)
                 del blocker
             self._exposure_value.setText('0.0 EV')
-            source = getattr(item, '_display_source_pixmap', None)
-            if source is not None and not source.isNull():
-                item.set_preview_pixmap(source, adjusted=False)
 
         # Preview
         pm = self._inspection_pixmap(item)
@@ -882,6 +889,8 @@ class DetailPanel(QtWidgets.QWidget):
         if is_pixmap_item(item):
             if visuals_changed:
                 self._hist_widget.update_from_pixmap(pm)
+            self._lbl_hist.show()
+            self._hist_widget.show()
         else:
             self._hist_widget.clear()
 
@@ -892,15 +901,11 @@ class DetailPanel(QtWidgets.QWidget):
     # ── Color distribution ────────────────────────
 
     def _set_color_widgets_visible(self, visible):
-        """统一切换"色彩分布"标题和容器的显隐。
-
-        直方图（`_lbl_hist` / `_hist_widget`）按方案 §8 保持隐藏，这里
-        一并收口，方便日后要恢复时只改这一处。
-        """
+        """Show image statistics together; empty selections hide both."""
         self._lbl_cd.setVisible(visible)
         self._cd_container.setVisible(visible)
-        self._lbl_hist.setVisible(False)
-        self._hist_widget.setVisible(False)
+        self._lbl_hist.setVisible(visible)
+        self._hist_widget.setVisible(visible)
 
     def _clear_color_distribution(self):
         """清掉色条/标签，避免残留上一张图片的分析结果（方案 C02）。"""
@@ -1124,6 +1129,27 @@ class DetailPanel(QtWidgets.QWidget):
             widget.blockSignals(False)
         self._on_hdr_changed()
 
+    def _notify_inspection_display(self, item):
+        """Refresh both the editor and any public-view card for this asset."""
+        item.update()
+        from prism import lod
+        lod.cache().changed.emit(item)
+        browser = getattr(self.view.window(), 'asset_browser', None)
+        canvas = getattr(browser, 'list', None)
+        if canvas is not None and hasattr(canvas, 'cards'):
+            regions = [card.sceneBoundingRect() for card in canvas.cards
+                       if logical_item(canvas.model().items[card.row]) is item]
+            if regions:
+                canvas._invalidate_display_frame(regions)
+
+    def _restore_inspection(self):
+        session, self._inspection_session = self._inspection_session, None
+        if session is not None:
+            item = session.restore()
+            if item is not None:
+                self._notify_inspection_display(item)
+
+    @measured('inspector.preview_adjust', minimum_ms=16)
     def _apply_hdr_settings(self):
         """Re-decode the selected source with the current HDRI settings."""
         item = self._item
@@ -1135,6 +1161,12 @@ class DetailPanel(QtWidgets.QWidget):
             and options['channel'] == 'rgb'
             and options['operator'] == 'reinhard'
             and not options.get('false_color'))
+        if is_default_preview:
+            self._restore_inspection()
+            self._refresh_item(item)
+            return
+        if self._inspection_session is None:
+            self._inspection_session = InspectionPreview(item)
         if self._hdr_source_available(item):
             try:
                 image, _ = load_image(item.filename, options)
@@ -1147,11 +1179,6 @@ class DetailPanel(QtWidgets.QWidget):
             if source is None:
                 source = QtGui.QPixmap(item.pixmap())
                 item._display_source_pixmap = source
-            if is_default_preview and hasattr(item, '_display_source_pixmap'):
-                # Resetting the controls should restore the original display
-                # pixels, while the imported source bytes remain untouched.
-                item.set_preview_pixmap(source, adjusted=False)
-                return
             image = adjust_display_image(
                 source.toImage(), options['exposure'], options['channel'])
         if image.isNull():
@@ -1159,8 +1186,11 @@ class DetailPanel(QtWidgets.QWidget):
             self._hdr_hint.setText('无法解码这张图片，已保留原来的预览。')
             return
         if options.get('false_color'):
-            image = false_color_preview(image, options['exposure'])
+            # The source above already has exposure applied exactly once.
+            image = false_color_preview(image)
         item.set_preview_pixmap(QtGui.QPixmap.fromImage(image), adjusted=True)
+        self._notify_inspection_display(item)
+        self._refresh_item(item)
 
 
 class _ColorBar(QtWidgets.QWidget):

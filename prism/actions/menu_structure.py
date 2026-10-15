@@ -84,6 +84,8 @@ menu_structure = [
         'items': [
             'insert_images',
             'insert_text',
+            'screen_capture',
+            'video_download',
         ],
     },
     {
@@ -116,6 +118,8 @@ menu_structure = [
             'grayscale',
             MENU_SEPARATOR,
             'find_duplicates',
+            'pin_reference',
+            'visual_search',
         ],
     },
     {

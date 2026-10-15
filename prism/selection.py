@@ -134,14 +134,18 @@ class BaseItemMixin:
     def set_cursor(self, cursor):
         # Can't use setCursor on the item itself because of bug
         # https://bugreports.qt.io/browse/QTBUG-4190
-        if self.scene():
-            self.scene().cursor_changed.emit(cursor)
+        scene = self.scene()
+        signal = getattr(scene, 'cursor_changed', None)
+        if signal is not None:
+            signal.emit(cursor)
 
     def unset_cursor(self):
         # Can't use unsetCursor on the item itself because of bug
         # https://bugreports.qt.io/browse/QTBUG-4190
-        if self.scene():
-            self.scene().cursor_cleared.emit()
+        scene = self.scene()
+        signal = getattr(scene, 'cursor_cleared', None)
+        if signal is not None:
+            signal.emit()
 
     def sample_color_at(self, pos):
         return None
@@ -404,8 +408,6 @@ class SelectableMixin(BaseItemMixin):
         for corner in self.corners:
             # See if we need to change the cursor for interactable areas
             if self.get_scale_bounds(corner).contains(event.pos()):
-                self.scene().cursor_changed.emit(
-                    self.get_corner_scale_cursor(corner))
                 self.set_cursor(self.get_corner_scale_cursor(corner))
                 return
             elif self.get_rotate_bounds(corner).contains(event.pos()):

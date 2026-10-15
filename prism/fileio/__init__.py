@@ -188,7 +188,11 @@ def _create_glb_item(path):
     return item
 
 
-def load_media(filenames, pos, scene, worker):
+def load_media_with_originals(filenames, pos, scene, worker):
+    return load_media(filenames, pos, scene, worker, force_video_embed=True)
+
+
+def load_media(filenames, pos, scene, worker, force_video_embed=False):
     """Add images, videos and 3D models to existing scene."""
     from PyQt6.QtCore import QUrl
 
@@ -220,16 +224,20 @@ def load_media(filenames, pos, scene, worker):
             mode = settings.valueOrDefault('Items/video_embed_mode')
             threshold_mb = settings.valueOrDefault(
                 'Items/video_embed_threshold_mb')
-            embed = (mode == 'embed'
+            embed = (force_video_embed or mode == 'embed'
                      or (mode == 'auto' and size_mb <= threshold_mb))
             video_blob = None
-            if embed:
+            if embed and not force_video_embed:
                 with open(local_path, 'rb') as f:
                     video_blob = f.read()
             item = PrismVideoItem(video_url=video_url,
                                 filename=local_path,
                                 video_blob=video_blob)
             item._is_reference = not embed
+            if force_video_embed:
+                from prism.source_store import retain_file
+                item._video_source_path = retain_file(local_path)
+                item._video_url = QUrl.fromLocalFile(item._video_source_path)
             item.set_pos_center(pos)
             scene.add_item_later(
                 {'item': item, 'type': 'video'}, selected=len(filenames) <= 200)

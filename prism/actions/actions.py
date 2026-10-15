@@ -197,6 +197,11 @@ actions = ActionList([
         shortcuts=['Ctrl+T'],
         callback='on_action_insert_text',
     ),
+    Action(id='screen_capture', text=_('屏幕截图…'), shortcuts=['Ctrl+Alt+A'], callback='on_action_screen_capture'),
+    Action(id='video_download', text=_('网站视频下载…'), callback='on_action_video_download'),
+    Action(id='pin_reference', text=_('钉在桌面'), callback='on_action_pin_reference'),
+    Action(id='capture_inbox', text=_('截图收件箱…'), callback='on_action_capture_inbox'),
+    Action(id='visual_search', text=_('查找相似图片'), callback='on_action_visual_search'),
     Action(
         id='clipboard_inbox',
         text=_('Clipboard &Inbox'),

@@ -311,7 +311,7 @@ class PrismGraphicsView(CanvasDrawingMixin,
         """Remove all dynamically injected menu items."""
         for attr in ('_cat_menu_action', '_reset_cam_action',
                      '_draw_menu_action', '_canvas_sep_action',
-                     '_ai_tag_action'):
+                     '_ai_tag_action', '_pin_menu_action'):
             action = getattr(self, attr, None)
             if action:
                 self.context_menu.removeAction(action)
@@ -1379,7 +1379,7 @@ class PrismGraphicsView(CanvasDrawingMixin,
         return self.current_canvas_id
 
     def do_insert_images(self, filenames, pos=None, folder_categories=None,
-                         folder_trees=None):
+                         folder_trees=None, force_video_embed=False):
         if not filenames:
             return
         self._ensure_current_canvas()
@@ -1418,7 +1418,7 @@ class PrismGraphicsView(CanvasDrawingMixin,
         self._pending_folder_trees = folder_trees
         self.undo_stack.beginMacro('Insert Images')
         self.worker = fileio.ThreadedIO(
-            fileio.load_media,
+            fileio.load_media_with_originals if force_video_embed else fileio.load_media,
             filenames,
             self.mapToScene(pos),
             self.scene)
@@ -1433,6 +1433,37 @@ class PrismGraphicsView(CanvasDrawingMixin,
             worker=self.worker,
             parent=self)
         self.worker.start()
+
+    def on_action_video_download(self):
+        from prism.widgets.video_download import VideoDownloadDialog
+        dialog = getattr(self, '_video_download_dialog', None)
+        if dialog is None:
+            dialog = self._video_download_dialog = VideoDownloadDialog(self)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def on_action_screen_capture(self):
+        from prism.actions.capture_workflow import capture
+        capture(self)
+
+    def on_action_pin_reference(self):
+        from prism.actions.capture_workflow import pin
+        pin(self)
+
+    def on_action_capture_inbox(self):
+        from prism.actions.capture_workflow import inbox
+        inbox(self)
+
+    def on_action_visual_search(self):
+        canvas = self._material_canvas()
+        selected = [canvas.model().items[index.row()] for index in canvas.selectedIndexes()] if canvas else self.scene.selectedItems(user_only=True)
+        images = [item for item in selected if getattr(item, 'TYPE', '') == 'pixmap']
+        controller = self.window().search_controller.visual_search
+        if len(images) == 1:
+            controller.start(images[0])
+        else:
+            controller.choose()
 
     def on_action_insert_images(self):
         self.cancel_active_modes()

@@ -38,9 +38,10 @@ class ToolScrollArea(QtWidgets.QScrollArea):
 class CanvasToolbar(QtWidgets.QWidget):
     filter_requested = QtCore.pyqtSignal()
 
-    def __init__(self, view, colour_host, parent=None):
+    def __init__(self, view, colour_host, parent=None, *, canvas=None, annotation_only=False):
         super().__init__(parent)
         self.view, self.colour_host = view, colour_host
+        self._canvas_override = canvas
         self.setObjectName('canvasToolbar')
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(56)
@@ -76,7 +77,7 @@ class CanvasToolbar(QtWidgets.QWidget):
         row.setContentsMargins(4, 0, 4, 0)
         row.setSpacing(2)
         self.colours = {}
-        for group in [{'id': 'all', 'label': '全部', 'color': '#aaaaaa'}] + list(COLOR_GROUPS):
+        for group in ([] if annotation_only else [{'id': 'all', 'label': '全部', 'color': '#aaaaaa'}] + list(COLOR_GROUPS)):
             button = self.button(row, group['label'], lambda checked=False, gid=group['id']: self.colour_clicked(gid))
             button.setProperty('colourChip', True)
             button.setCheckable(True)
@@ -91,6 +92,10 @@ class CanvasToolbar(QtWidgets.QWidget):
         self.gray.setCheckable(True)
         self.separator(row)
         self.tools = {}
+        self.capture_button = self.button(row, '屏幕截图：钉在桌面或送入画布', view.on_action_screen_capture, image=icon('capture'), text='截图')
+        self.capture_button.setObjectName('screenCaptureButton')
+        self.pin_button = self.button(row, '将选中图片钉在桌面', view.on_action_pin_reference, image=icon('pin'), text='贴图')
+        self.pin_button.setObjectName('pinReferenceButton')
         for key, title in [('select', '选择 / 退出绘制模式'), ('pen', '画笔'), ('eraser', '橡皮擦'), ('line', '直线'), ('arrow', '箭头'), ('text', '文字')]:
             button = self.button(row, title, lambda checked=False, tool=key: self.activate(tool), image=icon(key))
             button.setCheckable(True)
@@ -115,17 +120,29 @@ class CanvasToolbar(QtWidgets.QWidget):
             self.style_combo.addItem(label, value)
         self.style_combo.activated.connect(lambda: view.set_line_style(self.style_combo.currentData()))
         row.addWidget(self.style_combo)
-        self.separator(row)
-        self.button(row, '适应全部 (Ctrl+0)', self.fit_all, image=icon('fit-all'))
-        self.button(row, '回到中心（保持缩放）', self.centre, image=icon('center'))
-        row.addStretch()
+        if not annotation_only:
+            self.separator(row)
+            self.button(row, '适应全部 (Ctrl+0)', self.fit_all, image=icon('fit-all'))
+            self.button(row, '回到中心（保持缩放）', self.centre, image=icon('center'))
+            row.addStretch()
         self.scroll.setWidget(content)
         outer.addWidget(self.scroll, 1)
         self.separator(outer)
         self.filter_button = self.button(outer, '筛选：标签 / 评分 / 颜色 / 未标记', self.filter_requested.emit, image=icon('filter'), text='筛选')
         self.filter_button.setFixedWidth(68)
         self.filter_button.setCheckable(True)
-        colour_host.filter_changed.connect(self.refresh)
+        if colour_host is not None:
+            colour_host.filter_changed.connect(self.refresh)
+        if annotation_only:
+            for button in (self.gray, self.capture_button, self.pin_button, self.filter_button):
+                button.hide()
+            for line in self.findChildren(QtWidgets.QFrame):
+                if line.frameShape() == QtWidgets.QFrame.Shape.VLine:
+                    line.hide()
+            outer.setContentsMargins(4, 4, 4, 4)
+            self.setFixedHeight(36)
+            content.layout().activate()
+            self.setFixedWidth(content.sizeHint().width()+12)
         view.drawing_state_changed.connect(self.refresh)
         self.refresh()
 
@@ -211,7 +228,7 @@ class CanvasToolbar(QtWidgets.QWidget):
         canvas = self.material_canvas()
         if canvas is not None:
             bounds = canvas.scene().itemsBoundingRect()
-            self.view.parent.asset_browser.list.centerOn(bounds.center())
+            canvas.centerOn(bounds.center())
             return
         items = [item for item in self.view.scene.items_for_save() if item.isVisible()]
         if items:
@@ -249,6 +266,8 @@ class CanvasToolbar(QtWidgets.QWidget):
         self.style_combo.setCurrentIndex(self.style_combo.findData(self.view._line_style))
 
     def material_canvas(self):
+        if self._canvas_override is not None:
+            return self._canvas_override
         browser = getattr(self.view.parent, 'asset_browser', None)
         if browser is not None and self.view.parent.tabs.currentWidget() is browser:
             return browser.list
@@ -272,6 +291,8 @@ class CanvasToolbar(QtWidgets.QWidget):
             bounds = canvas.scene().itemsBoundingRect()
             if not bounds.isEmpty():
                 canvas.fitInView(bounds.adjusted(-20, -20, 20, 20), Qt.AspectRatioMode.KeepAspectRatio)
-                self.view.window()._update_status({})
+                callback = getattr(self.view.window(), '_update_status', None)
+                if callback is not None:
+                    callback({})
         else:
             self.view.on_action_fit_scene()

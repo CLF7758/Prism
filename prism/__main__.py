@@ -59,7 +59,8 @@ class PrismApplication(QtWidgets.QApplication):
         try:
             return super().notify(receiver, event)
         finally:
-            trace.dispatch_finished(receiver, event_type, (time.perf_counter()-started)*1000)
+            trace.dispatch_finished(receiver, event_type, (time.perf_counter()-started)*1000,
+                                    nested_loop=trace.last_heartbeat > started)
 
     def event(self, event):
         if event.type() == QtCore.QEvent.Type.FileOpen:
@@ -338,6 +339,10 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
             self._autosave_timer.setInterval(minutes * 60 * 1000)
             self._autosave_timer.timeout.connect(self._perform_autosave)
             self._autosave_timer.start()
+
+        from prism.capture_hotkey import CaptureHotkey
+        from prism.actions.actions import actions
+        self._capture_hotkey = CaptureHotkey(self.view, actions['screen_capture'].qaction)
 
     def _build_eagle_chrome(self, layout):
         """Each splitter column owns its header and contents, top to bottom."""
@@ -946,6 +951,16 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
             self.view.settings.setValue('MainWindow/'+side+'Width', width)
         self.view.scene.deselect_all_items()
         self.browser_capture.stop()
+        capture = getattr(self.view, '_capture_service', None)
+        if capture is not None:
+            capture.close()
+        self._capture_hotkey.close()
+        downloads = getattr(self.view, '_video_download_dialog', None)
+        if downloads is not None:
+            downloads.service.close()
+        visual = getattr(getattr(self, 'search_controller', None), 'visual_search', None)
+        if visual is not None:
+            visual.service.close()
         event.accept()
 
 

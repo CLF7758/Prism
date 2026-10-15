@@ -1,7 +1,5 @@
 name: Windows installer
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
 permissions:
   contents: write
@@ -27,6 +25,10 @@ jobs:
         shell: pwsh
         run: |
           python tools/collect_licenses.py
+          python tools/setup_capture_component.py
+          python tools/setup_visual_search_component.py --download-model
+          python tools/setup_video_download_component.py
+          python tools/bundle_components.py
           python -m PyInstaller --noconfirm --clean Prism.spec
           $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (!(Test-Path -LiteralPath $compiler)) { throw 'Inno Setup 6 compiler is required' }

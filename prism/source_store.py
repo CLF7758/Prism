@@ -31,6 +31,18 @@ def retain_bytes(data, suffix='.png'):
     return str(target)
 
 
+def retain_stream(stream, suffix):
+    """Keep an embedded video without allocating its entire blob in memory."""
+    global _directory
+    with _lock:
+        if _directory is None:
+            _directory = tempfile.TemporaryDirectory(prefix='prism-originals-')
+        target = Path(_directory.name)/(uuid.uuid4().hex+suffix)
+    with target.open('wb') as output:
+        shutil.copyfileobj(stream, output, length=1024*1024)
+    return str(target)
+
+
 def read_archive(archive):
     """Read original bytes with a thread-local, read-only connection."""
     filename, item_id = archive

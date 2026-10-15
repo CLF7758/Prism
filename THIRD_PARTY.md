@@ -39,3 +39,14 @@ The difference-hash implementation is locally written. The Windows installer
 ships collected dependency notices in its licenses directory. The dependency
 inventory is in packaging/licenses/dependencies.json; native-library source
 requirements are tracked in docs/RELEASE_AUDIT.md.
+
+## Bundled isolated components (0.3.10)
+
+- ScreenPinKit (InterwovenCode/ScreenPinKit), MIT, revision 1c0dc5fa14a9ec99660fbb3bc6eade7d7d1c3f77. Source is bundled with the capture component; the configuration-location hook is adapted for Prism.
+- system_hotkey (YaoXuanZhi/system_hotkey), BSD-style upstream license, revision e3e9d308e7dd633c8ecbb9515de5e93b1975f01d.
+- Capture runtime includes PyQt5 / PyQtWebEngine (GPL option), Qt and its native notices, OpenCV, NumPy, SciPy, ONNX Runtime and associated Python dependencies. Package notices are retained in site-packages.
+- Local image search: OpenCLIP (MIT), FAISS (MIT), PyTorch / torchvision (BSD-style), timm (Apache-2.0), OpenCV (Apache-2.0), Pillow and NumPy. The OpenAI ViT-B-32 model is bundled with its upstream CLIP MIT notice.
+- yt-dlp (Unlicense, with bundled third-party exceptions) and FFmpeg/ffprobe are included for the experimental download component. Their presence does not imply that every website is supported. Binary provenance is retained in the component manifests. FFmpeg builds may use GPL codecs; upstream licenses and corresponding source references apply.
+- CPython 3.12 is bundled under the Python Software Foundation license, retained in the portable runtime.
+
+Repository sources: https://github.com/InterwovenCode/ScreenPinKit ; https://github.com/mlfoundations/open_clip ; https://github.com/facebookresearch/faiss ; https://github.com/openai/CLIP ; https://github.com/yt-dlp/yt-dlp .

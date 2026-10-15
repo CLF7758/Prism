@@ -341,7 +341,20 @@ class AssetCanvas(QtWidgets.QGraphicsView):
         self._details_key = None
         from prism.compact_layout import pack_sizes
         sizes = [(max(1, math.ceil(c._size.width()))+3, max(1, math.ceil(c._size.height()))+3) for c in self.cards]
-        positions, bounds = pack_sizes(sizes)
+        if getattr(self.parent(), 'mode', None) == 'visual':
+            # Similarity order is meaningful: packing by rectangle size can
+            # put the 150th result before the best match on screen.
+            limit = max(400, self.viewport().width()-24)
+            x, y, height, width, positions = 0, 0, 0, 0, []
+            for w, h in sizes:
+                if x and x+w > limit:
+                    x, y, height = 0, y+height, 0
+                positions.append((x, y))
+                x += w
+                width, height = max(width, x), max(height, h)
+            bounds = (width, y+height)
+        else:
+            positions, bounds = pack_sizes(sizes)
         self._layer.prepareGeometryChange()
         self._selection_bounds = None
         self._spatial.clear()

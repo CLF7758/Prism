@@ -300,13 +300,13 @@ class SQLiteIO:
             ' items.data '
             'FROM items '
             'WHERE items.type = "glb"'))
-        # Video and GLB blobs are small in count; load them separately
-        # so the pixmap query stays blob-free.
+        # Models retain the old loader. Embedded videos stream to a playback
+        # file rather than accumulating every original in media_blobs.
         media_blobs = {}
         for blob_row in self.fetchall(
                 'SELECT item_id, data FROM sqlar '
                 'WHERE item_id IN (SELECT id FROM items '
-                '  WHERE type IN ("video", "glb"))'):
+                '  WHERE type = "glb")'):
             media_blobs[blob_row[0]] = blob_row[1]
         if self.worker:
             self.worker.begin_processing.emit(len(rows))
@@ -392,23 +392,19 @@ class SQLiteIO:
                 data['item'] = item
 
             elif data['type'] == 'video':
-                blob = media_blobs.get(row[0])
                 vdata = data['data']
-                if blob:
-                    # Embedded video: materialize a temp file for
-                    # playback and thumbnail capture, keep it around
-                    # until the item is cleaned up.
+                embedded = self.fetchone('SELECT rowid,sz,length(data) FROM sqlar WHERE item_id=?', (row[0],))
+                if embedded and embedded[2]:
+                    from prism.source_store import retain_stream
                     ext = os.path.splitext(
                         vdata.get('filename', ''))[1] or '.mp4'
-                    tmp = tempfile.NamedTemporaryFile(
-                        suffix=ext, delete=False)
-                    tmp.write(blob)
-                    tmp.close()
+                    with self._connection.blobopen('sqlar', 'data', embedded[0], readonly=True) as stream:
+                        retained = retain_stream(stream, ext)
                     item = PrismVideoItem(
-                        video_url=QUrl.fromLocalFile(tmp.name),
-                        filename=vdata.get('filename'),
-                        video_blob=blob)
-                    item._tmp_video_file = tmp
+                        video_url=QUrl.fromLocalFile(retained),
+                        filename=vdata.get('filename'))
+                    item._is_reference = False
+                    item._video_source_path = retained
                     data['item'] = item
                 elif vdata.get('videoPath'):
                     path = vdata['videoPath']
@@ -832,6 +828,16 @@ class SQLiteIO:
                     'VALUES (?, ?, ?, ?, ?)',
                     (item.save_id, name, 0o644, len(video_blob),
                      video_blob))
+            elif getattr(item, '_video_source_path', None) and not getattr(item, '_is_reference', False):
+                path = item._video_source_path
+                size = os.path.getsize(path)
+                name = item.get_filename_for_export('video')
+                self.ex('INSERT INTO sqlar (item_id,name,mode,sz,data) VALUES (?,?,?,?,zeroblob(?))',
+                        (item.save_id, name, 0o644, size, size))
+                rowid = self.fetchone('SELECT rowid FROM sqlar WHERE item_id=?', (item.save_id,))[0]
+                with self._connection.blobopen('sqlar', 'data', rowid, readonly=False) as output:
+                    with open(path, 'rb') as stream:
+                        shutil.copyfileobj(stream, output, length=1024*1024)
         elif getattr(item, 'TYPE', None) == 'glb':
             # Model items: embed the file into sqlar, or reference-only.
             # Must precede the pixmap branch below, which would otherwise

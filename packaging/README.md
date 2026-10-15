@@ -20,3 +20,9 @@ PyQt6 / PyQt-WebEngine 绑定使用 GPL 许可，不是 LGPL。Qt 原生库另�
 `licenses/dependencies.json` 记录本机依赖版本。完整发布前应核对 wheel 所包含原生库的对应源码、构建配置、第三方声明和获取方式，尤其 Qt/Chromium、FFmpeg、x264/x265。源码快照仅覆盖本项目，不替代这些库的对应源码义务。见 `docs/RELEASE_AUDIT.md`。
 
 旧 winget / Scoop 模板仍需真实发布地址与散列才能启用，不视为已在软件商店发布。
+
+## 0.3.10 完整组件打包
+
+先用 Python 3.12 依次运行 `tools/setup_capture_component.py`、`tools/setup_visual_search_component.py --download-model`、`tools/setup_video_download_component.py`，再运行 `tools/bundle_components.py`。后者输出到全新的 `build/bundled-components`，不复制个人索引、截图、设置、下载历史或 Cookie。已有暂存目录时请另选 `--output` 或先人工核对，不会自动删除目录。
+
+Inno Setup 将组件装到当前用户 `LOCALAPPDATA/Prism/components`，模型可直接使用，运行时优先使用随包的 `python-base/python.exe`，不依赖开发者电脑路径。组件保留在独立进程，避免 Qt5 与 Qt6 互相污染。需要准备约 4 GB 安装空间。发布使用本地完成验证的完整安装包；GitHub 构建只允许手动启动，避免打标签时覆盖已验收产物。

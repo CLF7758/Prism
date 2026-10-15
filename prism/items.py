@@ -2184,6 +2184,7 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
     def create_copy(self):
         item = PrismVideoItem(self._video_url, self.filename,
                             self._video_blob)
+        item._video_source_path = getattr(self, '_video_source_path', None)
         item._is_reference = self._is_reference
         item._loop = self._loop
         item._muted = self._muted

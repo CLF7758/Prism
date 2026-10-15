@@ -1,4 +1,7 @@
-#define AppVersion "0.3.9"
+#define AppVersion "0.3.10"
+#ifndef ComponentRoot
+#define ComponentRoot "..\build\bundled-components"
+#endif
 [Setup]
 AppId={{39EAF694-2BE4-45C5-B565-559B153C0EC7}
 AppName=Prism
@@ -13,7 +16,7 @@ OutputDir=..\release
 OutputBaseFilename=Prism-Setup-{#AppVersion}-windows-x64
 SetupIconFile=..\prism\assets\logo.ico
 UninstallDisplayIcon={app}\Prism.exe
-Compression=lzma2
+Compression=lzma2/fast
 SolidCompression=yes
 WizardStyle=modern
 ChangesAssociations=yes
@@ -31,6 +34,7 @@ Source: "..\THIRD_PARTY.md"; DestDir: "{app}"
 Source: "licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\README.md"; DestDir: "{app}"
 Source: "..\README.en.md"; DestDir: "{app}"
+Source: "{#ComponentRoot}\*"; DestDir: "{localappdata}\Prism\components"; Excludes: "visual-search\index\openclip-2.26.1-vit-b32-openai-rgb-exif-v1\*,__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Icons]
 Name: "{group}\Prism"; Filename: "{app}\Prism.exe"
 Name: "{autodesktop}\Prism"; Filename: "{app}\Prism.exe"; Tasks: desktopicon

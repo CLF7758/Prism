@@ -116,11 +116,18 @@ class ActionsMixin:
         for i in range(10):
             action_id = f'recent_files_{i}'
             key = 0 if i == 9 else i + 1
-            action = Action(id=action_id,
-                            menu_id='_build_recent_files',
-                            text=_(f'File {i + 1}'),
-                            shortcuts=[f'Ctrl+{key}'])
-            actions[action_id] = action
+            # Definitions and keyboard settings outlive the dynamic menu rows.
+            # Recreating ten Actions here performs repeated settings I/O and
+            # also leaves their restore-defaults signal connections alive.
+            action = actions.get(action_id)
+            if action is None:
+                action = Action(id=action_id,
+                                menu_id='_build_recent_files',
+                                text=_(f'File {i + 1}'),
+                                shortcuts=[f'Ctrl+{key}'])
+                actions[action_id] = action
+            else:
+                action.text = _(f'File {i + 1}')
 
             if i < len(files):
                 filename = files[i]

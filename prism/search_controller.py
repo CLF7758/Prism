@@ -85,8 +85,9 @@ class SearchController(QtCore.QObject):
         self.filter_button.clicked.connect(self.filter_menu)
         options = QtWidgets.QHBoxLayout()
         options.setSpacing(4)
-        self.scope_combo.setParent(self.header)
-        self.filter_button.setParent(self.header)
+        options.addWidget(self.scope_combo, 1)
+        options.addWidget(self.filter_button)
+        outer.addLayout(options)
         self.scope_combo.hide()
         self.filter_button.hide()
         self.info = QtWidgets.QLabel()
@@ -127,6 +128,8 @@ class SearchController(QtCore.QObject):
             shortcut.activated.connect(callback)
             self.shortcuts.append(shortcut)
         self._detail_actions = None
+        from prism.visual_search_controller import VisualSearchController
+        self.visual_search = VisualSearchController(self)
 
     def focus(self):
         self.input.setFocus()
@@ -137,6 +140,10 @@ class SearchController(QtCore.QObject):
         self.focus()
 
     def schedule(self, *_args):
+        visual = getattr(self, 'visual_search', None)
+        if visual is not None and visual.active:
+            visual.schedule()
+            return
         self.generation += 1
         if not self.input.composing:
             self.timer.start()
@@ -172,6 +179,10 @@ class SearchController(QtCore.QObject):
             self.schedule()
 
     def submit(self):
+        visual = getattr(self, 'visual_search', None)
+        if visual is not None and visual.active:
+            visual.submit()
+            return
         self.timer.stop()
         if self.input.composing:
             return
@@ -464,6 +475,10 @@ class SearchController(QtCore.QObject):
         self.show_detail(self.page.selected_result())
 
     def exit(self, clear=True):
+        visual = getattr(self, 'visual_search', None)
+        if visual is not None and visual.active:
+            visual.exit()
+            return
         self.generation += 1
         self.snapshot_pending = None
         self.timer.stop()
@@ -500,6 +515,17 @@ class SearchController(QtCore.QObject):
             self.library._restore_tree_state(origin['tree'])
 
     def reset_project(self):
+        visual = getattr(self, 'visual_search', None)
+        if visual is not None and visual.active:
+            visual.cancel()
+            visual.active = False
+            visual.clear_action.setVisible(False)
+            self.input.setPlaceholderText(visual.previous_placeholder)
+            self.type_combo.setEnabled(True)
+            self.info.hide()
+            self.scope_combo.hide()
+            self.filter_button.hide()
+            self.window.asset_browser.visual_results = []
         self.generation += 1
         self.snapshot_pending = None
         self.timer.stop()
