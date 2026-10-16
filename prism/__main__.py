@@ -955,9 +955,9 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
         if capture is not None:
             capture.close()
         self._capture_hotkey.close()
-        downloads = getattr(self.view, '_video_download_dialog', None)
+        downloads = getattr(self.view, '_video_download_service', None)
         if downloads is not None:
-            downloads.service.close()
+            downloads.close()
         visual = getattr(getattr(self, 'search_controller', None), 'visual_search', None)
         if visual is not None:
             visual.service.close()

@@ -39,6 +39,14 @@ def _format_bytes(n):
     return f'{n:.1f} TB'
 
 
+class CenteredPreviewLabel(QtWidgets.QLabel):
+    resized = QtCore.pyqtSignal()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.resized.emit()
+
+
 class DetailPanel(QtWidgets.QWidget):
     """Right sidebar inspector panel."""
 
@@ -53,6 +61,7 @@ class DetailPanel(QtWidgets.QWidget):
         self._setup_ui()
         self.scene.selectionChanged.connect(self._on_selection_changed)
         self.scene.metadata_changed.connect(self._refresh)
+        self.scene.video_preview_changed.connect(self._video_preview_ready)
         # Synonyms, renames and nesting done in the manager change how a
         # tag is shown here, without touching the items.
         tag_signals().changed.connect(self._refresh)
@@ -108,8 +117,12 @@ class DetailPanel(QtWidgets.QWidget):
         scroll.setWidget(body)
 
         # Preview thumbnail
-        self._preview_label = QtWidgets.QLabel()
+        self._preview_label = CenteredPreviewLabel()
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview_label.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self._preview_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
+        self._preview_label.setMinimumWidth(0)
+        self._preview_label.resized.connect(self._resize_preview)
         self._preview_label.setFixedHeight(176)
         self._preview_label.setObjectName('inspectorPreview')
         self._body_layout.addWidget(self._preview_label)
@@ -277,6 +290,8 @@ class DetailPanel(QtWidgets.QWidget):
 
         self._path_label = components.RoleLabel(role='inspectorValue')
         self._path_label.setWordWrap(True)
+        self._path_label.setMinimumWidth(0)
+        self._path_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
         t5 = components.RoleLabel('\u8def\u5f84', role='secondary')
         self._info_grid.addRow(t5, self._path_label)
 
@@ -749,6 +764,22 @@ class DetailPanel(QtWidgets.QWidget):
                 return preview
         return getattr(item, 'pixmap', lambda: None)()
 
+    def _resize_preview(self):
+        item = self._item
+        if item is None:
+            return
+        pm = self._inspection_pixmap(item)
+        if pm is not None and not pm.isNull():
+            self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._preview_label.setPixmap(pm.scaled(
+                max(1, self._preview_label.contentsRect().width()-12), 170,
+                Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
+    def _video_preview_ready(self, item):
+        if self._item is item:
+            self._resize_preview()
+            self._dims_label.setText(f'{item.width:.0f} × {item.height:.0f}')
+
     @measured('inspector.refresh', minimum_ms=32)
     def _refresh_item(self, item):
         item = logical_item(item)
@@ -772,11 +803,7 @@ class DetailPanel(QtWidgets.QWidget):
         # Preview
         pm = self._inspection_pixmap(item)
         if pm and not pm.isNull():
-            scaled = pm.scaled(
-                max(120, self.width() - 32), 170,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation)
-            self._preview_label.setPixmap(scaled)
+            self._resize_preview()
         else:
             txt = '\u89c6\u9891' if isinstance(item, PrismVideoItem) else '\u65e0\u9884\u89c8'
             self._preview_label.setText(txt)
@@ -835,7 +862,7 @@ class DetailPanel(QtWidgets.QWidget):
             self._type_label.setText('\u89c6\u9891')
             if pm and not pm.isNull():
                 self._dims_label.setText(
-                    f'{pm.width()} \u00d7 {pm.height()}')
+                    f'{item.width:.0f} \u00d7 {item.height:.0f}')
             else:
                 self._dims_label.setText('\u672a\u77e5')
         else:

@@ -3,8 +3,8 @@
 <p align="center">把参考图放在一起看，整理素材，记录创作思路。</p>
 
 <p align="center">
-<a href="https://github.com/CLF7758/Prism/releases/download/v0.3.10/Prism-Setup-0.3.10-windows-x64.exe">下载 Windows 安装包</a> ·
-<a href="https://github.com/CLF7758/Prism/releases/tag/v0.3.10">版本说明和源码</a> ·
+<a href="https://github.com/CLF7758/Prism/releases/download/v0.3.11/Prism-Setup-0.3.11-windows-x64.exe">下载 Windows 安装包</a> ·
+<a href="https://github.com/CLF7758/Prism/releases/tag/v0.3.11">版本说明和源码</a> ·
 <a href="README.en.md">English</a>
 </p>
 
@@ -14,7 +14,7 @@ Prism 是给绘画、游戏美术、建模和设计用的参考图与素材管�
 
 ## 安装后怎么用
 
-1. 下载并运行 [Windows x64 安装包](https://github.com/CLF7758/Prism/releases/download/v0.3.10/Prism-Setup-0.3.10-windows-x64.exe)。无需另外安装 Python、截图组件或搜索模型。
+1. 下载并运行 [Windows x64 安装包](https://github.com/CLF7758/Prism/releases/download/v0.3.11/Prism-Setup-0.3.11-windows-x64.exe)。无需另外安装 Python、截图组件或搜索模型。
 2. 打开 Prism，新建画布，把参考图片拖进去。框选图片后可以移动、缩放、自动排列。
 3. 按 `Ctrl+S` 保存为 `.prism` 项目，下次打开接着整理。
 
@@ -46,9 +46,23 @@ Prism 是给绘画、游戏美术、建模和设计用的参考图与素材管�
 
 ![重复图片检查](docs/images/release-duplicates.png)
 
+### 在画布里下载视频和图文
+
+在想放素材的位置右键，选择「下载视频」。粘贴网址或平台复制的整段分享文字，按回车开始。任务会显示进度，拖动标题可以移动节点；下载时可以继续整理图片、切换画布。下载完成后，素材进入任务最初所在的画布，节点自动消失。
+
+支持抖音、小红书和 B站的专用开源下载组件，其他站点使用 yt-dlp。图文按图片处理，附带的 Live Photo 保留为单独视频，多张素材自动排列。导入和撤销以整组进行，不会把图文误当成只有封面的 MP4。
+
+![Prism 画布下载节点，标题可拖动](docs/images/release-download.png)
+
+下载保留平台返回的文件，不二次压缩。B站如果当前会话拿不到原始分辨率，会显示可下载的实际尺寸，让你选择继续下载当前画质或提供已有会话文件；默认不会偷偷换成低清。平台权限、下架、地区限制或风控仍可能导致某些链接失败，具体实测范围见[本版说明](docs/RELEASE_0.3.11.md)。安装包已包含所需组件，不需要额外安装下载器。
+
 ### 从视频里挑参考帧
 
-导入本地视频，预览并提取需要的画面。提取出的图片会自动排列，方便比较镜头、色彩和构图。
+导入本地视频，在画布上播放或提取需要的画面。未播放时显示首帧，右侧素材预览也有封面，并居中显示。提取出的图片会自动排列，方便比较镜头、色彩和构图。
+
+### 直接裁切图片，随时撤销
+
+选中图片，右键选择「裁切图片」。拖动四角或四边中点的圆点调整范围，回车确认，Esc 取消。裁切保留原文件，可以撤销、恢复；不会用缩略图替换原图。
 
 ### 在同一个项目里写笔记、画脑图
 
@@ -57,6 +71,10 @@ Prism 是给绘画、游戏美术、建模和设计用的参考图与素材管�
 ![项目文档](docs/images/release-document.png)
 
 ![思维导图](docs/images/release-mindmap.png)
+
+### 把画布、脑图和文档导出为 PDF
+
+打开原有的导出窗口，在文件格式下拉框里选择 PDF。画布按当前内容范围输出，脑图导出完整结构，文档保留正文和排版；也可以继续选择各自已有的图片、文档或脑图格式。
 
 还支持 GLB / glTF 模型预览，以及通过 [浏览器扩展](browser-extension/README.md) 收集网页图片。
 
@@ -68,7 +86,7 @@ Prism 是给绘画、游戏美术、建模和设计用的参考图与素材管�
 
 ## 源码与开发
 
-[下载对应版本源码](https://github.com/CLF7758/Prism/releases/download/v0.3.10/Prism-0.3.10-source.zip) · [更新说明](docs/RELEASE_0.3.10.md) · [Windows 打包说明](packaging/README.md)
+[下载对应版本源码](https://github.com/CLF7758/Prism/releases/download/v0.3.11/Prism-0.3.11-source.zip) · [更新说明](docs/RELEASE_0.3.11.md) · [Windows 打包说明](packaging/README.md)
 
 源码运行需要 Python 3.12：
 
@@ -84,3 +102,18 @@ python -m venv .venv
 ## 开源许可
 
 本项目基于 Rebecca Breu 的开源参考图工具扩展，按 [GPL-3.0-or-later](LICENSE) 发布。截图接入 ScreenPinKit，本地以图搜图使用 OpenCLIP、FAISS 和 OpenCV。原有版权与第三方声明保留，详见 [NOTICE](NOTICE)、[THIRD_PARTY.md](THIRD_PARTY.md) 和安装目录中的许可证。仓库现有演示图片继续沿用，未在本版更换。
+
+## 常用操作
+
+| 要做的事 | 从哪里开始 |
+| --- | --- |
+| 收集参考图 | 拖入文件，或使用浏览器扩展收集网页图片 |
+| 截图 | `Ctrl+Alt+A`，截图后送入画布或钉在桌面 |
+| 桌面参考图 | 选中图片后点画布工具栏「贴图」，可调整透明度 |
+| 按图寻找参考 | 左侧搜索框右端的图片图标，选择参考图 |
+| 下载视频／图文 | 画布空白处右键 → 下载视频 → 粘贴分享链接 |
+| 裁切图片 | 选中图片右键 → 裁切图片 → 拖动圆点 → 回车 |
+| 输出 PDF | 导出窗口 → 文件格式 → PDF |
+| 保存工程 | `Ctrl+S`，保存为本地 `.prism` 文件 |
+
+本页截图由最新版 Prism 在 Windows 原生窗口实际运行并截取，使用程序生成的演示素材，未上传用户个人工程或下载的第三方作品。

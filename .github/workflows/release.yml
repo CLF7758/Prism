@@ -28,6 +28,7 @@ jobs:
           python tools/setup_capture_component.py
           python tools/setup_visual_search_component.py --download-model
           python tools/setup_video_download_component.py
+          python tools/setup_platform_video_components.py
           python tools/bundle_components.py
           python -m PyInstaller --noconfirm --clean Prism.spec
           $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"

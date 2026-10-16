@@ -11,6 +11,21 @@ _directory = None
 _lock = threading.Lock()
 
 
+def reserve_file(suffix):
+    """Reserve an original path; a streaming worker writes the snapshot.
+
+    The main process owns the directory lifetime, so worker exit cannot remove
+    the original used by a canvas item and its undo history.
+    """
+    global _directory
+    if suffix not in ('.mp4', '.mkv', '.webm', '.mov'):
+        raise ValueError('Unsupported retained media suffix')
+    with _lock:
+        if _directory is None:
+            _directory = tempfile.TemporaryDirectory(prefix='prism-originals-')
+        return str(Path(_directory.name)/(uuid.uuid4().hex+suffix))
+
+
 def retain_file(filename):
     global _directory
     with _lock:

@@ -10,9 +10,9 @@ import shutil
 import sys
 
 
-def copy_tree(source, target):
+def copy_tree(source, target, exclude=()):
     shutil.copytree(source, target, dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.git', 'direct_url.json'))
+        ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.git', 'direct_url.json', *exclude))
 
 
 def main():
@@ -35,7 +35,7 @@ def main():
     copy_tree(base/'DLLs', target/'DLLs')
     shutil.copytree(base/'Lib', target/'Lib',
         ignore=shutil.ignore_patterns('site-packages', '__pycache__', '*.pyc', 'test', 'tests', 'idlelib', 'tkinter', 'ensurepip'))
-    for name in ('capture', 'visual-search', 'video-download'):
+    for name in ('capture', 'visual-search', 'video-download', 'video-f2', 'video-xhs', 'video-bili'):
         src = args.components/name
         dst = out/name
         (dst/'runtime/Scripts').mkdir(parents=True)
@@ -62,8 +62,12 @@ def main():
                 assert hashlib.file_digest(f,'sha256').hexdigest() == '40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af'
             (dst/'index/models').mkdir(parents=True)
             shutil.copy2(weight,dst/'index/models'/weight.name)
-        else:
+        elif name == 'video-download':
             copy_tree(src/'bin',dst/'bin')
+        elif (src/'upstream-source').is_dir():
+            copy_tree(src/'upstream-source', dst/'upstream-source', exclude=('Volume','Temp','.env','*.log','cookies.txt'))
+        if name == 'video-xhs':
+            copy_tree(src/'guest-source', dst/'guest-source')
         print('Staged '+name, flush=True)
     print('Bundled bytes: '+str(sum(p.stat().st_size for p in out.rglob('*') if p.is_file())),flush=True)
 

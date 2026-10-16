@@ -4,14 +4,25 @@ import json
 import os
 from pathlib import Path
 import shutil
+import time
 import uuid
 from PyQt6 import QtCore
 from prism.component_runtime import invocation
 from prism.performance_trace import record
+from prism.components.download_result import validate_assets, cleanup_assets
 
 
 def component_directory():
     return Path(os.environ.get('LOCALAPPDATA', Path.home()))/'Prism/components/video-download'
+
+
+def service_for(view):
+    result = getattr(view, '_video_download_service', None)
+    if result is None:
+        result = view._video_download_service = VideoDownloadService(view)
+        from PyQt6 import QtWidgets
+        QtWidgets.QApplication.instance().aboutToQuit.connect(result.close)
+    return result
 
 
 class VideoDownloadService(QtCore.QObject):
@@ -26,28 +37,52 @@ class VideoDownloadService(QtCore.QObject):
         self.running = set()
         self.completed = deque()
         self.closed = False
+        self.watchdog = QtCore.QTimer(self)
+        self.watchdog.setInterval(5000)
+        self.watchdog.timeout.connect(self._check_stalled)
 
-    def submit(self, url, directory, command='download', format=None, cookie_file=None, context=None, cookie_browser=None):
-        from prism.video_urls import normalize_share_url
+    def submit(self, url, directory, command='download', format=None, cookie_file=None, context=None, cookie_browser=None, retain_original=False, quality_policy='original', minimum_dimensions=None):
+        if self.closed:
+            raise ValueError('下载服务已关闭')
+        if command not in ('download', 'inspect'):
+            raise ValueError('未知下载操作')
+        if quality_policy not in ('original', 'best_available'):
+            raise ValueError('未知的视频画质选择')
+        from prism.video_urls import normalize_share_url, platform_for_url
         url = normalize_share_url(url)
         if cookie_browser not in (None, 'chrome', 'edge', 'firefox'):
             raise ValueError('不支持的浏览器登录来源')
         if len(self.queue)+len(self.running) >= 20:
             raise ValueError('下载等待队列已满（最多 20 项）')
         root = component_directory()
+        platform = platform_for_url(url)
+        component = {'douyin': 'video-f2', 'xiaohongshu': 'video-xhs', 'bilibili': 'video-bili'}.get(platform)
+        platform_root = root.parent/component if component else root
+        if component and not (platform_root/'runtime/pyvenv.cfg').is_file():
+            raise OSError('此平台下载组件尚未安装，请运行 tools/setup_platform_video_components.py')
         if not (root/'runtime/Scripts/python.exe').exists():
             raise OSError('视频下载组件未安装，请运行 tools/setup_video_download_component.py')
+        # Fail before allocating a job if an incomplete install cannot launch.
+        try:
+            invocation(platform_root/'runtime', Path(__file__).parent/'components/platform_video_worker.py')
+        except (KeyError, ValueError) as error:
+            raise OSError('下载组件运行环境不完整，请重新安装组件') from error
         identifier = uuid.uuid4().hex
         work = root/'jobs'/identifier
         work.mkdir(parents=True)
         data = dict(command=command, url=url, directory=str(Path(directory).resolve()/identifier),
             job_directory=str(work), format=format, cookie_file=cookie_file,
-            cookie_browser=cookie_browser,
-            ffmpeg=str(root/'bin'), node=shutil.which('node'))
+            cookie_browser=cookie_browser, quality_policy=quality_policy, minimum_dimensions=minimum_dimensions,
+            ffmpeg=str(root/'bin'), node=shutil.which('node'), platform=platform,
+            platform_root=str(platform_root))
+        if retain_original and command == 'download':
+            from prism.source_store import reserve_file
+            data['original_destination'] = reserve_file('.mp4')
         manifest = work/'request.json'
         manifest.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
         self.jobs[identifier] = dict(data=data, context=context, manifest=manifest,
-                                     buffer=bytearray(), result=None, cancelled=False)
+                                     buffer=bytearray(), result=None, cancelled=False,
+                                     activity=time.monotonic())
         self.queue.append(identifier)
         self._pump()
         return identifier
@@ -57,8 +92,9 @@ class VideoDownloadService(QtCore.QObject):
             identifier = self.queue.popleft()
             job = self.jobs[identifier]
             process = job['process'] = QtCore.QProcess(self)
-            program, arguments = invocation(component_directory()/'runtime',
-                Path(__file__).parent/'components/video_download_worker.py', [job['manifest']])
+            script = 'video_download_worker.py' if job['data']['platform'] == 'ytdlp' else 'platform_video_worker.py'
+            program, arguments = invocation(Path(job['data']['platform_root'])/'runtime',
+                Path(__file__).parent/'components'/script, [job['manifest']])
             process.setProgram(program)
             process.setArguments(arguments)
             environment = QtCore.QProcessEnvironment.systemEnvironment()
@@ -70,6 +106,8 @@ class VideoDownloadService(QtCore.QObject):
             process.finished.connect(lambda code, status, key=identifier: self._ended(key, code))
             process.errorOccurred.connect(lambda error, key=identifier: self._error(key, error))
             self.running.add(identifier)
+            job['activity'] = time.monotonic()
+            self.watchdog.start()
             process.start()
             self.progress.emit(identifier, dict(phase='starting'))
             record('download.start', request_id=identifier, command=job['data']['command'])
@@ -85,12 +123,20 @@ class VideoDownloadService(QtCore.QObject):
             line, _, job['buffer'] = job['buffer'].partition(b'\n')
             try:
                 value = json.loads(line)
+                job['activity'] = time.monotonic()
                 event = value['event']
                 if event in ('completed', 'inspected', 'failed'):
+                    if event == 'completed' and 'assets' in value:
+                        validate_assets(job['data'], value['assets'])
                     if event == 'completed':
                         path = Path(value['path']).resolve()
                         if not path.is_relative_to(Path(job['data']['directory'])) or not path.is_file():
                             raise ValueError('无效的视频结果路径')
+                    expected = job['data'].get('original_destination')
+                    if event == 'completed' and expected and 'assets' not in value:
+                        original = Path(value.get('original_path', '')).resolve()
+                        if original != Path(expected).resolve() or not original.is_file():
+                            raise ValueError('视频原件快照无效')
                     job['result'] = value
                 else:
                     self.progress.emit(identifier, value)
@@ -106,6 +152,14 @@ class VideoDownloadService(QtCore.QObject):
         result = job['result'] or dict(event='failed', error='下载任务意外中断')
         if job['cancelled']:
             result = dict(event='cancelled')
+        original = job['data'].get('original_destination')
+        if original and result['event'] != 'completed':
+            cleanup_assets(job['data'])
+            for path in (Path(original), Path(original+'.part')):
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
         (job['manifest'].parent/'private-cookies.txt').unlink(missing_ok=True)
         job['manifest'].unlink(missing_ok=True)
         try:
@@ -113,6 +167,8 @@ class VideoDownloadService(QtCore.QObject):
         except OSError:
             pass
         self.running.discard(identifier)
+        if not self.running:
+            self.watchdog.stop()
         job['process'].deleteLater()
         job.pop('process', None)
         job.pop('buffer', None)
@@ -132,6 +188,13 @@ class VideoDownloadService(QtCore.QObject):
         if error == QtCore.QProcess.ProcessError.FailedToStart:
             self.jobs[identifier]['result'] = dict(event='failed', error='无法启动下载组件')
             self._ended(identifier, -1)
+
+    def _check_stalled(self):
+        for identifier in list(self.running):
+            job = self.jobs[identifier]
+            if time.monotonic()-job['activity'] > 300:
+                job['result'] = dict(event='failed', error='平台超过 5 分钟没有响应，下载已停止，可以重试')
+                job['process'].kill()
 
     def cancel(self, identifier):
         job = self.jobs.get(identifier)

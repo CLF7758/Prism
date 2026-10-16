@@ -50,3 +50,13 @@ requirements are tracked in docs/RELEASE_AUDIT.md.
 - CPython 3.12 is bundled under the Python Software Foundation license, retained in the portable runtime.
 
 Repository sources: https://github.com/InterwovenCode/ScreenPinKit ; https://github.com/mlfoundations/open_clip ; https://github.com/facebookresearch/faiss ; https://github.com/openai/CLIP ; https://github.com/yt-dlp/yt-dlp .
+
+## Platform download adapters (source integration after 0.3.10)
+
+- F2, https://github.com/Johnserf-Seed/f2, Apache-2.0, revision `f6be8c0ffba9a127075bbeafe4838716650b6325`. Its URL recognition, visitor configuration, API signing and video selector are reused. curl_cffi 0.16.3 (MIT) supplies the HTTPS transport. Anonymous visitor tokens remain in the worker's memory.
+- XHS-Downloader 2.8, https://github.com/JoeanAmier/XHS-Downloader, GPL-3.0, revision `3261312721f0b37c705ba6515885bc7f34349f2f`. Upstream extraction/download/progress callbacks are reused. The staged source enables TLS verification and preserves the source video type when multiple cover frames are present; `tools/setup_platform_video_components.py` records and applies those changes. The download buffer is capped at 1 MiB by the adapter.
+- bilibili-api-python 17.4.2, https://github.com/Nemo2011/bilibili-api, GPL-3.0-or-later. Metadata and stream selection use its API. aiohttp downloads the selected streams, and the existing bundled FFmpeg performs stream-copy muxing.
+- Each platform runs in its own isolated Python runtime. Component manifests, complete upstream source for F2/XHS and dependency license files are included by the component staging script. No user cookies/settings/downloads are included. These changes have not replaced the published 0.3.10 installer.
+- Xhshow, https://github.com/Cloxl/xhshow, MIT, revision `b242a84f9c5a6a971bc4c90c63ad43345a4bf8a1`, supplies request signing and device identifiers for normal anonymous-session activation. PyCryptodome 3.23.0 supplies its cryptographic primitives. Both are isolated in `video-xhs`; pinned source and license are included in the component bundle. Temporary guest sessions remain in the worker's memory. Prism does not read Chrome credentials or solve verification challenges for this flow.
+
+PDF output uses the existing Qt PDF writer and Qt WebEngine print backend. Mind map layout still comes from the bundled MIT-licensed simple-mind-map library; Prism exports its complete rendered SVG rather than implementing another layout engine.

@@ -41,6 +41,7 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
     cursor_changed = QtCore.pyqtSignal(QtGui.QCursor)
     cursor_cleared = QtCore.pyqtSignal()
     metadata_changed = QtCore.pyqtSignal()
+    video_preview_changed = QtCore.pyqtSignal(object)
     assets_changed = QtCore.pyqtSignal()
     filter_changed = QtCore.pyqtSignal()
     #: 素材被软删除 / 从回收站恢复后发出，让回收站面板和左栏计数刷新。
@@ -472,6 +473,10 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         return False
 
     def mousePressEvent(self, event):
+        hit = self.itemAt(event.scenePos(), self.views()[0].transform())
+        if isinstance(hit, QtWidgets.QGraphicsProxyWidget):
+            super().mousePressEvent(event)
+            return
         if event.button() == Qt.MouseButton.LeftButton and self._viewport_items.records:
             hit = self.itemAt(event.scenePos(), self.views()[0].transform())
             if not event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier):
@@ -516,6 +521,10 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event):
+        hit = self.itemAt(event.scenePos(), self.views()[0].transform())
+        if isinstance(hit, QtWidgets.QGraphicsProxyWidget):
+            super().mouseDoubleClickEvent(event)
+            return
         self.cancel_active_modes()
         item = self.itemAt(event.scenePos(), self.views()[0].transform())
         if getattr(item, 'TYPE', '') == 'group_frame':

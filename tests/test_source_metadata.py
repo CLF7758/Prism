@@ -169,7 +169,7 @@ def test_prism_does_not_index_exif_or_icc(qapp):
     item = item_from_bytes(jpeg_with_exif())
     saved = item.get_metadata_save_data()
     assert set(saved) == {'categories', 'tags', 'rating', 'notes', 'title',
-                          'canvasId', 'groupId', 'groupNote'}
+                          'canvasId', 'groupId', 'groupNote', 'lastUsed'}
     for name in ('exif', 'icc', 'iccProfile', 'orientation', 'capturedAt'):
         assert name not in saved, (
             f'{name} 居然在保存的元数据里 —— 如果确实加了，'

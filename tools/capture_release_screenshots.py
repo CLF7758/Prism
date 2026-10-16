@@ -5,7 +5,11 @@ import tempfile
 import time
 from pathlib import Path
 
-os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+native = '--native' in sys.argv
+if not native:
+    os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+else:
+    os.environ.pop('QT_QPA_PLATFORM', None)
 os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu'
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root))
@@ -115,6 +119,12 @@ def main():
     shot('release-duplicates.png', dialog)
     dialog.close()
     w.view.undo_stack.setClean()
+    if native:
+        w.open_workspace_page('canvas', canvas['id'])
+        w.setWindowTitle('Prism 发布验收 · 演示工程')
+        pump(app, 2)
+        print('Native review window ready', flush=True)
+        app.exec()
     w.browser_capture.stop()
     os._exit(0)
 

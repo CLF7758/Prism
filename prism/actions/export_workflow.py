@@ -20,19 +20,41 @@ from prism.utils import get_file_extension_from_format
 logger = logging.getLogger(__name__)
 
 
+def selected_export_path(path, chosen_filter, extensions):
+    """The format dropdown wins over a pre-filled default file suffix."""
+    import re
+    matches = re.findall(r'\*\.(\w+)', chosen_filter or '')
+    chosen = matches[0].lower() if matches else None
+    stem, suffix = os.path.splitext(path)
+    old = suffix.lstrip('.').lower()
+    if len(matches) > 1 and old in extensions:
+        return path
+    if chosen in extensions:
+        if old in extensions and old != chosen:
+            return stem+'.'+chosen
+        if not suffix:
+            return path+'.'+chosen
+        if old not in extensions:
+            return path+'.'+chosen
+    return path
+
+
 def export_scene(view):
     """Ask for an output file and export the current scene asynchronously."""
     directory = os.path.dirname(view.filename) if view.filename else None
     filename, formatstr = QtWidgets.QFileDialog.getSaveFileName(
         parent=view,
-        caption=_('Export Scene to Image'),
+        caption='导出当前画布',
         directory=directory,
         filter=';;'.join(('Image Files (*.png *.jpg *.jpeg *.svg)',
                           'PNG (*.png)',
                           'JPEG (*.jpg *.jpeg)',
-                          'SVG (*.svg)')))
+                          'SVG (*.svg)',
+                          'PDF (*.pdf)')))
     if not filename:
         return
+
+    filename = selected_export_path(filename, formatstr, ('png', 'jpg', 'jpeg', 'svg', 'pdf'))
 
     _name, extension = os.path.splitext(filename)
     if not extension:
@@ -40,6 +62,16 @@ def export_scene(view):
         filename = f'{filename}.{extension}'
     extension = extension.lower()
     logger.debug('Got export filename %s', filename)
+
+    if extension.lstrip('.') == 'pdf':
+        from prism.fileio.pdf_export import export_scene_pdf
+        try:
+            export_scene_pdf(view.scene, filename)
+        except (OSError, ValueError) as error:
+            widgets.PrismNotification(view, str(error))
+        else:
+            widgets.PrismNotification(view, 'PDF 已导出：'+filename)
+        return
 
     exporter = exporter_registry[extension](view.scene)
     if not exporter.get_user_input(view):
@@ -71,6 +103,8 @@ def export_document(view):
         view, _('Export Current Document'), base + '.docx', filter_string())
     if not target:
         return
+    from prism.fileio.document_export import EXPORT_FORMATS
+    target = selected_export_path(target, chosen, tuple(e.extension.lstrip('.') for e in EXPORT_FORMATS))
     entry = writer_for(target, chosen)
     target = with_extension(target, entry)
     try:
@@ -101,18 +135,24 @@ def export_mindmap_action(view):
         return
     options = (
         (_('XMind'), 'xmind'), (_('FreeMind'), 'mm'), (_('JSON'), 'json'),
-        (_('Markdown'), 'md'), (_('PNG image'), 'png'))
+        (_('Markdown'), 'md'), (_('PNG image'), 'png'), ('PDF', 'pdf'))
     pattern = ';;'.join(f'{label} (*.{ext})' for label, ext in options)
     target, chosen = QtWidgets.QFileDialog.getSaveFileName(
         view, _('Export mind map'), suggested_filename(tree, 'xmind'), pattern)
     if not target:
         return
+    target = selected_export_path(target, chosen, (*SUPPORTED_FORMATS, 'pdf'))
     extension = os.path.splitext(target)[1].lower().lstrip('.')
-    if extension not in SUPPORTED_FORMATS:
+    if extension not in (*SUPPORTED_FORMATS, 'pdf'):
         extension = next((ext for _label, ext in options
                           if f'(*.{ext})' in (chosen or '')), 'xmind')
         target = f'{target}.{extension}'
     try:
+        if extension == 'pdf':
+            from prism.fileio.pdf_export import export_mindmap_pdf
+            export_mindmap_pdf(panel, target, lambda error: widgets.PrismNotification(
+                view, error or ('PDF 已导出：'+target)))
+            return
         if extension == 'png':
             panel.export_snapshot(target)
         else:

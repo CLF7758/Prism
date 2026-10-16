@@ -7,6 +7,10 @@ import sys
 import subprocess
 import time
 from urllib.parse import urlsplit, parse_qs
+try:
+    from .download_result import complete
+except ImportError:
+    from download_result import complete
 
 
 def safe_error(message):
@@ -167,8 +171,7 @@ def run(request):
             streams = json.loads(probe.stdout or '{}').get('streams', [])
             if probe.returncode or not any(s.get('codec_type') == 'video' for s in streams):
                 raise ValueError('下载文件未通过视频完整性检查，请保留文件后重试')
-            emit('completed', path=str(path), bytes=path.stat().st_size,
-                 title=info.get('title', ''), platform=info.get('extractor_key', ''))
+            complete(request, path, emit, title=info.get('title', ''), platform=info.get('extractor_key', ''))
     finally:
         private_cookie.unlink(missing_ok=True)
 

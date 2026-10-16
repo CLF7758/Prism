@@ -2,16 +2,16 @@
 from pathlib import Path
 from types import SimpleNamespace
 from PyQt6 import QtCore, QtWidgets
-from prism.video_download_service import VideoDownloadService
+from prism.video_download_service import service_for
 
 
 class VideoDownloadDialog(QtWidgets.QDialog):
     def __init__(self, view):
         super().__init__(view.window())
         self.view = view
-        self.setWindowTitle('网站视频下载 · yt-dlp')
+        self.setWindowTitle('网站视频下载')
         self.resize(720, 480)
-        self.service = VideoDownloadService(self)
+        self.service = service_for(view)
         self.rows = {}
         layout = QtWidgets.QVBoxLayout(self)
         self.url = QtWidgets.QLineEdit()
@@ -33,11 +33,15 @@ class VideoDownloadDialog(QtWidgets.QDialog):
         for label, value in [('最佳画质', 'bv*+ba/b'), ('最高 1080p', 'bv*[height<=1080]+ba/b[height<=1080]'), ('最高 720p', 'bv*[height<=720]+ba/b[height<=720]')]:
             self.format.addItem(label, value)
         form.addRow('画质', self.format)
+        self.format.clear()
+        self.format.addItem('原画质（最高可用，不压缩）', 'bv*+ba/b')
         layout.addLayout(form)
         buttons = QtWidgets.QHBoxLayout()
         for label, command in [('解析链接', 'inspect'), ('加入下载', 'download')]:
             button = QtWidgets.QPushButton(label)
             button.clicked.connect(lambda checked=False, c=command: self.submit(c))
+            if command == 'inspect':
+                self.inspect_button = button
             buttons.addWidget(button)
         layout.addLayout(buttons)
         self.list = QtWidgets.QListWidget()
@@ -54,6 +58,28 @@ class VideoDownloadDialog(QtWidgets.QDialog):
         self.service.progress.connect(self.progress)
         self.service.finished.connect(self.finished)
         self.service.failed.connect(self.failed)
+        self.url.setPlaceholderText('粘贴视频链接或分享文字；自动选择对应网站的下载工具')
+        self.url.textChanged.connect(self.update_platform)
+        self.update_platform()
+
+    def update_platform(self):
+        from prism.video_urls import normalize_share_url, platform_for_url
+        try:
+            platform = platform_for_url(normalize_share_url(self.url.text()))
+        except ValueError:
+            platform = 'ytdlp'
+        self.inspect_button.setEnabled(platform == 'ytdlp')
+        self.format.setEnabled(platform in ('ytdlp', 'bilibili'))
+        self.cookie.setEnabled(platform in ('ytdlp', 'xiaohongshu', 'bilibili'))
+        self.browser.setEnabled(platform == 'ytdlp')
+        self.format.clear()
+        self.format.addItem('原分辨率（不自动降清晰度）' if platform == 'bilibili' else '最高可用画质（不压缩）', 'bv*+ba/b')
+        if platform == 'bilibili':
+            self.format.addItem('当前会话最高可用（可能低于原分辨率）', 'best_available')
+        if platform != 'ytdlp':
+            self.status.setText('使用平台专用开源工具，以匿名会话下载；画质受平台可用权限限制。最多同时下载 2 项。')
+        else:
+            self.status.setText('其他网站由 yt-dlp 处理；最多同时下载 2 项，不自动读取浏览器登录信息。')
 
     def submit(self, command):
         from prism.actions.capture_workflow import target
@@ -64,7 +90,8 @@ class VideoDownloadDialog(QtWidgets.QDialog):
         try:
             identifier = self.service.submit(url, self.directory.text(), command,
                 self.format.currentData(), self.cookie.text().strip() or None, context,
-                cookie_browser=self.browser.currentData())
+                cookie_browser=self.browser.currentData() if self.browser.isEnabled() else None,
+                quality_policy='best_available' if self.format.currentData() == 'best_available' else 'original')
         except (OSError, ValueError) as error:
             self.status.setText(str(error))
             return
@@ -79,6 +106,10 @@ class VideoDownloadDialog(QtWidgets.QDialog):
     def progress(self, identifier, data):
         phase = data.get('phase', data.get('event', '处理中'))
         text = {'starting': '正在启动', 'inspect': '正在解析', 'download': '正在下载', 'postprocess': '正在合并或处理'}.get(phase, phase)
+        if phase == 'store':
+            text = '正在保留视频原件'
+        if phase == 'session':
+            text = '正在连接视频平台'
         if data.get('total'):
             text += f" {100*data.get('downloaded', 0)/data['total']:.1f}%"
         if identifier in self.rows:
@@ -127,14 +158,21 @@ class VideoDownloadDialog(QtWidgets.QDialog):
     def import_video(self):
         result = self.selected_result()
         if result and self.destination(result):
-            self.view.do_insert_images([result['path']], force_video_embed=True)
+            assets = result.get('assets') or [result]
+            self.view.do_insert_images([asset.get('original_path') or asset['path'] for asset in assets], force_video_embed=True)
 
     def extract(self):
         result = self.selected_result()
         if not result or not self.destination(result):
             return
+        assets = result.get('assets') or [dict(result, asset_type='video')]
+        video = next((asset for asset in assets if asset.get('asset_type') == 'video'), None)
+        if video is None:
+            self.status.setText('该图文只有图片，可以直接导入画布，无需提取视频帧。')
+            return
         from prism.widgets.extract_frames import ExtractFramesDialog
-        item = SimpleNamespace(_video_url=QtCore.QUrl.fromLocalFile(result['path']), filename=result['path'])
+        path = video.get('original_path') or video['path']
+        item = SimpleNamespace(_video_url=QtCore.QUrl.fromLocalFile(path), filename=path)
         dialog = ExtractFramesDialog(self.view, item, self)
         if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted and dialog.images:
             if self.destination(result):

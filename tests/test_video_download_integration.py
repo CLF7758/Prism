@@ -88,11 +88,15 @@ def test_actual_ytdlp_download_and_probe(view, tmp_path, qtbot, monkeypatch):
     service.finished.connect(lambda key, data: results.append(data))
     service.failed.connect(lambda key, text: errors.append(text))
     try:
-        service.submit(f'http://127.0.0.1:{server.server_port}/sample.mp4', tmp_path/'downloads')
+        service.submit(f'http://127.0.0.1:{server.server_port}/sample.mp4', tmp_path/'downloads', retain_original=True)
         qtbot.waitUntil(lambda: bool(results or errors), timeout=60000)
         assert not errors, errors
         assert results[0]['event'] == 'completed'
         assert Path(results[0]['path']).read_bytes() == clip.read_bytes()
+        retained = Path(results[0]['original_path'])
+        assert retained.read_bytes() == clip.read_bytes()
+        Path(results[0]['path']).unlink()
+        assert retained.read_bytes() == clip.read_bytes()
     finally:
         service.close()
         server.shutdown()

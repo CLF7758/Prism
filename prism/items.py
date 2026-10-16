@@ -1135,9 +1135,7 @@ class PrismPixmapItem(ImageSourceMixin, ImageCropMixin, PrismItemMixin, QtWidget
             painter.drawPath(path)
             painter.setBrush(QtGui.QBrush())
 
-            for handle in self.crop_handles():
-                self.draw_crop_rect(painter, handle())
-            self.draw_crop_rect(painter, self.crop_temp)
+            self.draw_crop_controls(painter)
         else:
             pm, source = self._pixmap_for_painting(painter, widget)
             if not pm.isNull():
@@ -1869,6 +1867,8 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         self._thumb_audio = None
         self._thumb_sink = None
         self._current_frame = None
+        self._video_dimensions = None
+        self._thumbnail_ready = False
 
         self._generate_placeholder()
         # Thumbnail capture deferred to itemChange(ItemSceneHasChanged)
@@ -1900,12 +1900,29 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         self.setPixmap(pm)
 
     def _capture_thumbnail(self):
+        if is_deleted(self):
+            return
+        self._thumbnail_retry_scheduled = False
+        from prism.video_thumbnails import request
+        if not request(self):
+            self._thumbnail_request_key = 'qtmultimedia'
+            self._capture_thumbnail_qt()
+
+    def bounding_rect_unselected(self):
+        size = getattr(self, '_video_dimensions', None)
+        if size is not None:
+            return QtCore.QRectF(0, 0, size.width(), size.height())
+        return QtWidgets.QGraphicsPixmapItem.boundingRect(self)
+
+    def _capture_thumbnail_qt(self):
         """Asynchronously capture the first frame as thumbnail.
 
         Uses a temporary QMediaPlayer with an explicit QVideoSink.
         The first valid frame that the sink delivers becomes the
         thumbnail; the temp player is torn down right after.
         """
+        if self._thumb_player is not None:
+            return
         player = QMediaPlayer()
         audio = QAudioOutput()
         audio.setMuted(True)
@@ -1946,9 +1963,13 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
                 img = frame.toImage()
                 if not img.isNull():
                     self.setPixmap(QtGui.QPixmap.fromImage(img))
+                    self._video_dimensions = img.size()
+                    self._thumbnail_ready = True
                     if self._control_bar:
                         self._control_bar.reposition()
                     self.update()
+                    if self.scene():
+                        self.scene().video_preview_changed.emit(self)
                 player.stop()
                 teardown()
 
@@ -1978,6 +1999,8 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         item = kwargs.pop('item')
         data = kwargs.pop('data', {})
         item.filename = item.filename or data.get('filename')
+        if data.get('videoWidth') and data.get('videoHeight'):
+            item._video_dimensions = QtCore.QSize(int(data['videoWidth']), int(data['videoHeight']))
         item.setOpacity(data.get('opacity', 1))
         if 'loop' in data:
             item._loop = data['loop']
@@ -2005,6 +2028,9 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
             'mute': self._muted,
             'isReference': self._is_reference,
         }
+        size = getattr(self, '_video_dimensions', None)
+        if size is not None:
+            data.update(videoWidth=size.width(), videoHeight=size.height())
         if self._is_reference and self._video_url:
             path = self._video_url.toLocalFile()
             if path:
@@ -2138,6 +2164,10 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
             painter.setRenderHint(
                 painter.RenderHint.SmoothPixmapTransform)
 
+        if (not self._thumbnail_ready and getattr(self, '_thumbnail_request_key', None) is None
+                and not getattr(self, '_thumbnail_retry_scheduled', False)):
+            self._thumbnail_retry_scheduled = True
+            QtCore.QTimer.singleShot(0, self._capture_thumbnail)
         if self._playing and self._current_frame:
             painter.drawPixmap(
                 self.boundingRect().toRect(),
@@ -2184,6 +2214,11 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
     def create_copy(self):
         item = PrismVideoItem(self._video_url, self.filename,
                             self._video_blob)
+        if self._thumbnail_ready:
+            item._video_dimensions = QtCore.QSize(self._video_dimensions) if self._video_dimensions else None
+            item.setPixmap(self.pixmap())
+            item._thumbnail_ready = True
+            item._thumbnail_request_key = getattr(self, '_thumbnail_request_key', None)
         item._video_source_path = getattr(self, '_video_source_path', None)
         item._is_reference = self._is_reference
         item._loop = self._loop

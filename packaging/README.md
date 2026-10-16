@@ -26,3 +26,7 @@ PyQt6 / PyQt-WebEngine 绑定使用 GPL 许可，不是 LGPL。Qt 原生库另�
 先用 Python 3.12 依次运行 `tools/setup_capture_component.py`、`tools/setup_visual_search_component.py --download-model`、`tools/setup_video_download_component.py`，再运行 `tools/bundle_components.py`。后者输出到全新的 `build/bundled-components`，不复制个人索引、截图、设置、下载历史或 Cookie。已有暂存目录时请另选 `--output` 或先人工核对，不会自动删除目录。
 
 Inno Setup 将组件装到当前用户 `LOCALAPPDATA/Prism/components`，模型可直接使用，运行时优先使用随包的 `python-base/python.exe`，不依赖开发者电脑路径。组件保留在独立进程，避免 Qt5 与 Qt6 互相污染。需要准备约 4 GB 安装空间。发布使用本地完成验证的完整安装包；GitHub 构建只允许手动启动，避免打标签时覆盖已验收产物。
+
+## 0.3.11
+
+准备下载组件时还需执行 `python tools/setup_platform_video_components.py`，包含 F2、XHS-Downloader、Xhshow 与 bilibili-api-python。然后用全新目录执行 `tools/bundle_components.py --output <目录>`，编译 Inno Setup 时通过 `/DComponentRoot=<绝对路径>` 指向该目录。必须先完成源码回归、真实窗口验收和冻结程序检查，再发布安装包。

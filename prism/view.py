@@ -299,6 +299,16 @@ class PrismGraphicsView(CanvasDrawingMixin,
         return self._content_dirty or not self.undo_stack.isClean()
 
     def on_context_menu(self, point):
+        self._context_scene_position = self.mapToScene(point)
+        from prism.item_lifecycle import logical_item
+        candidate = self.itemAt(point)
+        while candidate is not None and not hasattr(candidate, 'save_id'):
+            candidate = candidate.parentItem()
+        if candidate is not None:
+            candidate = logical_item(candidate)
+            if not candidate.isSelected():
+                self.scene.deselect_all_items()
+                candidate.setSelected(True)
         # Remove previously injected dynamic items
         self._remove_dynamic_menu_items()
         # Inject reset camera + drawing tools at top
@@ -311,7 +321,7 @@ class PrismGraphicsView(CanvasDrawingMixin,
         """Remove all dynamically injected menu items."""
         for attr in ('_cat_menu_action', '_reset_cam_action',
                      '_draw_menu_action', '_canvas_sep_action',
-                     '_ai_tag_action', '_pin_menu_action'):
+                     '_ai_tag_action', '_pin_menu_action', '_download_node_action', '_crop_image_action'):
             action = getattr(self, attr, None)
             if action:
                 self.context_menu.removeAction(action)
@@ -322,6 +332,15 @@ class PrismGraphicsView(CanvasDrawingMixin,
         # Separator
         sep = self.context_menu.addSeparator()
         self._canvas_sep_action = sep
+
+        action = self._download_node_action = self.context_menu.addAction('下载视频')
+        position = QtCore.QPointF(getattr(self, '_context_scene_position', self.mapToScene(self.get_view_center())))
+        from prism.actions.video_download_workflow import create
+        action.triggered.connect(lambda: create(self, position))
+        crop = self._crop_image_action = self.context_menu.addAction('裁切图片')
+        crop.setEnabled(self.scene.has_single_image_selection() and self.scene.crop_item is None)
+        crop.triggered.connect(self.on_action_crop)
+        crop.setToolTip('拖动边框调整裁切范围；回车确认，Esc 取消；支持撤销')
 
         # Reset camera (fit all items)
         reset_action = self.context_menu.addAction(
@@ -1646,6 +1665,9 @@ class PrismGraphicsView(CanvasDrawingMixin,
             self.viewport().unsetCursor()
 
     def mousePressEvent(self, event):
+        if isinstance(self.itemAt(event.position().toPoint()), QtWidgets.QGraphicsProxyWidget):
+            super().mousePressEvent(event)
+            return
         self._last_canvas_pos = event.position().toPoint()
         if self._text_tool_armed and event.button() == Qt.MouseButton.LeftButton and event.modifiers() == Qt.KeyboardModifier.NoModifier:
             self._text_tool_armed = False
@@ -1743,6 +1765,9 @@ class PrismGraphicsView(CanvasDrawingMixin,
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if isinstance(self.scene.mouseGrabberItem(), QtWidgets.QGraphicsProxyWidget):
+            super().mouseMoveEvent(event)
+            return
         if (self.active_mode == self.DRAW_MODE and self._drawing_tool == DRAW_TOOL_ERASER
                 and event.buttons() & Qt.MouseButton.LeftButton):
             self._erase_at(event.position().toPoint())
@@ -1803,6 +1828,9 @@ class PrismGraphicsView(CanvasDrawingMixin,
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if isinstance(self.scene.mouseGrabberItem(), QtWidgets.QGraphicsProxyWidget):
+            super().mouseReleaseEvent(event)
+            return
         if self._external_drag_start is not None:
             self._external_drag_start = None
             event.accept()
@@ -1966,6 +1994,9 @@ class PrismGraphicsView(CanvasDrawingMixin,
             self._position_drawing_toolbar()
 
     def keyPressEvent(self, event):
+        if isinstance(self.scene.focusItem(), QtWidgets.QGraphicsProxyWidget):
+            super().keyPressEvent(event)
+            return
         if self.keyPressEventMainControls(event):
             return
         if (event.key() == Qt.Key.Key_Space

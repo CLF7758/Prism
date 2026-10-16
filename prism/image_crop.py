@@ -19,39 +19,49 @@ class ImageCropMixin:
 
 
     def crop_handle_topleft(self):
-        topleft = self.crop_temp.topLeft()
-        return QtCore.QRectF(
-            topleft.x(),
-            topleft.y(),
-            self.crop_handle_size,
-            self.crop_handle_size)
+        return self._crop_hit_rect(self.crop_temp.topLeft())
 
 
     def crop_handle_bottomleft(self):
-        bottomleft = self.crop_temp.bottomLeft()
-        return QtCore.QRectF(
-            bottomleft.x(),
-            bottomleft.y() - self.crop_handle_size,
-            self.crop_handle_size,
-            self.crop_handle_size)
+        return self._crop_hit_rect(self.crop_temp.bottomLeft())
 
 
     def crop_handle_bottomright(self):
-        bottomright = self.crop_temp.bottomRight()
-        return QtCore.QRectF(
-            bottomright.x() - self.crop_handle_size,
-            bottomright.y() - self.crop_handle_size,
-            self.crop_handle_size,
-            self.crop_handle_size)
+        return self._crop_hit_rect(self.crop_temp.bottomRight())
 
 
     def crop_handle_topright(self):
-        topright = self.crop_temp.topRight()
-        return QtCore.QRectF(
-            topright.x() - self.crop_handle_size,
-            topright.y(),
-            self.crop_handle_size,
-            self.crop_handle_size)
+        return self._crop_hit_rect(self.crop_temp.topRight())
+
+    def _crop_hit_rect(self, center):
+        size = self.crop_handle_size
+        return QtCore.QRectF(center.x()-size/2, center.y()-size/2, size, size)
+
+    def crop_control_points(self):
+        rect = self.crop_temp
+        return (*[handle().center() for handle in self.crop_handles()],
+            QtCore.QPointF(rect.center().x(), rect.top()),
+            QtCore.QPointF(rect.left(), rect.center().y()),
+            QtCore.QPointF(rect.center().x(), rect.bottom()),
+            QtCore.QPointF(rect.right(), rect.center().y()))
+
+    def draw_crop_controls(self, painter):
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        pen = QtGui.QPen(QtGui.QColor(230, 234, 242))
+        pen.setCosmetic(True)
+        pen.setWidthF(1)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(self.crop_temp)
+        pen.setColor(QtGui.QColor(35, 42, 52))
+        pen.setWidthF(1.5)
+        painter.setPen(pen)
+        painter.setBrush(QtGui.QColor(245, 247, 250))
+        radius = self.fixed_length_for_viewport(4.5)
+        for center in self.crop_control_points():
+            painter.drawEllipse(center, radius, radius)
+        painter.restore()
 
 
     def crop_handles(self):
@@ -184,7 +194,7 @@ class ImageCropMixin:
                 self.set_cursor(self.get_crop_handle_cursor(handle))
                 return
         for edge in self.crop_edges():
-            if edge().contains(event.pos()):
+            if edge().contains(event.pos()) or self._crop_hit_rect(self.crop_control_points()[4+self.crop_edges().index(edge)]).contains(event.pos()):
                 self.set_cursor(self.get_crop_edge_cursor(edge))
                 return
         self.unset_cursor()
@@ -203,7 +213,7 @@ class ImageCropMixin:
                 return
         for edge in self.crop_edges():
             # Click into an edge handle?
-            if edge().contains(event.pos()):
+            if edge().contains(event.pos()) or self._crop_hit_rect(self.crop_control_points()[4+self.crop_edges().index(edge)]).contains(event.pos()):
                 self.crop_mode_event_start = event.pos()
                 self.crop_mode_move = edge
                 return
@@ -221,34 +231,45 @@ class ImageCropMixin:
         if handle == self.crop_handle_bottomleft:
             topleft = QtCore.QPointF(0, self.crop_temp.top())
             bottomright = QtCore.QPointF(
-                self.crop_temp.right(), self.pixmap().size().height())
+                self.crop_temp.right(), self._image_size.height())
         if handle == self.crop_handle_bottomright:
             topleft = self.crop_temp.topLeft()
             bottomright = QtCore.QPointF(
-                self.pixmap().size().width(), self.pixmap().size().height())
+                self._image_size.width(), self._image_size.height())
         if handle == self.crop_handle_topright:
             topleft = QtCore.QPointF(self.crop_temp.left(), 0)
             bottomright = QtCore.QPointF(
-                self.pixmap().size().width(), self.crop_temp.bottom())
+                self._image_size.width(), self.crop_temp.bottom())
         if handle == self.crop_edge_top:
             topleft = QtCore.QPointF(0, 0)
             bottomright = QtCore.QPointF(
-                self.pixmap().size().width(), self.crop_temp.bottom())
+                self._image_size.width(), self.crop_temp.bottom())
         if handle == self.crop_edge_bottom:
             topleft = QtCore.QPointF(0, self.crop_temp.top())
             bottomright = QtCore.QPointF(
-                self.pixmap().size().width(), self.pixmap().size().height())
+                self._image_size.width(), self._image_size.height())
         if handle == self.crop_edge_left:
             topleft = QtCore.QPointF(0, 0)
             bottomright = QtCore.QPointF(
-                self.crop_temp.right(), self.pixmap().size().height())
+                self.crop_temp.right(), self._image_size.height())
         if handle == self.crop_edge_right:
             topleft = QtCore.QPointF(self.crop_temp.left(), 0)
             bottomright = QtCore.QPointF(
-                self.pixmap().size().width(), self.pixmap().size().height())
+                self._image_size.width(), self._image_size.height())
 
         point.setX(min(bottomright.x(), max(topleft.x(), point.x())))
         point.setY(min(bottomright.y(), max(topleft.y(), point.y())))
+
+        # Keep at least one original-image pixel; dragging through the
+        # opposite edge must not create a zero-area/disappearing image.
+        if handle in (self.crop_handle_topleft, self.crop_handle_bottomleft, self.crop_edge_left):
+            point.setX(min(point.x(), self.crop_temp.right()-1))
+        if handle in (self.crop_handle_topright, self.crop_handle_bottomright, self.crop_edge_right):
+            point.setX(max(point.x(), self.crop_temp.left()+1))
+        if handle in (self.crop_handle_topleft, self.crop_handle_topright, self.crop_edge_top):
+            point.setY(min(point.y(), self.crop_temp.bottom()-1))
+        if handle in (self.crop_handle_bottomleft, self.crop_handle_bottomright, self.crop_edge_bottom):
+            point.setY(max(point.y(), self.crop_temp.top()+1))
 
         return point
 

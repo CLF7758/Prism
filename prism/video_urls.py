@@ -4,6 +4,19 @@ import re
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 
+def platform_for_url(url):
+    """Exact host boundaries: lookalike domains must never select a backend."""
+    host = (urlsplit(url).hostname or '').lower()
+    for platform, domains in (
+        ('douyin', ('douyin.com', 'iesdouyin.com')),
+        ('xiaohongshu', ('xiaohongshu.com', 'xhslink.cn', 'xhslink.com')),
+        ('bilibili', ('bilibili.com', 'b23.tv')),
+    ):
+        if any(host == domain or host.endswith('.'+domain) for domain in domains):
+            return platform
+    return 'ytdlp'
+
+
 def normalize_share_url(text):
     text = html.unescape(text).replace('https\\:', 'https:').replace('http\\:', 'http:').replace('\\&', '&')
     matches = re.findall(r'https?://[^\s<>\[\]）]+', text)

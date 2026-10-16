@@ -1,4 +1,4 @@
-#define AppVersion "0.3.10"
+#define AppVersion "0.3.11"
 #ifndef ComponentRoot
 #define ComponentRoot "..\build\bundled-components"
 #endif
