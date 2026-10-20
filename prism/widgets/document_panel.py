@@ -48,12 +48,10 @@ import shutil
 import tempfile
 import time
 
-# Chromium needs these before QtWebEngine initialises; without them a
-# headless or remote session fails to create a context at all.
-os.environ.setdefault(
-    'QTWEBENGINE_CHROMIUM_FLAGS',
-    '--disable-gpu --disable-software-rasterizer --no-sandbox '
-    '--disable-features=RendererCodeIntegrity')
+# Keep WebGL available for the shared material/GLB renderer. Headless tests
+# may still explicitly override Chromium flags in their own environment.
+from prism.webengine_runtime import configure_webengine
+configure_webengine()
 
 from PyQt6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
@@ -513,7 +511,8 @@ class DocumentPanel(QtWidgets.QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._ensure_loaded()
-        self.load_from_scene()
+        if not getattr(self, '_preserve_editor_on_show', False):
+            self.load_from_scene()
 
     def _ensure_loaded(self):
         """Start Chromium the first time the panel is actually shown."""
@@ -560,8 +559,16 @@ class DocumentPanel(QtWidgets.QWidget):
     def store_to_scene(self):
         """Copy the editor content back into the board for saving."""
         if not self._content_loaded:
-            return
+            return True
+        project_id = self.view.scene.project_id
+        needs_snapshot = self._ready and self._page is not None and not self._pending_push
         raw = self._flush_from_page()
+        from prism.item_lifecycle import is_deleted
+        if is_deleted(self) or self.view.scene.project_id != project_id:
+            return False
+        if needs_snapshot and raw is None:
+            logger.warning('Document snapshot unavailable; refusing stale content')
+            return False
         if raw is not None:
             self._html = self._canonical_html(raw)
             self._page_stale = False
@@ -569,6 +576,7 @@ class DocumentPanel(QtWidgets.QWidget):
             return
         self._set_scene_html(self._html)
         self._update_status()
+        return True
 
     def _store_current_html(self):
         """Timer callback: the page already told us what it holds."""
@@ -642,22 +650,11 @@ class DocumentPanel(QtWidgets.QWidget):
         """
         if not self._ready or self._page is None or self._pending_push:
             return None
-        result = {}
-        loop = QtCore.QEventLoop()
-
-        def finished(value):
-            result['html'] = value if isinstance(value, str) else None
-            loop.quit()
-
-        self._page.runJavaScript(
-            'window.__flush ? window.__flush() : null', finished)
-        timer = QtCore.QTimer()
-        timer.setSingleShot(True)
-        timer.timeout.connect(loop.quit)
-        timer.start(3000)
-        loop.exec()
-        timer.stop()
-        return result.get('html')
+        from prism.widgets.editor_snapshot import read_editor_snapshot
+        from prism.item_lifecycle import is_deleted
+        project_id = self.view.scene.project_id
+        return read_editor_snapshot(self._page, 'window.__flush ? window.__flush() : null',
+            valid=lambda: not is_deleted(self) and self.view.scene.project_id == project_id)
 
     # ── Page callbacks ───────────────────────────────────────────
 

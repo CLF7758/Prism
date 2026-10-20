@@ -1,6 +1,6 @@
 import os
 import stat
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import pytest
 
 from PyQt6 import QtGui
@@ -234,12 +234,13 @@ def test_images_to_directory_exporter_export_when_dir_not_writeable(
     item = PrismPixmapItem(QtGui.QImage(imgfilename3x3))
     view.scene.addItem(item)
 
-    os.chmod(tmpdir, stat.S_IREAD)
     exporter = ImagesToDirectoryExporter(view.scene, tmpdir)
-
-    with pytest.raises(PrismFileIOError) as e:
-        exporter.export()
-        assert e.filename == tmpdir
+    # Windows directory READONLY is not a write-denial permission. Inject the
+    # actual filesystem error so this tests the same failure on every platform.
+    with patch('pathlib.Path.write_bytes', side_effect=PermissionError('write denied')):
+        with pytest.raises(PrismFileIOError) as error:
+            exporter.export()
+    assert os.path.dirname(error.value.filename) == str(tmpdir)
 
 
 def test_images_to_directory_exporter_export_when_dir_not_writeable_w_worker(
@@ -248,15 +249,15 @@ def test_images_to_directory_exporter_export_when_dir_not_writeable_w_worker(
     item = PrismPixmapItem(QtGui.QImage(imgfilename3x3))
     view.scene.addItem(item)
 
-    os.chmod(tmpdir, stat.S_IREAD)
     exporter = ImagesToDirectoryExporter(view.scene, tmpdir)
     worker = MagicMock(canceled=False)
 
-    exporter.export(worker)
+    with patch('pathlib.Path.write_bytes', side_effect=PermissionError('write denied')):
+        exporter.export(worker)
     worker.begin_processing.emit.assert_called_once_with(1)
     worker.finished.emit.assert_called_once()
     args = worker.finished.emit.call_args.args
-    assert args[0] == tmpdir
+    assert os.path.dirname(args[0]) == str(tmpdir)
     assert len(args[1]) == 1
 
 

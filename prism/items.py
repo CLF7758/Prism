@@ -225,10 +225,7 @@ def _color_group_from_rgb(r, g, b):
 
 item_registry = {}
 
-VIDEO_EXTENSIONS = {
-    '.mp4', '.mov', '.avi', '.mkv', '.webm', '.wmv', '.flv',
-    '.m4v', '.3gp', '.ts',
-}
+from prism.media_types import VIDEO_EXTENSIONS
 
 VIDEO_EMBED_THRESHOLD_MB = 50
 
@@ -899,6 +896,19 @@ class PrismPixmapItem(ImageSourceMixin, ImageCropMixin, PrismItemMixin, QtWidget
         """
         from prism import lod
         scene = self.scene()
+        if scene is not None and getattr(scene, '_exporting_records', False):
+            # Explicit scene export needs source pixels even for small boards
+            # that use native items. Keep the decode local to this paint call,
+            # so exporting many images cannot retain all originals in RAM.
+            pixmap = QtWidgets.QGraphicsPixmapItem.pixmap(self)
+            if not getattr(self, '_preview_adjusted', False) and pixmap.isNull() and self.has_original_source():
+                decoded = image_decode.decode(*image_decode.source_snapshot(self))
+                if decoded is None:
+                    raise ValueError('Could not decode source image for canvas export')
+                pixmap = QtGui.QPixmap.fromImage(decoded[0])
+            elif pixmap.isNull() and self._preview_pixmap is not None:
+                pixmap = self._preview_pixmap
+            return pixmap, lod.source_rect(self, pixmap)
         pixels = lod.shown_pixels(self, painter)
         if scene and scene._import_in_progress:
             pixels = min(192, pixels)
@@ -1771,29 +1781,25 @@ class PrismGlbItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
             PrismNotification(views[0], message)
 
     def open_preview(self):
-        """Show (or refresh) the interactive preview window."""
-        mesh = self._ensure_mesh()
-        if mesh is None:
-            self._notify(
-                _('The 3D model could not be read: {reason}').format(
-                    reason=self._load_error or _('unknown error')))
-            return
+        """Use the official Babylon glTF loader for interactive PBR preview."""
+        from prism.widgets.glb_engine_view import GLBEngineWindow
         if self._preview_window is None:
-            parent = None
             scene = self.scene()
             views = scene.views() if scene is not None else []
-            if views:
-                parent = views[0]
-            name = os.path.basename(self.filename) if self.filename else ''
-            self._preview_window = GLBPreviewWindow(mesh, title=name,
-                                                    parent=parent)
-        else:
-            self._preview_window.surface.set_mesh(mesh)
+            try:
+                self._preview_window = GLBEngineWindow(
+                    blob=self._glb_blob, path=self._glb_path,
+                    filename=self.filename or '', parent=views[0] if views else None)
+                self._preview_window.destroyed.connect(self._preview_closed)
+            except (OSError, ValueError) as error:
+                self._notify(str(error))
+                return
         self._preview_window.show()
         self._preview_window.raise_()
         self._preview_window.activateWindow()
 
-    # ── Persistence ──────────────────────────────────────────
+    def _preview_closed(self, *_args):
+        self._preview_window = None
 
     @classmethod
     def create_from_data(cls, **kwargs):

@@ -55,6 +55,8 @@ class MediaLibraryPanel(QtWidgets.QWidget):
     counts_changed = QtCore.pyqtSignal(dict)
     categories_changed = QtCore.pyqtSignal()
     workspace_requested = QtCore.pyqtSignal(str, str)
+    material_library_requested = QtCore.pyqtSignal(object)
+    material_records_changed = QtCore.pyqtSignal(object)
     resource_create_requested = QtCore.pyqtSignal(str, str, object)
     resource_delete_requested = QtCore.pyqtSignal(str)
     #: 右键「导出…」：参数是 (分区, 节点 id)；节点 id 为 None 表示整个分区。
@@ -83,6 +85,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self.catalog = None
         self._setup_ui()
         self._recount_timer = QtCore.QTimer(self)
+        self._recount_timer.setObjectName('library.recount')
         self._recount_timer.setSingleShot(True)
         self._recount_timer.setInterval(300)
         self._recount_timer.timeout.connect(self.update_counts)
@@ -216,7 +219,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         # 左栏现在只有这一棵树。「筛选与旧分类」那个旧列表页签按用户
         # 要求删掉了 —— 分类行、标签勾选行和「未打标签」行都随它一起
         # 消失，标签勾选筛选暂时没有界面入口（筛选能力还在代码里）。
-        self.resource_tree = ResourceTreeView(self)
+        self.resource_tree = ResourceTreeView(self, settings=self.view.settings)
         self._install_resource_service()
         self.resource_tree.create_requested.connect(
             self.resource_create_requested.emit)
@@ -228,6 +231,8 @@ class MediaLibraryPanel(QtWidgets.QWidget):
             self.resource_export_requested.emit)
         self.resource_tree.import_requested.connect(
             self.resource_import_requested.emit)
+        self.resource_tree.open_material_requested.connect(
+            self.material_library_requested.emit)
         self.resource_tree.clicked.connect(self._browse_folder)
         self.resource_tree.new_tag_requested.connect(self.add_tag)
         self.resource_tree.manage_tags_requested.connect(self.manage_tags)
@@ -299,6 +304,15 @@ class MediaLibraryPanel(QtWidgets.QWidget):
 
     def _browse_tag(self, name):
         window = self.view.window()
+        controller = getattr(window, 'search_controller', None)
+        from prism.material_service import iter_visible_materials
+        predicate = tags.parse_query(json.dumps(name, ensure_ascii=False))
+        if controller is not None and any(predicate.matches(tags.name_index(material.get('tags', []), tags.tag_system(self.scene)))
+                                          for material in iter_visible_materials(self.scene)):
+            self.set_search_kind('all')
+            controller.set_scope('project', None, _('Entire project'))
+            self.set_project_query('tag:' + json.dumps(name, ensure_ascii=False))
+            return
         browser = getattr(window, 'asset_browser', None)
         if browser is None:
             self.set_project_query('tag:' + json.dumps(name, ensure_ascii=False))
@@ -414,6 +428,9 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self.resource_tree.model().set_asset_counts(page_counts)
 
     def _install_resource_service(self):
+        library = getattr(self.view.window(), 'material_library', None)
+        if library is not None:
+            library.store_to_scene()
         project_id = self.scene.project_id
         nodes = getattr(self.scene, 'workspace_nodes', []) or []
         previous = getattr(self, 'resource_service', None)
@@ -427,6 +444,10 @@ class MediaLibraryPanel(QtWidgets.QWidget):
                 getattr(self.scene, 'workspace_pages', []) or [], project_id)
         self.resource_service = ResourceTreeService(project_id, nodes, self)
         self.scene.workspace_nodes = self.resource_service.nodes
+        from prism.material_service import MaterialLibraryService
+        self.material_service = MaterialLibraryService(
+            self.scene, self.resource_service, self)
+        self.material_service.changed.connect(self._on_material_records_changed)
         self.resource_service.changed.connect(self._on_resource_nodes_changed)
         self.resource_tree.setModel(ResourceTreeModel(
             self.resource_service, self.resource_tree))
@@ -434,6 +455,18 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         # 全项目素材查询服务（方案 §5.2）。左栏数字、资源树计数、结果列表
         # 和状态栏都走这一层，避免各处写不同的过滤条件导致口径漂移。
         self.catalog = ProjectAssetCatalog(self.scene, self.resource_service)
+
+    def _on_material_records_changed(self, change):
+        self.view.mark_content_dirty()
+        self.material_records_changed.emit(change)
+        if change.get('tagsChanged') or change.get('operation') in ('create', 'delete', 'restore', 'purge', 'tags'):
+            # Preview pixels must not trigger a global tag-tree rebuild.
+            if not hasattr(self, '_material_tag_timer'):
+                self._material_tag_timer = QtCore.QTimer(self)
+                self._material_tag_timer.setSingleShot(True)
+                self._material_tag_timer.setInterval(100)
+                self._material_tag_timer.timeout.connect(self.refresh_tags)
+            self._material_tag_timer.start()
 
     def _on_resource_nodes_changed(self, _change):
         self.scene.workspace_nodes = self.resource_service.nodes
@@ -498,7 +531,8 @@ class MediaLibraryPanel(QtWidgets.QWidget):
     def make_search_type_combo(self):
         combo = QtWidgets.QComboBox()
         for key, label in [('all', 'All content'), ('asset', 'Assets'),
-                           ('document', 'Documents'), ('mindmap', 'Mind maps'), ('canvas', 'Canvases')]:
+                           ('document', 'Documents'), ('mindmap', 'Mind maps'), ('canvas', 'Canvases'),
+                           ('material', '材质球')]:
             combo.addItem(_(label), key)
         combo.setToolTip(_('Search content type'))
         combo.setMaximumWidth(100)
@@ -542,7 +576,7 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         self.search_results.clear()
         titles = {'asset': '素材', 'canvas': '画布', 'mindmap': '脑图',
             'mindmap_node': '脑图节点', 'document': '文档', 'document_text': '文档正文',
-            'folder': '文件夹', 'tag': '标签'}
+            'folder': '文件夹', 'tag': '标签', 'material': '材质球'}
         groups = {}
         for result in results[:200]:
             kind = result['kind']
@@ -572,6 +606,9 @@ class MediaLibraryPanel(QtWidgets.QWidget):
         # Both search surfaces navigate through the same targets.
         window = self.view.window()
         kind = result['kind']
+        if kind == 'material':
+            window.material_library.reveal_material(result.get('material_id'))
+            return
         if kind == 'tag':
             self.search.setText('tag:' + json.dumps(result['tag'], ensure_ascii=False))
             return

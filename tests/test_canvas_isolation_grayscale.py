@@ -200,17 +200,22 @@ def test_grayscale_batch_does_not_decode_and_only_affects_current_canvas(
     assert all(item._grayscale_cache is None for item in items)
     canvas = QtGui.QImage(900, 600, QtGui.QImage.Format.Format_ARGB32)
     canvas.fill(QtGui.QColor('transparent'))
-    painter = QtGui.QPainter(canvas)
+    bounds = view.scene.itemsBoundingRect(items=items[:100])
     started = time.monotonic()
-    view.scene.render(painter, QtCore.QRectF(0, 0, 900, 600),
-                      view.scene.itemsBoundingRect(items=items[:100]))
-    painter.end()
+    # Exercise the actual preview renderer. A plain scene.render() is the
+    # explicit export path and deliberately reads original-resolution pixels.
+    view._overview_renderer._render(canvas, QtCore.QRectF(0, 0, 900, 600),
+                                   bounds)
     assert time.monotonic() - started < 2.0
-    displayed = [canvas.pixelColor(x, y) for x in range(20, 900, 80)
-                 for y in range(20, 600, 60)]
-    opaque = [color for color in displayed if color.alpha()]
-    assert opaque
-    assert all(color.red() == color.green() == color.blue() for color in opaque)
+    # The real preview renderer fills the canvas background, which is not
+    # part of the image grayscale filter. Check the center of every image.
+    scale = min(canvas.width()/bounds.width(), canvas.height()/bounds.height())
+    centers = [(item.sceneBoundingRect().center()-bounds.topLeft())*scale
+               for item in items[:100]]
+    displayed = [canvas.pixelColor(round(point.x()), round(point.y())) for point in centers]
+    assert len(displayed) == 100
+    assert all(color.alpha() == 255 and color.red() == color.green() == color.blue()
+               for color in displayed)
     assert all(not item.has_full_pixmap() for item in items)
     main_window.open_workspace_page('canvas', 'B')
     assert not bar._grayscale_active

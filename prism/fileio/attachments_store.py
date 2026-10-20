@@ -18,6 +18,7 @@ blob 在真正取的时候才读。
 """
 import collections.abc
 import logging
+from pathlib import Path
 import sqlite3
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ def sqlite_attachment_loader(filename):
         finally:
             if connection is not None:
                 connection.close()
+    load.source_path = str(Path(filename).resolve())
     return load
 
 
@@ -61,6 +63,7 @@ class StoredAttachments(collections.abc.MutableMapping):
     def __init__(self, loader=None, entries=None):
         self._meta = {}
         self._cache = {}
+        self._dirty = set()
         self._loader = loader
         if entries:
             for key, value in entries.items():
@@ -77,7 +80,9 @@ class StoredAttachments(collections.abc.MutableMapping):
         name, mime = self._meta[key]
         blob = self._loader(key) if self._loader is not None else None
         entry = (name, mime, blob)
-        self._cache[key] = entry
+        # A transient SQLite lock must not poison the cache with a missing blob.
+        if blob is not None:
+            self._cache[key] = entry
         return entry
 
     # ── 写 ────────────────────────────────────────────────────────
@@ -86,10 +91,12 @@ class StoredAttachments(collections.abc.MutableMapping):
         name, mime, blob = value
         self._meta[key] = (name, mime)
         self._cache[key] = (name, mime, blob)
+        self._dirty.add(key)
 
     def __delitem__(self, key):
         del self._meta[key]
         self._cache.pop(key, None)
+        self._dirty.discard(key)
 
     # ── 形状 ──────────────────────────────────────────────────────
 
@@ -109,8 +116,66 @@ class StoredAttachments(collections.abc.MutableMapping):
         except KeyError:
             return default
 
+    def peek(self, key, default=None):
+        """Read an already-resident entry without triggering disk IO."""
+        return self._cache.get(key, default)
+
+    def read_uncached(self, key, default=None):
+        """Stream a persisted source for background rendering/export.
+
+        Newly imported/modified entries remain authoritative in _cache. Clean
+        file-backed originals need not remain resident after generating a proxy.
+        """
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        if key not in self._meta:
+            return default
+        name, mime = self._meta[key]
+        blob = self._loader(key) if self._loader is not None else None
+        return name, mime, blob
+
     def keys(self):
         return self._meta.keys()
+
+    def snapshot_for_save(self):
+        """Detach the save's membership/revisions without loading clean blobs."""
+        snapshot = StoredAttachments(loader=self._loader)
+        snapshot._meta = dict(self._meta)
+        snapshot._cache = dict(self._cache)
+        snapshot._dirty = set(self._dirty)
+        return snapshot
+
+    def entries_for_save(self, connection, filename):
+        """Leave unchanged blobs in place; never read our own write lock.
+
+        SQLite can take an exclusive lock when a large transaction spills its
+        page cache. A second read connection then waits on this very writer.
+        Save As still streams originals from the other source file.
+        """
+        source = getattr(self._loader, 'source_path', None)
+        same_file = source is not None and Path(source).resolve() == Path(filename).resolve()
+        for key in list(self._meta):
+            if same_file and key not in self._dirty:
+                if connection.execute('SELECT 1 FROM attachments WHERE id=?', (key,)).fetchone():
+                    continue
+                raise ValueError(f'Original attachment {key} is missing; save stopped')
+            entry = self.read_uncached(key)
+            if entry is None or entry[2] is None:
+                raise ValueError(f'Original attachment {key} is unreadable; save stopped')
+            yield key, entry
+
+    def relocate_source(self, old_path, new_path):
+        source = getattr(self._loader, 'source_path', None)
+        if source is not None and Path(source).resolve() == Path(old_path).resolve():
+            self._loader = sqlite_attachment_loader(str(new_path))
+
+    def saved_to(self, filename, versions):
+        """Rebind lazy reads after Save As; retain edits made during the write."""
+        self._loader = sqlite_attachment_loader(str(filename))
+        for key, saved_entry in versions:
+            if self._cache.get(key) is saved_entry:
+                self._dirty.discard(key)
 
     def values(self):
         for key in self._meta:

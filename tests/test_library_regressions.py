@@ -15,21 +15,16 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from prism import commands
 from prism import ui_tokens
-from prism.__main__ import PrismMainWindow
 from prism.fileio.sql import SQLiteIO
 from prism.items import PrismPixmapItem, PrismTextItem
 from prism.widgets.media_library import ChangeCategory
 
 
 @pytest.fixture
-def window(qapp, settings):
-    win = PrismMainWindow(qapp)
-    yield win
-    win.view.undo_stack.clear()
-    win.view.scene.clear()
-    win.close()
-    win.deleteLater()
-    qapp.processEvents()
+def window(main_window):
+    # Reuse the shared desktop-service isolation: UI regressions must not
+    # bind the user's capture hotkey, clipboard watcher or loopback server.
+    return main_window
 
 
 def add_image(window, categories=()):
@@ -157,9 +152,13 @@ def test_native_window_resizes_and_panels_are_independent(window, qapp):
     window.splitter.setSizes([280, 400, 300])
     qapp.processEvents()
     assert window.splitter.sizes()[0] >= 260
-    assert window.view.category_panel.maximumWidth() == ui_tokens.LAYOUT['left-panel-max']
-    assert window.view._detail_panel.maximumWidth() == ui_tokens.LAYOUT['right-panel-max']
-    assert window.view._detail_panel.isHidden()
+    assert window._left_column.maximumWidth() == ui_tokens.LAYOUT['left-panel-max']
+    assert window._right_column.maximumWidth() == ui_tokens.LAYOUT['right-panel-max']
+    # The current inspector keeps its empty-state visible; only the user's
+    # sidebar action hides the column, independently of asset selection.
+    assert window.view._detail_panel.isVisible()
+    assert window._right_column.isVisible()
+    assert window._left_column.isVisible()
     assert window.view._detail_panel._title_edit.font().pixelSize() == (
         ui_tokens.TEXT_ROLES['inspector-field-value'].size)
 

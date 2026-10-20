@@ -81,3 +81,35 @@ def test_prefetch_does_not_evict_the_visible_cover(qapp):
     assert all(tiles._has_cover(k) for k in tiles.visible)
     assert tiles.bytes <= tiles.BUDGET
     view.close()
+
+
+def test_returning_to_canvas_reuses_pixels_then_refreshes(qapp):
+    view, tiles = engine(qapp)
+    tiles.switch_context('canvas-a')
+    paint(view, tiles)
+    while tiles.pending:
+        tiles._work()
+    before = {key: entry[0].cacheKey() for key, entry in tiles.tiles.items()}
+    tiles.switch_context('canvas-b')
+    paint(view, tiles)
+    tiles.switch_context('canvas-a')
+    assert {key: entry[0].cacheKey() for key, entry in tiles.tiles.items()} == before
+    assert tiles.stale == set(before)
+    builds = tiles.builds
+    paint(view, tiles)
+    assert tiles.builds == builds  # No synchronous cold-cover rebuild.
+    assert tiles.pending  # Cached pixels do not hide later edits.
+    tiles.reset()
+    assert not tiles.contexts and not tiles.tiles
+    view.close()
+
+
+def test_canvas_contexts_share_one_memory_budget(qapp):
+    view, tiles = engine(qapp)
+    tiles.BUDGET = 3*512*512*4
+    for index in range(20):
+        tiles.switch_context(str(index))
+        tiles._build((0, index, 0))
+        assert tiles.bytes + sum(state[1] for state in tiles.contexts.values()) <= tiles.BUDGET
+    assert len(tiles.contexts) <= 2
+    view.close()

@@ -287,10 +287,15 @@ def source_rect(item, pixmap):
     return QtCore.QRectF(pixmap.rect())
 
 
-def shown_pixels(item, painter):
+def shown_pixels(item, painter, owner=None):
     size = item._image_size
     transform = painter.combinedTransform()
     scale = max(math.hypot(transform.m11(), transform.m12()), math.hypot(transform.m21(), transform.m22()))
+    if owner is not None and getattr(owner, '_overview_renderer', None) is not None:
+        # Coarse cover tiles are temporary display buffers. Select image LOD
+        # for the actual viewport, otherwise every coarse/fine tile requests
+        # a different tiny preview and canvases repeatedly look pixelated.
+        scale = max(scale, abs(owner.get_scale()*item.scale())*owner.viewport().devicePixelRatioF())
     return max(size.width(), size.height())*scale
 
 

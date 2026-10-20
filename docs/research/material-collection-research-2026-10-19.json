@@ -1,0 +1,82 @@
+{
+  "discovery": "Agent-Reach Exa, followed by public GitHub HTML",
+  "repositories": [
+    {
+      "repo": "nsynkde/HyperVault",
+      "branch": "master",
+      "commit": "c9d9fcea7234e6482a43f4ba30ce263776054bd6",
+      "root_paths": [
+        ".gitignore",
+        "/",
+        "LICENSE",
+        "README.md",
+        "Vault"
+      ]
+    },
+    {
+      "repo": "Unreal-Vault/Vault-Dev",
+      "branch": "master",
+      "commit": "5232794276b238c700c9f4a5fc5bfc4082612f04",
+      "root_paths": [
+        ".gitignore",
+        "/",
+        "LICENSE",
+        "README.md",
+        "Vault"
+      ]
+    },
+    {
+      "repo": "ScottRaffertyCG/MaterialVault",
+      "branch": "main",
+      "commit": "72f07ea2dbe27e15fd1ebcd4c241ef9e009a8a33",
+      "root_paths": [
+        "/",
+        "Binaries/Win64",
+        "Content/MaterialVault",
+        "Intermediate/Build",
+        "LICENSE.md",
+        "Logo_materialVault_v002.png",
+        "MV_Load.gif",
+        "MaterialVault.uplugin",
+        "PluginThumbnail.png",
+        "README.md",
+        "Resources",
+        "Source/MaterialVault"
+      ]
+    },
+    {
+      "repo": "ScottRaffertyCG/Material-Vault",
+      "branch": "main",
+      "commit": "b2f3376a4c95119d1555a5742ca5de01382c33ae",
+      "root_paths": [
+        "/",
+        "CHANGELOG.md",
+        "LICENSE",
+        "MaterialVault",
+        "Media",
+        "README.md"
+      ]
+    },
+    {
+      "repo": "comfyui-wiki/PBR-Viewer",
+      "branch": "main",
+      "commit": "44632af8780fe48dd7ad1a1708968a577b479a24",
+      "root_paths": [
+        ".github/workflows",
+        ".gitignore",
+        "/",
+        "README.md",
+        "eslint.config.js",
+        "index.html",
+        "package-lock.json",
+        "package.json",
+        "pnpm-lock.yaml",
+        "postcss.config.js",
+        "public",
+        "src",
+        "tailwind.config.js",
+        "vite.config.js"
+      ]
+    }
+  ]
+}

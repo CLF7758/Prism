@@ -73,7 +73,13 @@ class RecordLayer(QtWidgets.QGraphicsObject):
 
     def paint(self, painter, option, widget=None):
         manager = self.manager
-        records, keys = manager.visible(option.exposedRect)
+        exposed = option.exposedRect
+        # QGraphicsScene.render() supplies the layer's entire bounds in the
+        # style option even when rendering one small tile. The painter clip
+        # is in layer coordinates and contains the actual source rectangle.
+        if painter.hasClipping():
+            exposed = exposed.intersected(painter.clipBoundingRect())
+        records, keys = manager.visible(exposed)
         first = bisect.bisect_right(keys, self.lower)
         last = bisect.bisect_left(keys, self.upper)
         owner = getattr(manager.scene, '_overview_recording_owner', None)
@@ -109,7 +115,7 @@ class RecordLayer(QtWidgets.QGraphicsObject):
                     image = qt_grayscale_image(image)
                 painter.drawImage(record.crop, image, record.crop)
             return
-        pixels = lod.shown_pixels(record, painter)
+        pixels = lod.shown_pixels(record, painter, owner)
         pixmap = lod.overview_pixmap(record) if pixels <= 8 else lod.display_pixmap(record, pixels, owner)
         if pixmap is None or pixmap.isNull():
             painter.fillRect(record.crop, QtGui.QColor(record.dominant_color or '#757B82'))
@@ -244,9 +250,16 @@ class ViewportItems(QtCore.QObject):
         for record in self.index.query(path.boundingRect()):
             if not record.isVisible():
                 continue
+            bounds = self.index.rects[record][0]
+            if not bounds.isEmpty() and path.contains(bounds):
+                # The indexed bounds enclose even a rotated/cropped shape.
+                # Full containment proves all four query modes without
+                # constructing/translating a path for every visible image.
+                result.add(record)
+                continue
             outline = QtGui.QPainterPath()
             if bounding:
-                outline.addRect(record.sceneBoundingRect())
+                outline.addRect(bounds)
             else:
                 outline = record.sceneTransform().map(record.shape())
             matches = path.contains(outline) if contains else path.intersects(outline)

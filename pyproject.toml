@@ -8,10 +8,11 @@ include = ["prism*"]
 [tool.setuptools.package-data]
 "*" = ["*.html", "*.png"]
 "prism.assets" = ["ai/*.onnx", "ai/*.csv"]
+"prism" = ["assets/materials/**/*", "assets/materials/*", "vendor/vcolorpicker/LICENSE", "vendor/vcolorpicker/ORIGIN.json"]
 
 [project]
 name = "Prism"
-version = "0.3.11"
+version = "0.4.0"
 description = "A local creative workspace for reference images, documents and mind maps"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -29,6 +30,7 @@ dependencies = [
     "numpy>=1.26",
     "onnxruntime==1.19.2",
     "pillow>=10",
+    "QtPy==2.4.3",
     "pyQt6-Qt6>=6.7.0,<=6.7.0",
     "pyQt6>=6.7.0,<=6.7.0",
     "pyQt6-WebEngine>=6.7.0,<=6.7.0",

@@ -118,10 +118,12 @@ class DisplayDecoder(QtCore.QObject):
         self.waiting_owners = weakref.WeakSet()
         self.ready = deque()
         self.install_timer = QtCore.QTimer(self)
+        self.install_timer.setObjectName('images.install_display_levels')
         self.install_timer.setSingleShot(True)
         self.install_timer.setInterval(16)
         self.install_timer.timeout.connect(self._install_ready)
         self.repaint_timer = QtCore.QTimer(self)
+        self.repaint_timer.setObjectName('images.repaint_owners')
         self.repaint_timer.setSingleShot(True)
         self.repaint_timer.setInterval(16)
         self.repaint_timer.timeout.connect(self._repaint_waiting)
@@ -320,4 +322,10 @@ def request_display(item, max_side=None, owner=None):
     dispatcher = getattr(app, '_prism_display_decoder', None)
     if dispatcher is None:
         dispatcher = app._prism_display_decoder = DisplayDecoder(app)
+    if owner is not None and len(dispatcher.requests) >= dispatcher.max_pending:
+        # A paint pass can visit thousands of records. Do not repeatedly
+        # reprioritize/cancel the same eight jobs for every painted record;
+        # completed jobs schedule the next visible batch through this owner.
+        dispatcher.waiting_owners.add(owner)
+        return
     dispatcher.request(item, max_side, owner)

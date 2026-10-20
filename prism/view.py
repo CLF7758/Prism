@@ -133,6 +133,7 @@ class PrismGraphicsView(CanvasDrawingMixin,
         self.undo_stack.canRedoChanged.connect(self.on_can_redo_changed)
         self.undo_stack.canUndoChanged.connect(self.on_can_undo_changed)
         self.undo_stack.cleanChanged.connect(self.on_undo_clean_changed)
+        self.undo_stack.indexChanged.connect(self._advance_undo_revision)
 
         # Debounce recalc_scene_rect: batch operations (import, load)
         # fire scene.changed hundreds of times; the timer coalesces
@@ -290,8 +291,12 @@ class PrismGraphicsView(CanvasDrawingMixin,
     def on_undo_clean_changed(self, clean):
         self.update_window_title()
 
+    def _advance_undo_revision(self, _index):
+        self._undo_revision = getattr(self, '_undo_revision', 0) + 1
+
     def mark_content_dirty(self):
         """Mark changes outside the graphics undo stack as unsaved."""
+        self._content_revision = getattr(self, '_content_revision', 0) + 1
         self._content_dirty = True
         self.update_window_title()
 
@@ -423,6 +428,11 @@ class PrismGraphicsView(CanvasDrawingMixin,
         self.scene.attachments = {}
         self.scene.mindmap_tree = None
         self.scene.workspace_pages = []
+        self.scene.workspace_nodes = []
+        import uuid
+        self.scene.project_id = uuid.uuid4().hex
+        self.scene.material_records = []
+        self.scene.material_library_state = {}
         if hasattr(self.parent, '_reload_workspace_pages'):
             self.parent._reload_workspace_pages()
         self.category_panel.force_rebuild()
@@ -473,7 +483,26 @@ class PrismGraphicsView(CanvasDrawingMixin,
         logger.trace('Fit view done')
         self.zoom_changed.emit(self.transform().m11() * 100.0)
 
+    def _file_operation_pending(self):
+        worker = getattr(self, 'worker', None)
+        return (bool(worker is not None and worker.isRunning())
+                or getattr(self, '_save_preparing', False)
+                or getattr(self, '_save_board_snapshot', None) is not None)
+
+    def _allow_project_replacement(self):
+        # Canvas IO still reads the current scene. Keep its lifetime stable
+        # through both the worker and the queued GUI acknowledgement.
+        if not self._file_operation_pending():
+            return True
+        trace_record('project_replacement_skipped', reason='file_operation_pending')
+        if hasattr(self.parent, 'statusBar'):
+            self.parent.statusBar().showMessage(
+                _('Please wait for the current file operation to finish.'), 4000)
+        return False
+
     def get_confirmation_unsaved_changes(self, msg):
+        if not self._allow_project_replacement():
+            return False
         confirm = self.settings.valueOrDefault('Save/confirm_close_unsaved')
         if confirm and self.is_dirty():
             answer = QtWidgets.QMessageBox.question(
@@ -821,6 +850,8 @@ class PrismGraphicsView(CanvasDrawingMixin,
             self.open_from_file(filename)
 
     def open_from_file(self, filename):
+        if not self._allow_project_replacement():
+            return False
         self._trace_open_started = trace_time.perf_counter()
         trace_record('project_open_start', filename=str(filename))
         logger.info(f'Opening file {filename}')
@@ -850,13 +881,18 @@ class PrismGraphicsView(CanvasDrawingMixin,
             filter=f'{constants.APPNAME} File (*.prism)')
         if filename:
             filename = os.path.normpath(filename)
-            self.open_from_file(filename)
-            self.filename = filename
+            if self.open_from_file(filename) is not False:
+                self.filename = filename
 
     def on_saving_finished(self, filename, errors, silent=False):
         started = getattr(self, '_trace_save_started', trace_time.perf_counter())
         trace_record('project_save_finished', filename=str(filename), failed=bool(errors), silent=silent,
                      duration_ms=round((trace_time.perf_counter()-started)*1000, 3))
+        snapshot = getattr(self, '_save_board_snapshot', None)
+        self._save_board_snapshot = None
+        if snapshot is not None and self.scene.project_id != snapshot.state.project_id:
+            trace_record('project_save_result_ignored', filename=str(filename), reason='project_changed')
+            return
         if errors:
             if silent:
                 # Autosave runs unattended; a modal warning every few
@@ -868,11 +904,20 @@ class PrismGraphicsView(CanvasDrawingMixin,
                 _('Problem saving file'),
                 _('<p>Problem saving file %s</p><p>File/directory not accessible</p>') % filename)
         else:
+            if snapshot is not None:
+                snapshot.acknowledge(self.scene, filename)
             self.filename = filename
-            self.undo_stack.setClean()
-            self._content_dirty = False
+            unchanged = (getattr(self, '_save_revision', getattr(self, '_content_revision', 0))
+                         == getattr(self, '_content_revision', 0)
+                         and getattr(self, '_save_undo_index', self.undo_stack.index())
+                         == self.undo_stack.index()
+                         and getattr(self, '_save_undo_revision', getattr(self, '_undo_revision', 0))
+                         == getattr(self, '_undo_revision', 0))
+            if unchanged:
+                self.undo_stack.setClean()
+                self._content_dirty = False
             self.update_window_title()
-            if hasattr(self.parent, 'clear_recovery_snapshot'):
+            if unchanged and hasattr(self.parent, 'clear_recovery_snapshot'):
                 self.parent.clear_recovery_snapshot()
             if silent and hasattr(self.parent, 'statusBar'):
                 self.parent.statusBar().showMessage(
@@ -881,31 +926,55 @@ class PrismGraphicsView(CanvasDrawingMixin,
                     4000)
 
     def do_save(self, filename, create_new, silent=False):
-        self._trace_save_started = trace_time.perf_counter()
-        trace_record('project_save_start', filename=str(filename), create_new=create_new, silent=silent)
-        # Flush editors whose debounce timer may not have fired yet.
-        tabs = getattr(self.parent, 'tabs', None)
-        if tabs is not None:
-            panel = tabs.currentWidget()
-            if hasattr(panel, 'store_to_scene'):
-                panel.store_to_scene()
-        if not fileio.is_prism_file(filename):
-            filename = f'{filename}.prism'
-        self.worker = fileio.ThreadedIO(
-            fileio.save_prism, filename, self.scene, create_new=create_new)
-        if silent:
-            # Still off the UI thread, but with no progress dialog.
-            self.worker.finished.connect(
-                lambda name, errors: self.on_saving_finished(
-                    name, errors, silent=True))
-            self.worker.start()
+        worker = getattr(self, 'worker', None)
+        busy_worker = worker is not None and worker.isRunning()
+        preparing = getattr(self, '_save_preparing', False)
+        if busy_worker or preparing or getattr(self, '_save_board_snapshot', None) is not None:
+            trace_record('project_save_skipped', filename=str(filename), reason=('worker_running' if busy_worker else 'preparing_save' if preparing else 'awaiting_save_ack'), silent=silent)
+            if not silent and hasattr(self.parent, 'statusBar'):
+                self.parent.statusBar().showMessage(_('Saving is already in progress.'), 4000)
             return
-        self.worker.finished.connect(self.on_saving_finished)
-        self.progress = widgets.PrismProgressDialog(
-            f'Saving {filename}',
-            worker=self.worker,
-            parent=self)
-        self.worker.start()
+        self._save_preparing = True
+        try:
+            self._trace_save_started = trace_time.perf_counter()
+            trace_record('project_save_start', filename=str(filename), create_new=create_new, silent=silent)
+            # Flush editors whose debounce timer may not have fired yet.
+            tabs = getattr(self.parent, 'tabs', None)
+            if tabs is not None:
+                panel = tabs.currentWidget()
+                if hasattr(panel, 'store_to_scene'):
+                    if panel.store_to_scene() is False:
+                        trace_record('project_save_skipped', filename=str(filename),
+                                     reason='editor_snapshot_unavailable', silent=silent)
+                        if not silent and hasattr(self.parent, 'statusBar'):
+                            self.parent.statusBar().showMessage(
+                                _('Editor content could not be read. Please retry saving.'), 6000)
+                        return
+            if not fileio.is_prism_file(filename):
+                filename = f'{filename}.prism'
+            self._save_revision = getattr(self, '_content_revision', 0)
+            self._save_undo_index = self.undo_stack.index()
+            self._save_undo_revision = getattr(self, '_undo_revision', 0)
+            from prism.fileio.save_snapshot import BoardSaveSnapshot
+            self._save_board_snapshot = BoardSaveSnapshot.capture(self.scene)
+            self.worker = fileio.ThreadedIO(
+                fileio.save_prism, filename, self.scene, create_new=create_new,
+                board_snapshot=self._save_board_snapshot.state)
+            if silent:
+                # Still off the UI thread, but with no progress dialog.
+                self.worker.finished.connect(
+                    lambda name, errors: self.on_saving_finished(
+                        name, errors, silent=True))
+                self.worker.start()
+                return
+            self.worker.finished.connect(self.on_saving_finished)
+            self.progress = widgets.PrismProgressDialog(
+                f'Saving {filename}',
+                worker=self.worker,
+                parent=self)
+            self.worker.start()
+        finally:
+            self._save_preparing = False
 
     def on_action_save_as(self):
         self.cancel_active_modes()
@@ -999,9 +1068,7 @@ class PrismGraphicsView(CanvasDrawingMixin,
         except ImportFileError as error:
             widgets.PrismNotification(self, str(error))
             return
-        panel._tree = tree
-        panel.store_to_scene()
-        panel.load_from_scene()
+        panel.set_tree(tree)
         self.mark_content_dirty()
         if hasattr(self.parent, 'statusBar'):
             self.parent.statusBar().showMessage(
@@ -1956,17 +2023,9 @@ class PrismGraphicsView(CanvasDrawingMixin,
         if not paths:
             widgets.PrismNotification(self, _('No exportable files selected'))
             return
-        mime = QtCore.QMimeData()
-        mime.setUrls([QtCore.QUrl.fromLocalFile(path) for path in paths])
-        mime.setText('\n'.join(paths))
-        drag = QtGui.QDrag(self)
-        drag.setMimeData(mime)
+        from prism.external_drag import start_file_drag
         preview = getattr(items[0], 'pixmap', lambda: None)()
-        if preview is not None and not preview.isNull():
-            drag.setPixmap(preview.scaled(
-                160, 120, Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation))
-        drag.exec(Qt.DropAction.CopyAction)
+        start_file_drag(self,paths,preview)
 
     def paintEvent(self, event):
         renderer = getattr(self, '_overview_renderer', None)

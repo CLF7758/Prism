@@ -1,0 +1,34 @@
+{
+  "repository": "https://github.com/BabylonJS/Assets",
+  "commit": "c81f5d744fe8d41acfebd89eaeb7008c6f9659e3",
+  "attribution": "Babylon.js Assets contributors",
+  "license": "CC BY 4.0, except asset-specific notices; see included upstream notices",
+  "changes": "Only directory README renamed to avoid name collision; binary unchanged",
+  "status": "Registered in Prism material and GLB preview runtime; binaries unchanged",
+  "files": [
+    {
+      "source": "https://raw.githubusercontent.com/BabylonJS/Assets/c81f5d744fe8d41acfebd89eaeb7008c6f9659e3/environments/studio.env",
+      "path": "studio.env",
+      "sha256": "88639560e8e444eea5ebb15f0f97896f549f469f90afd6839f6ac9f67a40c9e1",
+      "size": 205260
+    },
+    {
+      "source": "https://raw.githubusercontent.com/BabylonJS/Assets/c81f5d744fe8d41acfebd89eaeb7008c6f9659e3/environments/README.md",
+      "path": "environments-README.md",
+      "sha256": "25241fd0d30d534f61eae3e23e4f1a8729efd5d7dcc1ece0b2f9da59aedcfe02",
+      "size": 89
+    },
+    {
+      "source": "https://raw.githubusercontent.com/BabylonJS/Assets/c81f5d744fe8d41acfebd89eaeb7008c6f9659e3/README.md",
+      "path": "README.md",
+      "sha256": "168b688c6848e22134ee9fc6f9ec325ca0b4d4f9be6e4ec86b411edf62b226f0",
+      "size": 1093
+    },
+    {
+      "source": "https://raw.githubusercontent.com/BabylonJS/Assets/c81f5d744fe8d41acfebd89eaeb7008c6f9659e3/LICENSE",
+      "path": "LICENSE",
+      "sha256": "7e7170e3cebf88a9f60c7b8421418323c09304da1af4d5e90f4da1dc1c8a2661",
+      "size": 18650
+    }
+  ]
+}

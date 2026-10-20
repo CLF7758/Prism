@@ -131,6 +131,49 @@ def test_expanded_folders_and_focus_come_back(qtbot):
         page['id']
 
 
+def test_tree_reuses_the_window_settings_without_reopening_it(view, monkeypatch):
+    tree = view.category_panel.resource_tree
+    assert tree._settings_store() is view.settings
+    def unexpected_settings():
+        raise AssertionError('reopening settings on the GUI thread')
+    monkeypatch.setattr('prism.config.PrismSettings', unexpected_settings)
+    service = view.category_panel.resource_service
+    folder = service.createFolder('document', 'Remembered')
+    tree.setCurrentIndex(tree.model().index_for_id(folder['id']))
+    tree.save_state()
+    tree.setCurrentIndex(QtCore.QModelIndex())
+    tree.restore_state()
+    assert tree.currentIndex() == tree.model().index_for_id(folder['id'])
+    tree._state_timer.stop()
+
+
+def test_revisiting_unchanged_tree_does_not_schedule_settings_writes(qtbot, monkeypatch):
+    service, model, tree = make_tree(qtbot, 'unchanged-state')
+    folder = service.createFolder('document', 'Remembered')
+    index = model.index_for_id(folder['id'])
+    tree.setCurrentIndex(index)
+    tree.expand(index)
+    tree.save_state()
+    settings = tree._settings_store()
+    writes = []
+    original = settings.setValue
+
+    def record(key, value):
+        writes.append(key)
+        original(key, value)
+
+    monkeypatch.setattr(settings, 'setValue', record)
+    for _ in range(20):
+        tree.save_state()
+    assert writes == []
+    tree.setCurrentIndex(QtCore.QModelIndex())
+    tree.save_state()
+    assert writes == [tree._state_key('active')]
+    assert settings.value(tree._state_key('active')) == ''
+    assert settings.value(tree._state_key('expanded')) == folder['id']
+    tree._state_timer.stop()
+
+
 def test_state_is_kept_per_project(qtbot):
     """§7.6：状态记在 projectId 下面，不会串到别的工程。"""
     service, model, view = make_tree(qtbot, 'project-one')

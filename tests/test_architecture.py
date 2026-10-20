@@ -125,6 +125,10 @@ def test_the_view_does_not_import_the_file_format_modules():
 
 #: 任务书 §7 T9 列的六个服务，以及它们各自的文件。
 SERVICES = {
+    'prism/material_service.py': 'MaterialLibraryService',
+    'prism/material_transfer.py': None,
+    'prism/material_parameters.py': None,
+    'prism/media_types.py': None,
     'prism/workspace_service.py': 'WorkspaceService',
     'prism/export_service.py': 'ExportService',
     'prism/project_load_service.py': 'ProjectLoadService',

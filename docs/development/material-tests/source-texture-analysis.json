@@ -1,0 +1,436 @@
+[
+  {
+    "file": "1\\T_StoneTile_B_D.PNG",
+    "size": [
+      4096,
+      4096
+    ],
+    "rgba_extrema": [
+      [
+        46,
+        168
+      ],
+      [
+        40,
+        168
+      ],
+      [
+        39,
+        167
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "1\\T_StoneTile_B_N.PNG",
+    "size": [
+      4096,
+      4096
+    ],
+    "rgba_extrema": [
+      [
+        0,
+        255
+      ],
+      [
+        0,
+        255
+      ],
+      [
+        26,
+        255
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "1\\T_StoneTile_B_ORM.PNG",
+    "size": [
+      4096,
+      4096
+    ],
+    "rgba_extrema": [
+      [
+        42,
+        255
+      ],
+      [
+        41,
+        225
+      ],
+      [
+        0,
+        0
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "2\\T_VampireBatSkull_9B5D48_N.PNG",
+    "size": [
+      2048,
+      2048
+    ],
+    "rgba_extrema": [
+      [
+        0,
+        255
+      ],
+      [
+        0,
+        255
+      ],
+      [
+        58,
+        255
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "2\\T_VampireBatSkull_A4614D_BC.PNG",
+    "size": [
+      2048,
+      2048
+    ],
+    "rgba_extrema": [
+      [
+        75,
+        216
+      ],
+      [
+        58,
+        210
+      ],
+      [
+        39,
+        202
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "2\\T_VampireBatSkull_C1B9E0_AO.PNG",
+    "size": [
+      2048,
+      2048
+    ],
+    "rgba_extrema": [
+      [
+        0,
+        255
+      ],
+      [
+        25,
+        204
+      ],
+      [
+        0,
+        0
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "3\\tkimcejew_8K_Albedo.PNG",
+    "size": [
+      8192,
+      8192
+    ],
+    "rgba_extrema": [
+      [
+        7,
+        217
+      ],
+      [
+        2,
+        209
+      ],
+      [
+        0,
+        198
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "3\\tkimcejew_8K_AO.PNG",
+    "size": [
+      8192,
+      8192
+    ],
+    "rgba_extrema": [
+      [
+        0,
+        255
+      ],
+      [
+        0,
+        255
+      ],
+      [
+        0,
+        255
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "3\\tkimcejew_8K_Displacement.PNG",
+    "size": [
+      8192,
+      8192
+    ],
+    "rgba_extrema": [
+      [
+        37,
+        227
+      ],
+      [
+        37,
+        227
+      ],
+      [
+        37,
+        227
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "3\\tkimcejew_8K_Normal.PNG",
+    "size": [
+      8192,
+      8192
+    ],
+    "rgba_extrema": [
+      [
+        0,
+        255
+      ],
+      [
+        0,
+        255
+      ],
+      [
+        117,
+        255
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "3\\tkimcejew_8K_Roughness.PNG",
+    "size": [
+      8192,
+      8192
+    ],
+    "rgba_extrema": [
+      [
+        106,
+        248
+      ],
+      [
+        106,
+        248
+      ],
+      [
+        106,
+        248
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "4\\T_wiljearqx_2K_B.PNG",
+    "size": [
+      2048,
+      2048
+    ],
+    "rgba_extrema": [
+      [
+        58,
+        240
+      ],
+      [
+        46,
+        230
+      ],
+      [
+        0,
+        182
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "4\\T_wiljearqx_2K_N.PNG",
+    "size": [
+      2048,
+      2048
+    ],
+    "rgba_extrema": [
+      [
+        25,
+        240
+      ],
+      [
+        50,
+        215
+      ],
+      [
+        187,
+        255
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  },
+  {
+    "file": "4\\T_wiljearqx_2K_ORT.PNG",
+    "size": [
+      2048,
+      2048
+    ],
+    "rgba_extrema": [
+      [
+        0,
+        255
+      ],
+      [
+        130,
+        255
+      ],
+      [
+        0,
+        224
+      ],
+      [
+        255,
+        255
+      ]
+    ],
+    "alpha": {
+      "opaque_fraction": 1.0,
+      "zero_fraction": 0.0,
+      "intermediate_fraction": 0.0,
+      "unique_values": 1
+    }
+  }
+]

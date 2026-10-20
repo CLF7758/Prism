@@ -542,17 +542,16 @@
         });
         if (uid && mindMap.renderer.root && exists) {
           if (!searchViewOrigin) searchViewOrigin = mindMap.view.getTransformData();
-          const before = new Map();
+          // Rendering a previously collapsed subtree can normalize its
+          // descendants asynchronously. Remember their values before the
+          // jump, rather than inspecting only synchronous expansion changes.
           walkSearchTree(mindMap.renderer.renderTree, node => {
-            if (node.data) before.set(node.data.uid, node.data.expand);
+            if (node.data && !searchExpanded.has(node.data.uid)) {
+              searchExpanded.set(node.data.uid, node.data.expand);
+            }
           });
           searchLocating = true;
           mindMap.renderer.goTargetNode(uid, () => { searchLocating = false; });
-          walkSearchTree(mindMap.renderer.renderTree, node => {
-            if (node.data && !before.get(node.data.uid) && node.data.expand === true && !searchExpanded.has(node.data.uid)) {
-              searchExpanded.set(node.data.uid, before.get(node.data.uid));
-            }
-          });
         } else if (++attempts < 40) {
           setTimeout(locate, 50);
         }
@@ -570,8 +569,8 @@
       const exec = mindMap.execCommand.bind(mindMap);
       mindMap.execCommand = (command, ...args) => {
         // Explicit user collapse/expand owns its value; returning must not undo it.
-        if (command === 'SET_NODE_EXPAND' && args[0]) searchExpanded.delete(args[0].getData('uid'));
-        if (command === 'EXPAND_ALL' || command === 'UNEXPAND_TO_LEVEL') searchExpanded.clear();
+        if (!searchLocating && command === 'SET_NODE_EXPAND' && args[0]) searchExpanded.delete(args[0].getData('uid'));
+        if (!searchLocating && (command === 'EXPAND_ALL' || command === 'UNEXPAND_TO_LEVEL')) searchExpanded.clear();
         return exec(command, ...args);
       };
       mindMap.on('data_change', () => {
@@ -619,6 +618,7 @@
         if (data) {
           data.text = plainText(data.text);
           delete data.isActive;
+          delete data.resetRichText; // Editor rendering flag, not saved content.
           if (searchExpanded.has(data.uid) && data.expand === true) {
             const original = searchExpanded.get(data.uid);
             if (original === undefined) delete data.expand;

@@ -61,7 +61,7 @@ GLB_MAGIC = 0x46546C67          # 'glTF'
 JSON_CHUNK_TYPE = 0x4E4F534A    # 'JSON'
 BIN_CHUNK_TYPE = 0x004E4942     # 'BIN\0'
 
-GLB_EXTENSIONS = {'.glb', '.gltf'}
+from prism.media_types import GLB_EXTENSIONS
 
 #: Files larger than this cannot be previewed (keeps parsing bounded).
 MAX_FILE_BYTES = 256 * 1024 * 1024

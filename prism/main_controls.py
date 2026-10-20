@@ -29,11 +29,7 @@ from prism import fileio
 logger = logging.getLogger(__name__)
 
 # Common image extensions (avoids QImageReader.canRead which crashes on non-image files)
-_IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff', '.tif',
-               '.svg', '.ico', '.jfif', '.jpe', '.ppm', '.pgm', '.pbm', '.xbm', '.xpm',
-               '.psd', '.exr', '.hdr',
-               # 3D models: dropped like images, previewed as their own item
-               '.glb', '.gltf'}
+from prism.media_types import DROP_IMAGE_EXTENSIONS as _IMAGE_EXTS
 
 
 class MainControlsMixin:

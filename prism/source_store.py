@@ -6,9 +6,33 @@ import sqlite3
 import tempfile
 import threading
 import uuid
+from collections import OrderedDict
 
 _directory = None
 _lock = threading.Lock()
+_archive_sizes = OrderedDict()
+
+
+def remember_archive_sizes(filename, sizes):
+    """Publish byte metadata gathered by project IO, never by a paint event."""
+    path = str(Path(filename).resolve())
+    stat = os.stat(path)
+    key = (path, stat.st_mtime_ns, stat.st_size)
+    with _lock:
+        for previous in [k for k in _archive_sizes if k[0] == path]:
+            del _archive_sizes[previous]
+        _archive_sizes[key] = dict(sizes)
+        while len(_archive_sizes) > 8:
+            _archive_sizes.popitem(last=False)
+
+
+def known_archive_sizes(filename, stat):
+    key = (str(Path(filename).resolve()), stat.st_mtime_ns, stat.st_size)
+    with _lock:
+        sizes = _archive_sizes.get(key)
+        if sizes is not None:
+            _archive_sizes.move_to_end(key)
+        return sizes
 
 
 def reserve_file(suffix):
@@ -127,11 +151,16 @@ def storage_bytes(items, cache):
                     archive_keys[source[0]] = (source[0], stat.st_mtime_ns, stat.st_size)
                 key = archive_keys[source[0]]
                 if key not in cache:
-                    archive = sqlite3.connect(Path(source[0]).resolve().as_uri() + '?mode=ro', uri=True)
-                    try:
-                        sizes = dict(archive.execute('SELECT item_id, COALESCE(sz,length(data)) FROM sqlar'))
-                    finally:
-                        archive.close()
+                    sizes = known_archive_sizes(source[0], stat)
+                    if sizes is None:
+                        # Old/external records may not have passed through the
+                        # project loader. A busy writer must not freeze the UI
+                        # for SQLite's five-second default timeout.
+                        archive = sqlite3.connect(Path(source[0]).resolve().as_uri() + '?mode=ro', uri=True, timeout=.05)
+                        try:
+                            sizes = dict(archive.execute('SELECT item_id, COALESCE(sz,length(data)) FROM sqlar'))
+                        finally:
+                            archive.close()
                     for previous in [previous for previous in cache if previous[0] == source[0]]:
                         del cache[previous]
                     cache[key] = sizes

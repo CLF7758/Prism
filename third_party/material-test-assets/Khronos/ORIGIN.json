@@ -1,0 +1,84 @@
+{
+  "date": "2026-10-19",
+  "source": "https://github.com/KhronosGroup/glTF-Sample-Assets",
+  "purpose": "Official emissive-texture and alpha blend/mask test fixtures; not user material data",
+  "files": [
+    {
+      "path": "Models/AlphaBlendModeTest/README.md",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/AlphaBlendModeTest/README.md",
+      "bytes": 5355,
+      "sha256": "46fc7fc9379cf043985b3555d4d06e8383bdf2195c421ce2c494988c8bfe4bdc"
+    },
+    {
+      "path": "Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/AlphaBlendModeTest/glTF/AlphaBlendModeTest.gltf",
+      "bytes": 31620,
+      "sha256": "49e06672900df95593040d35bbc7a2ee5921ae8d46edc44b64ccf2df65e64849"
+    },
+    {
+      "path": "Models/AlphaBlendModeTest/glTF/AlphaBlendLabels.png",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/AlphaBlendModeTest/glTF/AlphaBlendLabels.png",
+      "bytes": 58424,
+      "sha256": "19c705f7e207384ca1ab01e0665601c051ca33c5848c03ce4fffad625b416b53"
+    },
+    {
+      "path": "Models/CompareEmissiveStrength/README.md",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CompareEmissiveStrength/README.md",
+      "bytes": 1526,
+      "sha256": "c178ed1bafccce0d5f6c3e037ea9c26e5969e8253df2f656da0a459172fd9111"
+    },
+    {
+      "path": "Models/CompareEmissiveStrength/glTF/CompareEmissiveStrength.gltf",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CompareEmissiveStrength/glTF/CompareEmissiveStrength.gltf",
+      "bytes": 5473,
+      "sha256": "c9d8f7b9cbaf6b54961b86b23c34a1dee23b99f22220507340e330db61287970"
+    },
+    {
+      "path": "Models/CompareEmissiveStrength/glTF/Compare_Emissive-Strength_img0.jpg",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CompareEmissiveStrength/glTF/Compare_Emissive-Strength_img0.jpg",
+      "bytes": 50295,
+      "sha256": "7900f41ce34ee5a0922b4b03983875154e13ec165b17df05e4559d843a184d87"
+    },
+    {
+      "path": "REUSE.toml",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/REUSE.toml",
+      "bytes": 26443,
+      "sha256": "87e20d6a4d9700eff81ad15399fcd161bba78b91250bf8706ce3fce737d6b938"
+    },
+    {
+      "path": "LICENSES/CC-BY-4.0.txt",
+      "url": "https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/LICENSES/CC-BY-4.0.txt",
+      "upstream": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/main/LICENSES/CC-BY-4.0.txt",
+      "size": 13034,
+      "sha256": "c8041334a99cb48852b2139253cbde5f8ac87e27f124aed51223e0d5bf0080eb"
+    },
+    {
+      "path": "LICENSES/CC0-1.0.txt",
+      "url": "https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/LICENSES/CC0-1.0.txt",
+      "upstream": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/main/LICENSES/CC0-1.0.txt",
+      "size": 6533,
+      "sha256": "a43fc2004d1e073f1107a1f6146664d08dae6cea93cb828742a4bec6da828e91"
+    },
+    {
+      "path": "LICENSES/LicenseRef-LegalMark-Khronos.txt",
+      "url": "https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/LICENSES/LicenseRef-LegalMark-Khronos.txt",
+      "upstream": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/main/LICENSES/LicenseRef-LegalMark-Khronos.txt",
+      "size": 589,
+      "sha256": "2ea9821de870cf8d3faaa115ffc47f56632bf9f98d54d2ac1ce61592040b765c"
+    },
+    {
+      "path": "Models/BoxTextured/README.md",
+      "url": "https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/BoxTextured/README.md",
+      "upstream": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/main/Models/BoxTextured/README.md",
+      "size": 1159,
+      "sha256": "5ccb8002776081436039f9538dd9eaa9d9faa7843e62efcfaf6ff60eee0f07cc"
+    },
+    {
+      "path": "Models/BoxTextured/glTF-Binary/BoxTextured.glb",
+      "url": "https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/BoxTextured/glTF-Binary/BoxTextured.glb",
+      "upstream": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/main/Models/BoxTextured/glTF-Binary/BoxTextured.glb",
+      "size": 5956,
+      "sha256": "b510eca2e2ef33f62f9ed57d6e7ce2d10ebb2bdebc4a8e59d347719ba81abdf4"
+    }
+  ]
+}

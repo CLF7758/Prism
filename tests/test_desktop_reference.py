@@ -124,20 +124,20 @@ def test_tools_follow_owner_and_hide_on_other_reference(qapp, qtbot):
     b.close()
 
 
-def test_nested_menu_wait_is_not_counted_as_a_blocking_dispatch():
-    from collections import Counter
+def test_nested_menu_wait_is_not_counted_as_a_blocking_dispatch(main_window, qapp, tmp_path):
     from unittest.mock import Mock
-    from prism.performance_trace import PerformanceTrace
-    from types import SimpleNamespace
-    trace = SimpleNamespace()
-    trace.counts, trace.max_dispatch, trace.last_action = Counter(), 0, None
+    from prism.performance_trace import install
+    trace = install(qapp, main_window, tmp_path)
     trace.record = Mock()
-    PerformanceTrace.dispatch_finished(trace, object(), 82, 6500, nested_loop=True)
-    assert trace.record.call_args.args[0] == 'nested_dispatch'
-    assert trace.max_dispatch == 0
-    PerformanceTrace.dispatch_finished(trace, object(), 82, 800)
-    assert trace.record.call_args.args[0] == 'slow_dispatch'
-    assert trace.max_dispatch == 800
+    try:
+        trace.dispatch_finished(object(), 82, 6500, nested_loop=True)
+        assert trace.record.call_args.args[0] == 'nested_dispatch'
+        assert trace.max_dispatch == 0
+        trace.dispatch_finished(object(), 82, 800)
+        assert trace.record.call_args.args[0] == 'slow_dispatch'
+        assert trace.max_dispatch == 800
+    finally:
+        trace.close()
 
 
 def test_reference_uses_full_scene_selection_contract(qapp, qtbot):

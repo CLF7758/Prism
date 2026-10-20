@@ -316,7 +316,10 @@ def test_index_works_against_the_real_sample_project():
 
     这是唯一一条用真项目数据的测试 —— 上面那些都是造的。样例不在就跳过。
     """
-    real = os.path.join(os.path.expanduser('~'), 'Desktop', '秋雨参考.prism')
+    explicit = os.environ.get('PRISM_AUDIT_PROJECT')
+    real = explicit or os.path.join(os.path.expanduser('~'), 'Desktop', '秋雨参考.prism')
+    if explicit:
+        assert os.path.isfile(real), 'PRISM_AUDIT_PROJECT must name an existing audit copy'
     if not os.path.exists(real):
         pytest.skip('固定样例不在')
     if os.path.exists(f'{real}-journal'):

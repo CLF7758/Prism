@@ -530,13 +530,18 @@ def tag_system(scene):
 
 
 def tag_names_of_items(scene):
-    """The tags that are actually in use on the board, with their counts."""
+    """Tags used by canvas assets and material records, with their counts."""
     getter = getattr(scene, 'get_all_tags', None)
     if callable(getter):
-        return dict(getter())
-    counts = {}
-    for item in getattr(scene, 'items', list)():
-        for name in getattr(item, '_tags', []) or []:
+        counts = dict(getter())
+    else:
+        counts = {}
+        for item in getattr(scene, 'items', list)():
+            for name in getattr(item, '_tags', []) or []:
+                counts[name] = counts.get(name, 0) + 1
+    from prism.material_service import iter_visible_materials
+    for material in iter_visible_materials(scene):
+        for name in set(material.get('tags', [])):
             counts[name] = counts.get(name, 0) + 1
     return counts
 

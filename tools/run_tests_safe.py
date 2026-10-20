@@ -16,6 +16,9 @@
 结果写在 tools/test_report.txt，随时可以读，不用等它跑完。
 """
 import argparse
+import json
+from pathlib import Path
+import xml.etree.ElementTree as ET
 import os
 import subprocess
 import sys
@@ -23,6 +26,9 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = sys.executable
+PLATFORM = 'offscreen'
+RESULT_DIR = None
+RESULTS = []
 
 #: 默认报告按时间戳命名。写死成一个固定的名字（以前是 test_report.txt）
 #: 会让并发跑测试的几个人互相覆盖 —— T3 就踩到了这个。
@@ -72,64 +78,67 @@ def collect_test_ids(path, timeout):
 
 def test_env():
     env = dict(os.environ)
-    env['QT_QPA_PLATFORM'] = 'offscreen'
+    env['QT_QPA_PLATFORM'] = PLATFORM
     env['PYTHONIOENCODING'] = 'utf-8'
     env['PYTHONUNBUFFERED'] = '1'
     return env
 
 
 def run_one(target, timeout):
-    """跑一个目标。返回 (状态, 摘要, 输出尾部)。"""
-    cmd = [PY, '-u', '-m', 'pytest', target, '-q', '--tb=line',
-           '-p', 'no:cacheprovider']
+    """Bound each test file, retain detailed evidence, count crashes as failures."""
+    name = target.replace('::', '__').replace('/', '_').replace(chr(92), '_')
+    xml_path = Path(RESULT_DIR)/(name + '.xml') if RESULT_DIR else None
+    cmd = [PY, '-u', '-m', 'pytest', target, '-v', '--tb=short',
+           '-o', 'faulthandler_timeout=25', '-p', 'no:cacheprovider']
+    if xml_path:
+        cmd.append('--junitxml=' + str(xml_path))
+    started = time.perf_counter()
+    proc = subprocess.Popen(cmd, cwd=ROOT, env=test_env(), stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, env=test_env(),
-                              capture_output=True, text=True,
-                              encoding='utf-8', errors='replace',
-                              timeout=timeout)
-    except subprocess.TimeoutExpired as expired:
-        partial = ''
-        if expired.stdout:
-            partial = expired.stdout if isinstance(expired.stdout, str) \
-                else expired.stdout.decode('utf-8', 'replace')
-        return 'HANG', f'超过 {timeout} 秒', partial[-400:]
-    out = (proc.stdout or '') + (proc.stderr or '')
-    summary = ''
-    for line in reversed(out.splitlines()):
-        stripped = line.strip()
-        if stripped and stripped[0].isdigit() and (
-                'passed' in stripped or 'failed' in stripped
-                or 'error' in stripped):
-            summary = stripped
-            break
-
+        out, _ = proc.communicate(timeout=timeout)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        # Kill only this test process tree, including the Windows venv launcher child.
+        if os.name == 'nt':
+            subprocess.run(['taskkill', '/PID', str(proc.pid), '/T', '/F'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            proc.kill()
+        out, _ = proc.communicate()
+        timed_out = True
+    result = dict(target=target, seconds=round(time.perf_counter()-started, 3),
+                  returncode=proc.returncode, timed_out=timed_out)
+    if xml_path and xml_path.exists():
+        root = ET.parse(xml_path).getroot()
+        suites = [root] if root.tag == 'testsuite' else list(root.iter('testsuite'))
+        for key in ('tests', 'failures', 'errors', 'skipped'):
+            result[key] = sum(int(s.get(key, 0)) for s in suites)
+        result['passed'] = result['tests']-result['failures']-result['errors']-result['skipped']
+    else:
+        result['partial_passed'] = sum(line.startswith('tests/') and ' PASSED ' in line
+                                      for line in out.splitlines())
+    result['status'] = 'HANG' if timed_out else 'PASS' if proc.returncode == 0 else 'FAIL'
+    RESULTS.append(result)
+    if RESULT_DIR:
+        Path(RESULT_DIR, name+'.log').write_text(out, encoding='utf-8')
+        Path(RESULT_DIR, 'summary.json').write_text(json.dumps(RESULTS, indent=2), encoding='utf-8')
+    if timed_out:
+        return 'HANG', f'timeout after {timeout}s', out[-4000:]
+    summary = next((line.strip() for line in reversed(out.splitlines())
+                    if ' passed' in line or ' failed' in line or ' error' in line), '')
     if proc.returncode == 0:
         return 'PASS', summary, out
-
-    # 测试全过、但进程带着崩溃码退出。已知的一个：PrismVideoItem 一进
-    # 场景就为缩略图建 QMediaPlayer/QVideoSink，无头环境下媒体后端起不来，
-    # 进程收尾时访问冲突（0xC0000005）。测试本身确实通过了，报成 FAIL
-    # 会让人以为测试坏了 —— 报 PASS* 并注明退出码。
-    # 退出码在 Windows 上可能是有符号也可能无符号（0xC0000005 可能是
-    # -1073741811 也可能是 3221225477），统一按无符号看。
-    unsigned = proc.returncode & 0xFFFFFFFF
-    only_passed = ('passed' in summary and 'failed' not in summary
-                   and 'error' not in summary)
-    # Windows 的异常退出码都在 0xC0000000 以上。不逐个列举具体码：同一个
-    # 文件实测跑出过 0xC0000005 和 0xC000000D，收尾阶段的析构顺序不定，
-    # 崩在哪就换哪个码。只看「测试全过、退出码却是异常高位」这个特征。
-    if only_passed and unsigned >= 0xC0000000:
-        return ('PASS*', f'{summary}  [进程以 0x{unsigned:X} 退出：'
-                         f'媒体后端退出期崩溃，测试本身通过]', out)
-    return 'FAIL', summary, out
+    return 'FAIL', summary + f' [exit {proc.returncode}]', out
 
 
 def main():
-    global REPORT
+    global REPORT, PLATFORM, RESULT_DIR
 
     parser = argparse.ArgumentParser()
     parser.add_argument('targets', nargs='*')
     parser.add_argument('--timeout', type=int, default=120)
+    parser.add_argument('--platform', choices=['windows', 'offscreen'], default='offscreen')
     parser.add_argument('--report', default=REPORT,
                         help='报告写到哪（默认 tools/test_report.txt）')
     parser.add_argument('--per-test', action='store_true',
@@ -137,6 +146,9 @@ def main():
     args = parser.parse_args()
 
     REPORT = args.report
+    PLATFORM = args.platform
+    RESULT_DIR = str(Path(REPORT).with_suffix(''))
+    Path(RESULT_DIR).mkdir(parents=True, exist_ok=True)
     os.makedirs(os.path.dirname(REPORT), exist_ok=True)
     open(REPORT, 'w', encoding='utf-8').close()
     files = collect_files(args.targets)
@@ -194,6 +206,8 @@ def main():
                 if head.isdigit():
                     passed_total += int(head)
 
+    passed_total = sum(r.get('passed', 0) for r in RESULTS)
+    failed_total = sum(r.get('failures', 0)+r.get('errors', 0) for r in RESULTS)
     write()
     write('=' * 70)
     write(f'合计 {passed_total} 过 / {failed_total} 败')

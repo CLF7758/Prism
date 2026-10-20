@@ -1,0 +1,9 @@
+{
+  "package": "babylonjs",
+  "version": "8.26.0",
+  "url": "https://registry.npmjs.org/babylonjs/-/babylonjs-8.26.0.tgz",
+  "tarball_sha256": "e03c23b580a0a00cda65f72fe473ad851ac4d3c62cc72c06916e7cd6ed5d1b93",
+  "license": "Apache-2.0",
+  "runtimeFile": "babylon.js",
+  "runtimeSha256": "43c914e0d8140811f13f2739bdc73a3d8491a04fd9530e54044718e9e15821e9"
+}

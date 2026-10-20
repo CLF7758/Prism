@@ -13,6 +13,11 @@ class MaterialCard:
         self.host, self.row = host, row
         self._x = self._y = 0.0
         item = host.model().items[row]
+        if isinstance(item, dict):
+            from prism.widgets.search_canvas import SearchCard
+            width = host.gridSize().width()
+            self._size = QtCore.QSizeF(width, width*SearchCard.HEIGHT/SearchCard.WIDTH)
+            return
         crop = getattr(item, 'crop', QtCore.QRectF())
         size = crop.size() if not crop.isEmpty() else QtCore.QSizeF(getattr(item, '_image_size', host.gridSize()))
         self._size = size.scaled(QtCore.QSizeF(host.gridSize().width(), host.gridSize().width()),
@@ -239,6 +244,9 @@ class AssetCanvas(QtWidgets.QGraphicsView):
 
     def currentIndex(self):
         return self._selection.currentIndex()
+
+    def setCurrentIndex(self, index):
+        self._selection.setCurrentIndex(index, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect)
 
     def indexAt(self, position):
         point = self.mapToScene(position)

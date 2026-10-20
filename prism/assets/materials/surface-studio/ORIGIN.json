@@ -1,0 +1,26 @@
+{
+  "project": "SurfaceStudio",
+  "source": "https://github.com/XXLDinosaur/SurfaceStudio",
+  "local_source": "E:\\eyes\\SurfaceStudio-main\\SurfaceStudio-main",
+  "license": "GPL-3.0-only",
+  "copyright": "Copyright (C) 2026 XXLDinosaur",
+  "files": {
+    "LICENSE": {
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "local_file": "LICENSE"
+    },
+    "public/style.css": {
+      "sha256": "b836762a9a1840a9f7a3a85cc29839c4871fca2db30315c1c9f7a4c4534571b0",
+      "local_file": "style.css"
+    },
+    "public/app.js": {
+      "sha256": "8f0b6e7482804212168cebd5d31345c292e3660d95a9bf4bed74611726d5b605",
+      "local_file": "upstream-app.js"
+    },
+    "public/index.html": {
+      "sha256": "cf96abd7f3e3cb937f69be27850c40e4d7fa5d3fa76843393123874ed3b94681",
+      "local_file": "upstream-index.html"
+    }
+  },
+  "integration": "Reuse original card renderer, HTML symbols and stylesheet. Prism owns selection, saved records and file storage. No Blender bridge is loaded."
+}

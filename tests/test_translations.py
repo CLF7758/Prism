@@ -52,7 +52,7 @@ def translated_strings():
             path = os.path.join(root, name)
             relative = os.path.relpath(path, PROJECT_ROOT)
             try:
-                tree = ast.parse(open(path, encoding='utf-8').read())
+                tree = ast.parse(open(path, encoding='utf-8-sig').read())
             except (SyntaxError, UnicodeDecodeError):
                 continue
             for node in ast.walk(tree):
@@ -164,7 +164,18 @@ def test_unused_entries_are_reported_but_not_fatal():
     所以这条不断言"必须为空"，只在**数量暴涨**时报警：那说明有人改文案
     没更新字典，或者加了新写法。
     """
-    found = translated_strings()
+    # Static UI tables call _(variable), so direct _("literal") calls miss
+    # their translations. Include all source literals in this diagnostic
+    # inventory, retaining the existing unused-entry threshold.
+    found = set(translated_strings())
+    for root, _dirs, files in os.walk(PACKAGE):
+        for name in files:
+            if not name.endswith('.py') or name in SKIP_FILES:
+                continue
+            with open(os.path.join(root, name), encoding='utf-8-sig') as source:
+                tree = ast.parse(source.read())
+            found.update(node.value for node in ast.walk(tree)
+                         if isinstance(node, ast.Constant) and isinstance(node.value, str))
     unused = [key for key in zh_CN if key not in found]
 
     # 现在的实测值是 93。放宽到 150 —— 越过就说明哪里不对了。

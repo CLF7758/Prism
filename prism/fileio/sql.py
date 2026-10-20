@@ -83,8 +83,9 @@ def handle_sqlite_errors(func):
 class SQLiteIO:
 
     def __init__(self, filename, scene, create_new=False, readonly=False,
-                 worker=None):
+                 worker=None, board_snapshot=None):
         self.scene = scene
+        self.board_snapshot = board_snapshot
         self.create_new = create_new
         self.filename = filename
         self.readonly = readonly
@@ -109,6 +110,9 @@ class SQLiteIO:
         backup = f'{self.filename}.bak'
         try:
             shutil.copyfile(self.filename, backup)
+            attachments = getattr(self.scene, 'attachments', None)
+            if hasattr(attachments, 'relocate_source'):
+                attachments.relocate_source(self.filename, backup)
             logger.warning(
                 'Unreadable file kept as %s before rebuilding', backup)
         except OSError:
@@ -183,7 +187,13 @@ class SQLiteIO:
         if not self.create_new:
             try:
                 self._migrate()
+            except (sqlite3.OperationalError, PermissionError):
+                # Busy, readonly, disk-full and IO failures are not damaged
+                # schemas. Rebuilding a healthy file cannot fix these errors.
+                raise
             except Exception:
+                if self.readonly:
+                    raise
                 # Updating a file failed; try creating it from scratch instead
                 logger.exception('Error migrating bee file')
                 self.create_new = True
@@ -260,6 +270,9 @@ class SQLiteIO:
         self.ex('PRAGMA foreign_keys=ON')
 
     def create_schema_on_new(self):
+        # Opening an invalid/missing destination can select a backed-up
+        # rebuild. Resolve that decision before checking create_new.
+        self.connection
         if self.create_new:
             self.write_meta()
             for schema in SCHEMA:
@@ -313,7 +326,12 @@ class SQLiteIO:
 
         from prism import asset_records
         virtual_images = sum(row[1] == 'pixmap' for row in rows) >= asset_records.MIN_VIRTUAL_IMAGES
-        empty_originals = {row[0] for row in self.fetchall('SELECT item_id FROM sqlar WHERE data IS NULL OR length(data)=0')}
+        original_metadata = self.fetchall(
+            'SELECT item_id, COALESCE(sz,length(data)), data IS NULL OR length(data)=0 FROM sqlar')
+        original_sizes = {key: size for key, size, _empty in original_metadata}
+        from prism.source_store import remember_archive_sizes
+        remember_archive_sizes(self.filename, original_sizes)
+        empty_originals = {key for key, _size, empty in original_metadata if empty}
 
         for i, row in enumerate(rows):
             data = {
@@ -481,6 +499,10 @@ class SQLiteIO:
         try:
             self.create_schema_on_new()
             self.write_data()
+        except sqlite3.OperationalError:
+            for item, save_id in previous_ids:
+                item.save_id = save_id
+            raise
         except sqlite3.DatabaseError:
             if self.retry:
                 # Trying to recover failed
@@ -509,17 +531,18 @@ class SQLiteIO:
             self._batch_write = False
 
     def _write_data_batch(self):
+        metadata = self.board_snapshot if self.board_snapshot is not None else self.scene
         self.ex('CREATE TABLE IF NOT EXISTS prism_metadata (key TEXT PRIMARY KEY, value TEXT)')
         self.ex('INSERT OR REPLACE INTO prism_metadata VALUES (?, ?)',
-                ('library_queries', json.dumps(getattr(self.scene, 'library_queries', []), ensure_ascii=False)))
-        names = list(self.scene.category_names)
+                ('library_queries', json.dumps(getattr(metadata, 'library_queries', []), ensure_ascii=False)))
+        names = list(metadata.category_names)
         for item in self.scene.items_for_save():
             for name in getattr(item, '_categories', []):
                 if name not in names:
                     names.append(name)
         self.ex('INSERT OR REPLACE INTO prism_metadata VALUES (?, ?)',
                 ('categories', json.dumps(names, ensure_ascii=False)))
-        tag_names = list(getattr(self.scene, 'tag_names', []))
+        tag_names = list(getattr(metadata, 'tag_names', []))
         for item in self.scene.items_for_save():
             for name in getattr(item, '_tags', []):
                 if name not in tag_names:
@@ -531,7 +554,7 @@ class SQLiteIO:
         # plain list of strings.
         self.ex('INSERT OR REPLACE INTO prism_metadata VALUES (?, ?)',
                 ('tag_system', json.dumps(
-                    tag_system(self.scene).to_dict(), ensure_ascii=False)))
+                    tag_system(metadata).to_dict(), ensure_ascii=False)))
         self.connection.commit()
         for error in self.scene.items_by_type(PrismErrorItem.TYPE):
             source = getattr(error, '_asset_source', None)
@@ -603,6 +626,9 @@ class SQLiteIO:
         self.delete_items(to_delete)
         self.write_board_extras()
         self.connection.commit()
+        from prism.source_store import remember_archive_sizes
+        remember_archive_sizes(self.filename, dict(self.fetchall(
+            'SELECT item_id, COALESCE(sz,length(data)) FROM sqlar')))
         for item in saved:
             if getattr(item, 'TYPE', None) == 'pixmap' and item.save_id:
                 item._prism_source = (str(self.filename), item.save_id)
@@ -654,6 +680,8 @@ class SQLiteIO:
         self.scene.mindmap_tree = None
         self.scene.workspace_pages = []
         self.scene.workspace_nodes = []
+        self.scene.material_records = []
+        self.scene.material_library_state = {}
         self.scene.project_id = uuid.uuid4().hex
         try:
             row = self.fetchone(
@@ -733,8 +761,30 @@ class SQLiteIO:
             # recreates them on the next save.
             logger.debug('No note/attachment tables in this file')
 
+        table = self.fetchone(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='material_records'")
+        if table:
+            try:
+                records = [json.loads(payload) for (payload,) in self.fetchall(
+                    'SELECT payload FROM material_records ORDER BY rowid')]
+                from prism.material_service import validate_material_records
+                validate_material_records(records, self.scene.project_id)
+            except (ValueError, TypeError) as exc:
+                raise ValueError('材质库数据损坏，已停止读取以避免覆盖') from exc
+            self.scene.material_records = records
+        try:
+            row = self.fetchone(
+                "SELECT value FROM prism_metadata WHERE key='material_library_state'")
+            state = json.loads(row[0]) if row and row[0] else {}
+            if isinstance(state, dict):
+                self.scene.material_library_state = state
+        except (sqlite3.OperationalError, ValueError, TypeError):
+            logger.debug('No saved material-library navigation state')
+
     def write_board_extras(self):
         """Persist the note, its attachments and the mind map tree."""
+        scene = self.board_snapshot if self.board_snapshot is not None else self.scene
         # Created here as well as in the schema, mirroring how write_data
         # handles prism_metadata: a file that was never fully initialised
         # still saves instead of failing on a missing table.
@@ -757,39 +807,48 @@ class SQLiteIO:
                 ' sort_order INTEGER NOT NULL DEFAULT 0)')
         self.ex('CREATE TABLE IF NOT EXISTS workspace_nodes ('
                 'id TEXT PRIMARY KEY, payload JSON NOT NULL)')
+        self.ex('CREATE TABLE IF NOT EXISTS material_records ('
+                'id TEXT PRIMARY KEY, payload JSON NOT NULL)')
         self.ex('CREATE TABLE IF NOT EXISTS prism_metadata ('
                 'key TEXT PRIMARY KEY, value TEXT)')
         self.ex('INSERT OR REPLACE INTO prism_metadata VALUES (?, ?)',
-                ('project_id', self.scene.project_id))
+                ('project_id', scene.project_id))
         now = int(time.time())
-        html = getattr(self.scene, 'note_html', '') or ''
+        html = getattr(scene, 'note_html', '') or ''
         self.ex('INSERT OR REPLACE INTO board_notes '
                 '(board_id, html, updated_at) VALUES (0, ?, ?)', (html, now))
 
-        for attachment_id, entry in (
-                getattr(self.scene, 'attachments', {}) or {}).items():
+        attachments = getattr(scene, 'attachments', {}) or {}
+        entries = (attachments.entries_for_save(self.connection, self.filename)
+                   if hasattr(attachments, 'entries_for_save') else attachments.items())
+        saved_versions = []
+        for attachment_id, entry in entries:
+            if attachment_id in getattr(attachments, '_dirty', ()):
+                saved_versions.append((attachment_id, entry))
             name, mime, blob = entry
+            if blob is None:
+                raise ValueError(f'Original attachment {attachment_id} is unreadable; save stopped')
             self.ex('INSERT OR REPLACE INTO attachments '
                     '(id, board_id, name, mime, blob, created_at) '
                     'VALUES (?, 0, ?, ?, ?, ?)',
                     (attachment_id, name, mime, blob, now))
 
         # Attachments removed from the note are dropped from the file too.
-        keep = set((getattr(self.scene, 'attachments', {}) or {}).keys())
+        keep = set((getattr(scene, 'attachments', {}) or {}).keys())
         existing = {row[0] for row in self.fetchall(
             'SELECT id FROM attachments WHERE board_id = 0')}
         stale = [(pk,) for pk in existing - keep]
         if stale:
             self.exmany('DELETE FROM attachments WHERE id=?', stale)
 
-        tree = getattr(self.scene, 'mindmap_tree', None)
+        tree = getattr(scene, 'mindmap_tree', None)
         if tree is not None:
             self.ex('INSERT OR REPLACE INTO board_mindmap '
                     '(board_id, tree, updated_at) VALUES (0, ?, ?)',
                     (json.dumps(tree, ensure_ascii=False), now))
         self.ex('DELETE FROM workspace_pages')
         for order, page in enumerate(
-                getattr(self.scene, 'workspace_pages', []) or []):
+                getattr(scene, 'workspace_pages', []) or []):
             self.ex(
                 'INSERT INTO workspace_pages '
                 '(id, kind, title, data, sort_order) VALUES (?, ?, ?, ?, ?)',
@@ -800,11 +859,23 @@ class SQLiteIO:
                              'parent': page.get('parent'),
                              'permanent': bool(page.get('permanent'))},
                             ensure_ascii=False), order))
+        from prism.material_service import validate_material_records
+        records = getattr(scene, 'material_records', [])
+        validate_material_records(records, scene.project_id)
+        self.ex('DELETE FROM material_records')
+        for record in records:
+            self.ex('INSERT INTO material_records (id, payload) VALUES (?, ?)',
+                    (record['id'], json.dumps(record, ensure_ascii=False, allow_nan=False)))
+        self.ex('INSERT OR REPLACE INTO prism_metadata VALUES (?, ?)',
+                ('material_library_state', json.dumps(
+                    getattr(scene, 'material_library_state', {}), ensure_ascii=False)))
         self.ex('DELETE FROM workspace_nodes')
-        for node in getattr(self.scene, 'workspace_nodes', []) or []:
+        for node in getattr(scene, 'workspace_nodes', []) or []:
             self.ex('INSERT INTO workspace_nodes (id, payload) VALUES (?, ?)',
                     (node['id'], json.dumps(node, ensure_ascii=False)))
         self.connection.commit()
+        if hasattr(attachments, 'saved_to'):
+            attachments.saved_to(self.filename, saved_versions)
 
     def insert_item(self, item):
         self.ex(

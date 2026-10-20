@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Babylon.js",
+    "url": "https://codeload.github.com/BabylonJS/Babylon.js/zip/refs/tags/8.26.0",
+    "status": 200,
+    "method": "streamed response headers only; archive not downloaded"
+  },
+  {
+    "name": "HyperVault",
+    "url": "https://codeload.github.com/nsynkde/HyperVault/zip/c9d9fcea7234e6482a43f4ba30ce263776054bd6",
+    "status": 200,
+    "method": "streamed response headers only; archive not downloaded"
+  },
+  {
+    "name": "AssetPort",
+    "url": "https://codeload.github.com/Colosyn/Asset-Port/zip/3b82afd755216c76d298db95aada37839c7fe10f",
+    "status": 200,
+    "method": "streamed response headers only; archive not downloaded"
+  }
+]

@@ -1,4 +1,6 @@
 from unittest.mock import patch, MagicMock
+import subprocess
+import sys
 
 from PyQt6 import QtCore, QtTest
 
@@ -8,9 +10,22 @@ from prism.view import PrismGraphicsView
 from prism import ui_tokens
 
 
+def test_importing_window_classes_preserves_host_exception_hook():
+    result = subprocess.run([sys.executable, '-c',
+        'import sys; sentinel = lambda *args: None; sys.excepthook = sentinel; '
+        'import prism.__main__; assert sys.excepthook is sentinel'],
+        capture_output=True, text=True, timeout=20,
+        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    assert result.returncode == 0, result.stderr
+
+
 @patch('PyQt6.QtWidgets.QWidget.show')
-def test_prism_mainwindow_init(show_mock, qapp):
-    window = PrismMainWindow(qapp)
+def test_prism_mainwindow_init(show_mock, qapp, qtbot):
+    with patch('prism.browser_capture.BrowserCaptureService.start'), \
+         patch('prism.capture_hotkey.CaptureHotkey'), \
+         patch('prism.clipboard_capture.ClipboardCaptureAdapter.start'):
+        window = PrismMainWindow(qapp)
+    qtbot.addWidget(window)
     assert window.windowTitle() == 'Prism'
     assert BeeAssets().logo == BeeAssets().logo
     assert window.windowIcon()
@@ -114,18 +129,27 @@ def test_prismapplication_fileopenevent(open_mock, qapp, main_window):
 @patch('prism.__main__.PrismApplication')
 @patch('prism.__main__.CommandlineArgs')
 @patch('prism.config.PrismSettings.on_startup')
-def test_main(startup_mock, args_mock, app_mock, qapp):
+def test_main(startup_mock, args_mock, app_mock, qapp, main_window):
     app_mock.return_value = qapp
     args_mock.return_value.filename = None
     args_mock.return_value.loglevel = 'WARN'
     args_mock.return_value.debug_raise_error = ''
 
     with patch.object(qapp, 'exec') as exec_mock, \
+            patch.object(sys, 'excepthook'), \
+            patch('prism.__main__.PrismMainWindow', return_value=main_window), \
             patch('prism.__main__.platform.python_version',
                   side_effect=ValueError('failed to parse vendor sys.version')) as version_parser:
-        main()
-        exec_mock.assert_called_once_with()
-        version_parser.assert_not_called()
+        from prism import performance_trace
+        try:
+            main()
+            exec_mock.assert_called_once_with()
+            version_parser.assert_not_called()
+        finally:
+            # A real app.exec() emits aboutToQuit; this mocked event loop
+            # does not. Stop its diagnostic timers/watchdog explicitly.
+            if performance_trace._active is not None:
+                performance_trace._active.close()
 
     args_mock.assert_called_once_with(with_check=True)
     startup_mock.assert_called()

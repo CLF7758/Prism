@@ -1,3 +1,16 @@
+0.4.0 (2026-10-20)
+==================
+
+* Add a PBR material library with texture slots, per-slot channels, folders,
+  tags, notes, multi-selection and original-texture exports.
+* Reuse Babylon.js for material and glTF viewing and SurfaceStudio assets for
+  material-card presentation.
+* Improve canvas detail recovery, indexed area queries and cache/settings reuse.
+* Protect editor readback, board metadata/attachment saves and project lifetime
+  during file operations.
+* Update Chinese and English introductions with screenshots from a real project.
+* Document remaining cold-load, preview and save-snapshot limitations.
+
 0.3.7 (2026-10-08)
 ==================
 

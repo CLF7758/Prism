@@ -1,0 +1,117 @@
+{
+  "checked_on": "2026-10-19",
+  "packages": [
+    {
+      "url": "https://registry.npmjs.org/@babylonjs/core/latest",
+      "name": "@babylonjs/core",
+      "version": "9.31.0",
+      "license": "Apache-2.0",
+      "gitHead": "f1128df057531ce6321408a36188516f3e1e4f72",
+      "repository": {
+        "url": "git+https://github.com/BabylonJS/Babylon.js.git",
+        "type": "git"
+      },
+      "dist": {
+        "shasum": "7409846e4207c25e34f7bf311fbb62d2b4617c0e",
+        "tarball": "https://registry.npmjs.org/@babylonjs/core/-/core-9.31.0.tgz",
+        "fileCount": 10049,
+        "integrity": "sha512-CqtzNFa6BrL2Wv/AoB3BoMZaAFh+52I+xY8c5a7v+/sh/T5lXJHqLTdvSXMONeLYJUTV6sHJUCT7nwSzMDrSsQ==",
+        "signatures": [
+          {
+            "sig": "MEUCIQDlB0CtSey4ORlk9wnmhOwUd58I8Ax8nri+2Jbp6IisSAIgSVZIgthuyULmrcxr+iMtcrSoUPKScgpwxGLA4wWbBac=",
+            "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+          },
+          {
+            "sig": "MEUCIGOip2rt2uM0OfYZO7BMkBw1sIInUNgY5qT9jCuV4wymAiEAoYNfPw7OL/UNz4X2NwitxFxVSY1qzUxI0HZ9EjWZSu0=",
+            "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+          }
+        ],
+        "unpackedSize": 71803223
+      }
+    },
+    {
+      "url": "https://registry.npmjs.org/@babylonjs/inspector/latest",
+      "name": "@babylonjs/inspector",
+      "version": "9.31.0",
+      "license": "Apache-2.0",
+      "gitHead": "f1128df057531ce6321408a36188516f3e1e4f72",
+      "repository": {
+        "url": "git+https://github.com/BabylonJS/Babylon.js.git",
+        "type": "git"
+      },
+      "dist": {
+        "shasum": "c215a3d1427c689c22d95ab5160e60adbb558bba",
+        "tarball": "https://registry.npmjs.org/@babylonjs/inspector/-/inspector-9.31.0.tgz",
+        "fileCount": 365,
+        "integrity": "sha512-JUrdmV7P6HpA0LJEUFPm10MtuOAtjs2E02vCj+YM8ElY2nR8O7ulp9pNWyngHOxoZ6bocyRkJwde2xabmfQmrQ==",
+        "signatures": [
+          {
+            "sig": "MEYCIQCVggVikY3fggyucDb711WQk8ygfMWFSwk/sdhRtOuVagIhAPzOiRdAoqgYQbxwGLfx0xWI4dfar/RZx9gdsKaDYvLk",
+            "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+          },
+          {
+            "sig": "MEUCIHx1ubKBMsLZDPb4G2WmHedVzDQFt4hw6Z0TG7N+wxcXAiEA03enaTj74A1pMo3TwUQwB2X+yndOQcprtczXS+W7lZ4=",
+            "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+          }
+        ],
+        "unpackedSize": 8581093
+      }
+    },
+    {
+      "url": "https://registry.npmjs.org/@babylonjs/materials/latest",
+      "name": "@babylonjs/materials",
+      "version": "9.31.0",
+      "license": "Apache-2.0",
+      "gitHead": "f1128df057531ce6321408a36188516f3e1e4f72",
+      "repository": {
+        "url": "git+https://github.com/BabylonJS/Babylon.js.git",
+        "type": "git"
+      },
+      "dist": {
+        "shasum": "92bd8f5d953d26a6c25a67cffadc507b88994e34",
+        "tarball": "https://registry.npmjs.org/@babylonjs/materials/-/materials-9.31.0.tgz",
+        "fileCount": 315,
+        "integrity": "sha512-W+zNOay+0HPvJA1pvISSTzBENEs0n21kDh5RUklzWprGz9+u5qFOEHmtWPIluNCHW21r3LeXyTP1LEG/HzLrAw==",
+        "signatures": [
+          {
+            "sig": "MEUCIEeAkFd46DKVrMn3cIUtO2qChdkfisak29ij0FFXL1iSAiEA/UnF4myvoQIl44rk0E1xdYYNyKH9W+ujuHgvqyw6AWo=",
+            "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+          },
+          {
+            "sig": "MEQCIHw3k48klT+m2TnengBla3Jl1NdLvGTakvnj/iXpLQxdAiB+jh1Q1+kYwLFuKQCVujlfuBnUr4GlEUh7m06SK+q7mg==",
+            "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+          }
+        ],
+        "unpackedSize": 1781657
+      }
+    },
+    {
+      "url": "https://registry.npmjs.org/babylonjs/latest",
+      "name": "babylonjs",
+      "version": "9.31.0",
+      "license": "Apache-2.0",
+      "gitHead": "f1128df057531ce6321408a36188516f3e1e4f72",
+      "repository": {
+        "url": "git+https://github.com/BabylonJS/Babylon.js.git",
+        "type": "git"
+      },
+      "dist": {
+        "shasum": "b686896c5c959553c6d47d689ad05d6af67415dd",
+        "tarball": "https://registry.npmjs.org/babylonjs/-/babylonjs-9.31.0.tgz",
+        "fileCount": 19,
+        "integrity": "sha512-AZfPwFODsV7jfQEONV3dP4U66H8i948rHwTBkCsa+VHZ33+u/Nrzi3/0C1V1SU8ByLTAjmxpxjaXOYfhGguG/w==",
+        "signatures": [
+          {
+            "sig": "MEUCIQDPp0MULubS7Kff/QyVIjTGpwX/EC+9Uom4V8S642bQ0AIgKBy4lE8gK2lPlFd3+3JO6n4yc2DdIuINcTCqKCGsyzo=",
+            "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+          },
+          {
+            "sig": "MEYCIQC20xwaFIPZ56uK/qTHv2ZfkoH+Sn0vU3N/9IbqDuhUTwIhAPWXAO2wJebETtu5YPvYoSysWbyUGmRcR1mu0E7+XEcT",
+            "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+          }
+        ],
+        "unpackedSize": 113605102
+      }
+    }
+  ]
+}

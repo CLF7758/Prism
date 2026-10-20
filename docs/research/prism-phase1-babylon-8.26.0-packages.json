@@ -1,0 +1,132 @@
+[
+  {
+    "name": "@babylonjs/core",
+    "status": 200,
+    "version": "8.26.0",
+    "license": "Apache-2.0",
+    "dist": {
+      "shasum": "61300736af06f11eec8235cd6f0d8268d6695622",
+      "tarball": "https://registry.npmjs.org/@babylonjs/core/-/core-8.26.0.tgz",
+      "fileCount": 6152,
+      "integrity": "sha512-3FeiI4I280lre57yqwbBkTUWfussXz4MT89tOotMstRSDkjC8M/LmoJFjp9Vj0hdWK40E1FxZ56G8YR8vdqdVw==",
+      "signatures": [
+        {
+          "sig": "MEUCIHggrVYQMgNyuyH2G/do2acDRlv54P3qixtvDw3mzNqNAiEAqqQPGBS3JYNO129e8wRbrH16EMa/ZNvJGdn5mtF57L4=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 56618859
+    },
+    "dependencies": {},
+    "peerDependencies": {}
+  },
+  {
+    "name": "@babylonjs/inspector",
+    "status": 200,
+    "version": "8.26.0",
+    "license": "Apache-2.0",
+    "dist": {
+      "shasum": "1e24071c87975fd125388ed17c0482c76011e97a",
+      "tarball": "https://registry.npmjs.org/@babylonjs/inspector/-/inspector-8.26.0.tgz",
+      "fileCount": 8,
+      "integrity": "sha512-dslCGHjAZTcjG+Yhv+OMeapWFlchPzzre06ArtfdBKu66J/anUTADg04yj+1t3woxi/02j9r8Gfm3XH1OBLfwg==",
+      "signatures": [
+        {
+          "sig": "MEUCIGQKnAnKZ4hgiOI9/LM+tpUsWvitk5/kiYz0L3cSMY7WAiEAz4NMAKnzzLgX1LIOsMgFnyuHHuMKiNhfwXVZ2fSPxrk=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 23724471
+    },
+    "dependencies": {
+      "@fortawesome/fontawesome-svg-core": "^6.1.0",
+      "@fortawesome/free-solid-svg-icons": "^6.0.0",
+      "@fortawesome/free-regular-svg-icons": "^6.0.0"
+    },
+    "peerDependencies": {
+      "@types/react": ">=16.7.3",
+      "@babylonjs/gui": "^8.0.0",
+      "@babylonjs/core": "^8.0.0",
+      "@types/react-dom": ">=16.0.9",
+      "@babylonjs/addons": "^8.0.0",
+      "@babylonjs/loaders": "^8.0.0",
+      "@babylonjs/materials": "^8.0.0",
+      "@babylonjs/gui-editor": "^8.0.0",
+      "@babylonjs/serializers": "^8.0.0"
+    }
+  },
+  {
+    "name": "@babylonjs/loaders",
+    "status": 200,
+    "version": "8.26.0",
+    "license": "Apache-2.0",
+    "dist": {
+      "shasum": "67dc8ed2b7e91f26b50cb3d8b8cdefdff071afb4",
+      "tarball": "https://registry.npmjs.org/@babylonjs/loaders/-/loaders-8.26.0.tgz",
+      "fileCount": 280,
+      "integrity": "sha512-uJ/Arpee/2xaSaediZ60wxrG+7/bEncwFPzIgzPArTcfbwXi+6tXever3Tg7iw/GoFs54MfdD8GKBszVUS+0QQ==",
+      "signatures": [
+        {
+          "sig": "MEUCIDH3LFxQdNba+PQbKPmFrWBakT9EhQ00WRWLVkkg9ypsAiEA9elPQQqZz3n9ev+JuwgZeGvKHNwy3S4HvQO2vMKEH7E=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 2450389
+    },
+    "dependencies": {},
+    "peerDependencies": {
+      "@babylonjs/core": "^8.0.0",
+      "babylonjs-gltf2interface": "^8.0.0"
+    }
+  },
+  {
+    "name": "babylonjs",
+    "status": 200,
+    "version": "8.26.0",
+    "license": "Apache-2.0",
+    "dist": {
+      "shasum": "20174b748460f56d73923a73cd7a3eea93c0c79c",
+      "tarball": "https://registry.npmjs.org/babylonjs/-/babylonjs-8.26.0.tgz",
+      "fileCount": 17,
+      "integrity": "sha512-p1S/pYtNmvGmfcpvDQpjyiJ36pPN/ifyD0C7BuX/6naJqNuLkbO1hWsbzMljuWmtOTJ4Pf8h4reE56KyPHtddw==",
+      "signatures": [
+        {
+          "sig": "MEUCIQDTaWebVJCnvd5YWFEizp79iivZ+Vju8/PL1efZ+hTVRgIgQitA6KKngKGoYCMcuajVimGFF+UAmEXNhpH2qI74/oI=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 57664079
+    },
+    "dependencies": {},
+    "peerDependencies": {}
+  },
+  {
+    "name": "babylonjs-inspector",
+    "status": 200,
+    "version": "8.26.0",
+    "license": "Apache-2.0",
+    "dist": {
+      "shasum": "dce2f4eae6e59e0cab648adfcfc8697f09edd8da",
+      "tarball": "https://registry.npmjs.org/babylonjs-inspector/-/babylonjs-inspector-8.26.0.tgz",
+      "fileCount": 15,
+      "integrity": "sha512-XGEMmIvOoEgk/2uYmWzn0Kp6Sp7odBPQH7USJvAEfIZ19TanyZ28uTJug5ihJeFCsen0K1c5Uo4IMWRZWaODCA==",
+      "signatures": [
+        {
+          "sig": "MEUCIQCHlvU/UvSSgjoMOeBBhJjcsQ3mevGfTzLfHy1l1AwvyAIgJmWi2S0YhtqOfJhhZv6FcuES6wwZKIuxUijwCKLvJqg=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 24309042
+    },
+    "dependencies": {
+      "babylonjs": "^8.26.0",
+      "babylonjs-gui": "^8.26.0",
+      "babylonjs-addons": "^8.26.0",
+      "babylonjs-loaders": "^8.26.0",
+      "babylonjs-materials": "^8.26.0",
+      "babylonjs-gui-editor": "^8.26.0",
+      "babylonjs-serializers": "^8.26.0"
+    },
+    "peerDependencies": {}
+  }
+]

@@ -1,111 +1,87 @@
-"""三级分类（用户的第 7 条）。
+"""Current folder hierarchy, plus legacy category filtering/undo compatibility.
 
-用户的原话是「现在的画布脑图文档都是两级分类，增加到三级分类」。
-
-先说清现状（`_all_categories` 的注释里写着）：**画布下面是扁平的分类
-列表，连两级都算不上** —— 文档和脑图有"页面"那一层，画布没有。所以这
-一条实际是"给分类加上嵌套"。
-
-做法照标签当年那一套：分类名里带 `/` 就是一层（`古风/山水/秋雨`）。
-`tags.py` 的 `split_path` / `join_path` / `is_descendant` 是纯字符串
-工具，直接复用 —— 不重新发明。
-
-**兼容是自动的**：旧工程的分类不含 `/`，`split_path` 返回单元素、
-`leaf` 返回原名，所以计数、显示、筛选和以前一模一样。
+The former category-list rows and their indentation strings were replaced by
+ResourceTreeModel parents. Verify the same hierarchy/count/visibility guarantees
+through the current model instead of restoring the deleted sidebar API.
 """
 import pytest
-
+from PyQt6.QtCore import Qt
+from prism.widgets.resource_tree_model import ASSET_COUNT_ROLE
 from tests.test_material_features import image_item
 
 
 def categorise(scene, categories):
-    """建一个挂了这些分类的素材。"""
     item = image_item(scene)
     item._categories = list(categories)
     return item
 
 
-# ── 计数 ────────────────────────────────────────────────────────
-
-def test_a_flat_category_counts_as_before(view):
-    """**兼容那条**：旧工程的单层分类，计数和以前一样。"""
-    categorise(view.scene, ['古风'])
-    categorise(view.scene, ['古风'])
-    counts = view.category_panel._all_categories()
-    assert counts['古风'] == 2
-    assert len(counts) == 1, f'不该多出别的行：{sorted(counts)}'
-
-
-def test_a_parent_counts_its_own_plus_its_children(view):
-    """**核心那条**：父分类的数字 = 自己 + 所有子分类。
-
-    点"古风"要能同时看到"古风/山水"里的图，那个数字得对得上 ——
-    不然用户点进去发现数量和显示的不一样。
-    """
-    categorise(view.scene, ['古风'])                 # 直接挂在父级上
-    categorise(view.scene, ['古风/山水'])
-    categorise(view.scene, ['古风/山水'])
-    categorise(view.scene, ['古风/山水/秋雨'])
-    counts = view.category_panel._all_categories()
-
-    assert counts['古风'] == 4, '自己 1 + 子 3'
-    assert counts['古风/山水'] == 3, '自己 2 + 孙 1'
-    assert counts['古风/山水/秋雨'] == 1
+@pytest.fixture
+def hierarchy(view):
+    service = view.category_panel.resource_service
+    model = view.category_panel.resource_tree.model()
+    top = service.createFolder('canvas', 'Top')
+    middle = service.createFolder('canvas', 'Middle', top['id'])
+    deep = service.createFolder('canvas', 'Deep', middle['id'])
+    for node, page_id in ((top, 'top-page'), (middle, 'middle-page'), (deep, 'deep-page')):
+        service.createPage('canvas', 'Board', page_id, node['id'])
+    model.set_asset_counts({'top-page': 1, 'middle-page': 2, 'deep-page': 1})
+    return service, model, top, middle, deep
 
 
-def test_an_ancestor_row_appears_for_free(view):
-    """`古风/山水` 出现时，`古风` 也得有一行。
-
-    不然子分类挂在半空中，看着像父级丢了 —— 而且用户没法点父级看全部。
-    """
-    categorise(view.scene, ['古风/山水'])
-    counts = view.category_panel._all_categories()
-    assert '古风' in counts, f'父级没建出来：{sorted(counts)}'
+def test_flat_folder_counts_its_direct_page(hierarchy):
+    service, model, top, middle, deep = hierarchy
+    model.set_asset_counts({'top-page': 2})
+    assert model.index_for_id(top['id']).data(ASSET_COUNT_ROLE) == 2
+    assert model.index_for_id(middle['id']).data(ASSET_COUNT_ROLE) == 0
 
 
-def test_three_levels_are_supported(view):
-    """三层 —— 用户要的正是这个。"""
-    categorise(view.scene, ['古风/山水/秋雨'])
-    counts = view.category_panel._all_categories()
-    for name in ('古风', '古风/山水', '古风/山水/秋雨'):
-        assert name in counts, f'{name} 没出现'
+def test_parent_counts_its_own_and_descendant_pages(hierarchy):
+    service, model, top, middle, deep = hierarchy
+    assert model.index_for_id(top['id']).data(ASSET_COUNT_ROLE) == 4
+    assert model.index_for_id(middle['id']).data(ASSET_COUNT_ROLE) == 3
+    assert model.index_for_id(deep['id']).data(ASSET_COUNT_ROLE) == 1
 
 
-def test_a_created_but_empty_category_still_shows(view):
-    """建了还没用的分类要显示（计数 0）—— 不然刚建的看不见。"""
-    view.scene.category_names = ['古风', '古风/山水']
-    counts = view.category_panel._all_categories()
-    assert counts['古风'] == 0
-    assert counts['古风/山水'] == 0
+def test_ancestor_rows_remain_visible_with_only_deep_assets(hierarchy):
+    service, model, top, middle, deep = hierarchy
+    model.set_asset_counts({'deep-page': 1})
+    for node in (top, middle, deep):
+        index = model.index_for_id(node['id'])
+        assert index.isValid()
+        assert index.data(ASSET_COUNT_ROLE) == 1
 
 
-# ── 界面 ────────────────────────────────────────────────────────
-
-def test_rows_are_indented_by_depth(view):
-    """缩进按层级来。显示最后一级的名字，层级由缩进表达。"""
-    categorise(view.scene, ['古风/山水/秋雨'])
-    panel = view.category_panel
-    panel.rebuild_workspace_tree()
-
-    top = panel._cat_items['古风'].text()
-    middle = panel._cat_items['古风/山水'].text()
-    deep = panel._cat_items['古风/山水/秋雨'].text()
-
-    assert top.startswith('    ') and not top.startswith('        ')
-    assert middle.startswith('        ') and not middle.startswith('    ' * 3)
-    assert deep.startswith('            ')
-    assert '古风' in top and '山水' in middle and '秋雨' in deep
+def test_three_levels_use_actual_index_parents(hierarchy):
+    service, model, top, middle, deep = hierarchy
+    assert model.parent(model.index_for_id(deep['id'])) == model.index_for_id(middle['id'])
+    assert model.parent(model.index_for_id(middle['id'])) == model.index_for_id(top['id'])
+    assert model.parent(model.index_for_id(top['id'])).data() == '画布'
 
 
-def test_the_tooltip_gives_the_full_path(view):
-    """缩进只说层级，不说挂在谁下面 —— 悬停给全路径。"""
-    categorise(view.scene, ['古风/山水'])
-    panel = view.category_panel
-    panel.rebuild_workspace_tree()
-    assert panel._cat_items['古风/山水'].toolTip() == '古风/山水'
+def test_created_empty_folder_is_still_visible(hierarchy):
+    service, model, top, middle, deep = hierarchy
+    empty = service.createFolder('canvas', 'Empty', top['id'])
+    index = model.index_for_id(empty['id'])
+    assert index.isValid() and index.data() == 'Empty'
+    assert index.data(ASSET_COUNT_ROLE) == 0
 
 
-# ── 筛选 ────────────────────────────────────────────────────────
+def test_row_titles_do_not_encode_tree_indentation(hierarchy):
+    service, model, top, middle, deep = hierarchy
+    for node in (top, middle, deep):
+        assert model.index_for_id(node['id']).data() == node['title']
+
+
+def test_tooltip_follows_full_path_after_rename_and_move(hierarchy):
+    service, model, top, middle, deep = hierarchy
+    tip = lambda: model.index_for_id(deep['id']).data(Qt.ItemDataRole.ToolTipRole)
+    assert tip() == 'Top/Middle/Deep'
+    service.rename(top['id'], 'Renamed')
+    assert tip() == 'Renamed/Middle/Deep'
+    service.moveBatch([deep['id']], top['id'], 'canvas')
+    assert tip() == 'Renamed/Deep'
+
 
 def test_selecting_a_parent_also_shows_children(view):
     """**核心那条**：点父分类要能看到子分类里的素材。

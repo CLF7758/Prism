@@ -1,37 +1,43 @@
 # Prism
 
-A local workspace for reference images, drawing notes and creative planning.
+A local creative workspace for reference boards, PBR materials, documents and mind maps.
 
-[Download the Windows x64 installer](https://github.com/CLF7758/Prism/releases/download/v0.3.11/Prism-Setup-0.3.11-windows-x64.exe) · [Release and matching source](https://github.com/CLF7758/Prism/releases/tag/v0.3.11) · [中文介绍](README.md)
+[Windows x64 installer](https://github.com/CLF7758/Prism/releases/download/v0.4.0/Prism-Setup-0.4.0-windows-x64.exe) · [Release and matching source](https://github.com/CLF7758/Prism/releases/tag/v0.4.0) · [中文](README.md)
 
-- Arrange reference images on an infinite canvas. Move, resize, crop, rotate and compare them.
-- Annotate with a pen, arrows and text. Image arrangement leaves annotations in place.
-- Capture a screen region with Ctrl+Alt+A and send it to a canvas.
-- Pin reference images to the desktop and adjust their opacity.
-- Organize assets with folders, canvases and tags.
-- Search the project using an image, with local OpenCLIP, FAISS and OpenCV. No API key is needed; results consider content, color and layout.
-- Review duplicate images and locate them on their canvases before deciding what to remove.
-- Extract frames from local videos and arrange them automatically.
-- Keep rich text documents and mind maps in the same project.
+## Reference boards
 
-![Canvas](docs/images/release-canvas.png)
-![Library](docs/images/release-library.png)
-![Duplicate review](docs/images/release-duplicates.png)
-![Documents](docs/images/release-document.png)
-![Mind maps](docs/images/release-mindmap.png)
+Arrange, crop, rotate and annotate reference images on an infinite canvas. Organize multiple boards with folders and tags, search across the project, and locate results in context.
 
-The installer includes Python runtimes, capture dependencies and the local search model. It is larger because these components are bundled. First image search builds a local index and takes longer than subsequent searches. Windows x64, primarily tested on Windows 11; installer is not digitally signed.
+![Actual project reference board](docs/images/release-real-canvas.jpg)
 
-Projects are stored locally as `.prism` files. Imported image originals are retained when available; display previews do not replace source bytes. Old missing originals cannot be reconstructed from thumbnails. Keep backups of important projects.
+## PBR material library
 
-Source development requires Python 3.12. See [Chinese setup instructions](README.md), [packaging](packaging/README.md), [third-party notices](THIRD_PARTY.md) and [license](LICENSE). GPL-3.0-or-later; original upstream copyright notices are retained.
+Create a material, drop original textures into the right-hand slots, and select RGB or individual channels independently. Organize materials with folders, tags and notes; browse a grid or list, Ctrl-select multiple materials and export original textures.
 
-## New in 0.3.11
+Slots cover base color, normals, roughness, metalness, AO, opacity/masks, emission, SSS and displacement. Babylon.js renders plane, sphere, cylinder and cube previews, with an expanded viewer and individual channel inspection. SSS is a thin-surface approximation, not a reproduction of arbitrary Unreal Engine shaders. Temporary appearance adjustments reset when leaving a material; texture bindings, channel selections and metadata are retained.
 
-Right-click the canvas to create a background download node. Paste a video or gallery share link, drag its title to reposition it, and continue working while downloading. Successful jobs insert their assets into the originating canvas and remove the node. Gallery images and associated Live Photos remain separate original files and are arranged together.
+![Actual project PBR material library](docs/images/release-real-materials.jpg)
 
-![Canvas download node](docs/images/release-download.png)
+The screenshots show a copy of the user's actual test project, including its real reference boards and 300 test materials. The project and source asset collection are not distributed with Prism. Reference artwork belongs to its respective authors.
 
-Image cropping uses eight round handles and supports undo without replacing the original file. Canvas, document and mind-map export dialogs now offer PDF in the file-format selector. Idle videos display a first-frame cover; inspector previews are centered.
+## Asset organization and other tools
 
-The installer bundles the required runtimes and components. Downloads use upstream open-source projects (F2, XHS-Downloader, Xhshow, bilibili-api-python and yt-dlp). Bilibili resolution restrictions are shown explicitly; lower resolution requires an explicit choice and is never described as the original resolution. See [release notes](docs/RELEASE_0.3.11.md) for actual acceptance results and limitations. Screenshots show the actual native Windows application with generated demonstration assets.
+![Actual project asset library](docs/images/release-real-library.jpg)
+
+- Local visual search and duplicate review.
+- Screen capture, desktop-pinned references and annotations.
+- Local video playback, frame extraction and supported platform downloads.
+- Rich text documents, mind maps, import/export and PDF output.
+- GLB/glTF viewing through Babylon.js's official loader.
+
+Source bytes are stored separately from disposable previews. Original-texture export preserves those bytes; rendered exports, crops and video frames are newly generated outputs. Missing originals in old projects cannot be reconstructed from thumbnails.
+
+Unreal Engine integration, automatic material instance creation, and an FBX/OBJ conversion model library are not delivered features in this release.
+
+## Installation and development
+
+Windows x64, primarily verified on Windows 11. The unsigned installer includes the optional workflow components; compare its hash with `SHA256.txt` in the release. PBR viewing requires working WebGL/GPU support. Large-project cold loading and some initial previews can still stall; see [release notes](docs/RELEASE_0.4.0.md).
+
+Python source runs require Python 3.12. See [Windows packaging](packaging/README.md), [extension guidelines](docs/ARCHITECTURE_EXTENSION_GUIDE.md), and the Chinese README for setup commands.
+
+GPL-3.0-or-later. Original project copyright: Rebecca Breu. See [NOTICE](NOTICE) and [third-party notices](THIRD_PARTY.md).

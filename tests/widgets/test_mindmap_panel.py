@@ -171,6 +171,27 @@ def test_a_tree_replaced_behind_the_panels_back_is_pushed_again(panel, view):
 
 # ── store_to_scene ────────────────────────────────────────────────────
 
+def test_import_does_not_read_old_renderer_before_new_tree_is_loaded(panel, monkeypatch):
+    panel._ready = True
+    panel._pending_tree = None
+    panel.web_view = object()
+    imported = {'root': 'new import', 'children': []}
+    pushed = []
+
+    def push(tree):
+        panel._tree_loading = True
+        pushed.append(tree)
+
+    monkeypatch.setattr(panel, '_push_tree_to_page', push)
+    monkeypatch.setattr('prism.widgets.editor_snapshot.read_editor_snapshot',
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError('old page read')))
+    panel.set_tree(imported)
+    assert panel.store_to_scene() is True
+    assert panel._scene_tree() == imported
+    assert pushed == [imported]
+    panel.web_view = None
+
+
 def test_storing_without_a_tree_leaves_the_scene_alone(panel, view):
     view.scene.mindmap_tree = {'root': 'keep me', 'children': []}
     panel._tree = None

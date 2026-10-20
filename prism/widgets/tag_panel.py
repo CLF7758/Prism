@@ -243,6 +243,25 @@ def rename_prefix(name, old, new):
     return name
 
 
+class _MaterialTagTarget:
+    """Adapt record tags to the existing undoable tag manager."""
+    def __init__(self, scene, material_id):
+        self.scene, self.material_id = scene, material_id
+
+    def _record(self):
+        return next((r for r in self.scene.material_records if r['id'] == self.material_id), None)
+
+    @property
+    def _tags(self):
+        return (self._record() or {}).get('tags', [])
+
+    @_tags.setter
+    def _tags(self, values):
+        record = self._record()
+        if record is not None:
+            record['tags'] = list(values)
+
+
 class TagEdit(QtGui.QUndoCommand):
     """One undoable change to the project's tags.
 
@@ -278,6 +297,10 @@ class TagEdit(QtGui.QUndoCommand):
             self.scene.tag_system = tags.TagSystem.from_dict(table)
         for item, value in zip(self.items, values):
             item._tags = list(value)
+        if any(isinstance(item, _MaterialTagTarget) for item in self.items):
+            service = self.view.category_panel.material_service
+            if service.scene is self.scene:
+                service.changed.emit({'id': None, 'operation': 'tags'})
         if self.items and hasattr(self.scene, 'metadata_changed'):
             self.scene.metadata_changed.emit()
         notify_tag_change(self.view)
@@ -302,7 +325,9 @@ def _catalogue_with(scene, names):
 def _retagged_items(scene, rewrite):
     """Items whose tags change under ``rewrite``, as item -> new tag set."""
     changed = {}
-    for item in scene.items_for_save():
+    from prism.material_service import iter_visible_materials
+    targets = [_MaterialTagTarget(scene, material['id']) for material in iter_visible_materials(scene)]
+    for item in [*scene.items_for_save(), *targets]:
         old = [str(name) for name in getattr(item, '_tags', []) or []]
         if not old:
             continue

@@ -77,6 +77,8 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         self.mindmap_tree = None
         self.workspace_pages = []
         self.workspace_nodes = []
+        self.material_records = []
+        self.material_library_state = {}
         self.project_id = uuid.uuid4().hex
         from prism.viewport_items import ViewportItems
         self._viewport_items = ViewportItems(self)
@@ -662,9 +664,8 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         return items[0] if items else None
 
     def render(self, *args, **kwargs):
-        if not self._viewport_items.records:
-            return super().render(*args, **kwargs)
-        self._viewport_items.rebuild_layers()
+        if self._viewport_items.records:
+            self._viewport_items.rebuild_layers()
         exporting = getattr(self, '_overview_recording_owner', None) is None
         previous = getattr(self, '_exporting_records', False)
         effects = []

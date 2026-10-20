@@ -92,7 +92,9 @@ def export_document(view):
     if panel is None:
         widgets.PrismNotification(view, _('Open a document page first.'))
         return
-    panel.store_to_scene()
+    if panel.store_to_scene() is False:
+        widgets.PrismNotification(view, _('Editor content could not be read. Please retry exporting.'))
+        return
     html = panel.editor.toHtml()
     if not html.strip():
         widgets.PrismNotification(
@@ -127,7 +129,9 @@ def export_mindmap_action(view):
     if panel is None:
         widgets.PrismNotification(view, _('Open a mind map page first.'))
         return
-    panel.store_to_scene()
+    if panel.store_to_scene() is False:
+        widgets.PrismNotification(view, _('Editor content could not be read. Please retry exporting.'))
+        return
     tree = panel._scene_tree()
     if not tree:
         widgets.PrismNotification(
@@ -279,7 +283,9 @@ def export_resource_subtree(view, section, node_id=None):
         return
     # 文档/脑图面板里刚敲的内容还在编辑器里，先让它回写 scene —— 导出的
     # 必须是用户眼前看到的那一份。
-    _store_open_panel(view)
+    if _store_open_panel(view) is False:
+        widgets.PrismNotification(view, _('Editor content could not be read. Please retry exporting.'))
+        return
 
     node = service._by_id(node_id) if node_id is not None else None
     title = node['title'] if node is not None else SECTION_TITLES.get(
@@ -357,7 +363,8 @@ def _store_open_panel(view):
     panel = tabs.currentWidget() if tabs is not None else None
     store = getattr(panel, 'store_to_scene', None)
     if callable(store):
-        store()
+        return store()
+    return True
 
 
 def _canvas_assets(view, page_id):

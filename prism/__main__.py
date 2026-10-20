@@ -23,8 +23,13 @@ import signal
 import time
 import sys
 
+from prism.webengine_runtime import configure_webengine
+configure_webengine()
+
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt
+if QtCore.QCoreApplication.instance() is None:
+    QtCore.QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
 # QtWebEngineWidgets refuses to load once a QApplication exists, and the mind
 # map panel imports it lazily, so pull it in here at import time. Importing
@@ -53,14 +58,20 @@ class PrismApplication(QtWidgets.QApplication):
 
     def notify(self, receiver, event):
         trace = getattr(self, '_performance_trace', None)
-        if trace is None:
+        if trace is None or getattr(trace, 'dispatch_capture_failed', False):
             return super().notify(receiver, event)
         started, event_type = time.perf_counter(), event.type().value
         try:
             return super().notify(receiver, event)
         finally:
-            trace.dispatch_finished(receiver, event_type, (time.perf_counter()-started)*1000,
-                                    nested_loop=trace.last_heartbeat > started)
+            try:
+                trace.dispatch_finished(receiver, event_type, (time.perf_counter()-started)*1000,
+                                        nested_loop=trace.last_heartbeat > started)
+            except Exception:
+                # Diagnostics must neither break a successful input event
+                # nor replace the original exception from an event handler.
+                trace.dispatch_capture_failed = True
+                logger.exception('GUI dispatch diagnostics disabled after an error')
 
     def event(self, event):
         if event.type() == QtCore.QEvent.Type.FileOpen:
@@ -113,6 +124,12 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
         app.setApplicationName(constants.APPNAME)
         self.setWindowIcon(BeeAssets().logo)
         self.view = PrismGraphicsView(app, self)
+        # File actions must work when the canvas is hidden behind materials,
+        # documents or the asset browser. Reuse the same QAction instances.
+        from prism.actions.actions import actions
+        for action_id in ('new_scene', 'open', 'save', 'save_as'):
+            if action_id in actions:
+                self.addAction(actions[action_id].qaction)
         # Share the existing actions with the prototype's nine top-level menus.
         for action in self.view.context_menu.actions():
             if action.menu() is not None:
@@ -234,6 +251,12 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
         from prism.widgets.asset_browser import AssetBrowser
         self.asset_browser = AssetBrowser(self)
         self.tabs.addTab(self.asset_browser, '素材库')
+        from prism.widgets.material_library import MaterialLibrary
+        self.material_library = MaterialLibrary(self)
+        self.tabs.addTab(self.material_library, '材质库')
+        self.material_library.folder_requested.connect(self.open_material_library)
+        self.material_library.create_folder_requested.connect(
+            lambda parent_id: self._create_resource_item('material', 'folder', parent_id))
         self._build_eagle_chrome(layout)
 
         self._previous_tab = 0
@@ -272,6 +295,8 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
         self.view.current_canvas_id = self.current_page_id
         self.view.category_panel.workspace_requested.connect(
             self._open_resource_page)
+        self.view.category_panel.material_library_requested.connect(
+            self._open_material_library_entry)
         self.view.category_panel.resource_create_requested.connect(
             self._create_resource_item)
         self.view.category_panel.resource_tree.create_committed.connect(
@@ -442,6 +467,8 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
         controls.addWidget(self._window_controls)
         right.addWidget(self._right_header)
         right.addWidget(self.view._detail_panel, 1)
+        right.addWidget(self.material_library.details, 1)
+        self.material_library.details.hide()
         self._right_empty = QtWidgets.QWidget()
         self._right_empty.hide()
         right.addWidget(self._right_empty, 1)
@@ -477,7 +504,13 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
         return menu
 
     def _show_eagle_menu(self):
-        self._eagle_menu().exec(self._left_header.mapToGlobal(QtCore.QPoint(6, 36)))
+        previous = getattr(self, '_active_eagle_menu', None)
+        if previous is not None:
+            previous.close()
+            previous.deleteLater()
+        self._active_eagle_menu = self._eagle_menu()
+        self._active_eagle_menu.popup(
+            self._left_header.mapToGlobal(QtCore.QPoint(6, 36)))
 
     def _focus_project_search(self):
         if hasattr(self, 'search_controller'):
@@ -505,7 +538,8 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
             return
         current = self.tabs.currentWidget()
         if hasattr(current, 'store_to_scene'):
-            current.store_to_scene()
+            if current.store_to_scene() is False:
+                return
         payload = {
             'filename': self.view.filename,
             'note_html': self.view.scene.note_html,
@@ -691,7 +725,9 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
         controller = getattr(self, 'search_controller', None)
         material_mode = self.tabs.currentWidget() in (self.canvas_page, self.asset_browser, getattr(controller, 'page', None))
         self.view._detail_panel.setVisible(material_mode)
-        self._right_empty.setVisible(not material_mode)
+        library_mode = self.tabs.currentWidget() is self.material_library
+        self.material_library.details.setVisible(library_mode)
+        self._right_empty.setVisible(not material_mode and not library_mode)
         self._restore_sidebars.setVisible(not show_left)
         host = self._right_controls_layout if show_right else self._collapsed_window_layout
         if self._window_controls.parentWidget() is not (self._right_header if show_right else self._collapsed_window_host):
@@ -872,9 +908,18 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
         step across tab switches and file loads.
         """
         previous = self.tabs.widget(self._previous_tab)
-        if hasattr(previous, 'store_to_scene'):
-            previous.store_to_scene()
+        if self._store_current_page(previous) is False:
+            blocker = QtCore.QSignalBlocker(self.tabs)
+            previous._preserve_editor_on_show = True
+            try:
+                self.tabs.setCurrentIndex(self._previous_tab)
+            finally:
+                previous._preserve_editor_on_show = False
+                del blocker
+            return
         current = self.tabs.widget(index)
+        self.view.set_material_navigation_active(
+            current is getattr(self, 'material_library', None))
         if hasattr(self, '_eagle_header_stack'):
             browsing = current is self.asset_browser
             material_canvas = browsing or current is self.canvas_page
@@ -883,7 +928,8 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
             self._centre_status.setVisible(material_canvas)
             self.view.category_panel.search.setVisible(not hasattr(self, 'search_controller') and not browsing)
             self.view.category_panel.search_type.setVisible(not hasattr(self, 'search_controller') and not browsing)
-            self.view.category_panel.hint.setVisible(not browsing)
+            self.view.category_panel.hint.setVisible(
+                not browsing and current is not self.material_library)
         if hasattr(current, 'load_from_scene'):
             current.load_from_scene()
         self._previous_tab = index
@@ -936,6 +982,9 @@ class PrismMainWindow(WindowWorkspaceMixin, FramelessShellMixin, QtWidgets.QMain
             self._recount_timer.start()
 
     def closeEvent(self, event):
+        if self._store_current_page() is False:
+            event.ignore()
+            return
         worker = getattr(self.view, 'worker', None)
         if isinstance(worker, QtCore.QThread) and worker.isRunning():
             event.ignore()
@@ -1004,9 +1053,6 @@ def handle_uncaught_exception(exc_type, exc, traceback):
         app.quit()
 
 
-sys.excepthook = handle_uncaught_exception
-
-
 def _register_file_association():
     """Register .prism file type with Windows (HKCU, no admin needed)."""
     if sys.platform != 'win32':
@@ -1065,6 +1111,10 @@ def main():
     if '--ai-inference-worker' in sys.argv:
         from prism.ai_inference_worker import main as inference_main
         return inference_main()
+    # Only the running desktop app owns the process exception hook.
+    # Importing window classes must not replace an embedding host's hook
+    # (including pytest-qt's asynchronous exception capture).
+    sys.excepthook = handle_uncaught_exception
     # 启用 faulthandler：ONNX / Qt 原生崩溃（segfault）时把 Python 栈写到日志
     import faulthandler
     _log_path = logfile_name()

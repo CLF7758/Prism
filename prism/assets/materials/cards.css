@@ -1,0 +1,23 @@
+/* Prism integration overrides; card layout comes from SurfaceStudio (GPLv3). */
+:root{--card-size:220px;--bg:#1c1c1e;--accent:#9fbfea}
+body{padding:6px 8px 18px 6px;font-family:'Microsoft YaHei UI','Segoe UI',sans-serif}
+.asset-grid{gap:14px;grid-template-columns:repeat(auto-fill,minmax(min(var(--card-size),100%),1fr))}
+.asset-card{animation:none;border-color:#ffffff12;background:#252528;border-radius:10px}
+.asset-card.selected{border-color:#89b4f5;box-shadow:0 0 0 1px #89b4f5}
+.asset-card:hover{transform:none;border-color:#89b4f5}
+.card-image{aspect-ratio:1.35;background:#222225}
+.card-image>img{padding:0;filter:none}
+.card-info h3{font-size:13px;font-weight:600;margin-bottom:8px}
+.card-meta{font-size:11px;align-items:center;flex-wrap:wrap;gap:6px}
+.card-downloaded{color:#aab2bf}
+.card-category{color:#aab2bf}
+.card-favorite,.card-compare{display:none!important}
+.resolution-badge{font-size:10px}
+.card-tags{display:flex;gap:4px;padding:0 14px 12px;min-height:26px;overflow:hidden}
+.card-tags span{border-radius:3px;background:#ffffff0b;color:#aab2bf;padding:2px 5px;font-size:10px;white-space:nowrap}
+.list-mode .card-tags{margin-left:auto;max-width:25%;padding:8px}
+.list-mode .card-info{min-width:0;gap:14px}
+.list-mode .card-info h3{width:45%}
+.list-mode .card-image{width:112px;height:90px}
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+.asset-card .card-image, .asset-card .card-image img { background: #000; }

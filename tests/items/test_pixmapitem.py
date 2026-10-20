@@ -82,7 +82,7 @@ def test_bounding_rect_unselected_in_crop_mode(qapp, imgfilename3x3):
     item = PrismPixmapItem(QtGui.QImage(imgfilename3x3))
     item.crop = QtCore.QRectF(1, 1, 2, 2)
     item.crop_mode = True
-    assert item.bounding_rect_unselected() == QtCore.QRectF(-0.5, -0.5, 4, 4)
+    assert item.bounding_rect_unselected() == QtCore.QRectF(0, 0, 3, 3)
 
 
 def test_get_extra_save_data(item):
@@ -483,22 +483,22 @@ def test_reset_crop(qapp, imgfilename3x3):
 
 def test_crop_handle_topleft(qapp, item):
     item.crop_temp = QtCore.QRectF(100, 200, 300, 400)
-    assert item.crop_handle_topleft() == QtCore.QRectF(100, 200, 15, 15)
+    assert item.crop_handle_topleft() == QtCore.QRectF(92.5, 192.5, 15, 15)
 
 
 def test_crop_handle_bottomleft(qapp, item):
     item.crop_temp = QtCore.QRectF(100, 200, 300, 400)
-    assert item.crop_handle_bottomleft() == QtCore.QRectF(100, 585, 15, 15)
+    assert item.crop_handle_bottomleft() == QtCore.QRectF(92.5, 592.5, 15, 15)
 
 
 def test_crop_handle_bottomright(qapp, item):
     item.crop_temp = QtCore.QRectF(100, 200, 300, 400)
-    assert item.crop_handle_bottomright() == QtCore.QRectF(385, 585, 15, 15)
+    assert item.crop_handle_bottomright() == QtCore.QRectF(392.5, 592.5, 15, 15)
 
 
 def test_crop_handle_topright(qapp, item):
     item.crop_temp = QtCore.QRectF(100, 200, 300, 400)
-    assert item.crop_handle_topright() == QtCore.QRectF(385, 200, 15, 15)
+    assert item.crop_handle_topright() == QtCore.QRectF(392.5, 192.5, 15, 15)
 
 
 @pytest.mark.parametrize('edge,rotation,expected',
@@ -524,20 +524,22 @@ def test_get_crop_edge_cursor(edge, rotation, expected, qapp, item):
     assert cursor == getattr(Qt.CursorShape, expected)
 
 
-def test_paint(qapp, item):
-    item.pixmap = MagicMock()
+def test_paint(qapp):
+    image = QtGui.QImage(100, 80, QtGui.QImage.Format.Format_ARGB32)
+    image.fill(QtGui.QColor('blue'))
+    item = PrismPixmapItem(image)
     item.paint_selectable = MagicMock()
     item.crop = QtCore.QRectF(10, 20, 30, 40)
-    painter = MagicMock(
-        combinedTransform=MagicMock(
-            return_value=MagicMock(
-                m11=MagicMock(return_value=0.5))))
-    item.paint(painter, None, None)
+    target = QtGui.QImage(100, 80, QtGui.QImage.Format.Format_ARGB32)
+    target.fill(QtGui.QColor('transparent'))
+    painter = QtGui.QPainter(target)
+    try:
+        item.paint(painter, None, None)
+    finally:
+        painter.end()
     item.paint_selectable.assert_called_once()
-    painter.drawPixmap.assert_called_with(
-        QtCore.QRectF(10, 20, 30, 40),
-        item.pixmap(),
-        QtCore.QRectF(10, 20, 30, 40))
+    assert target.pixelColor(15, 25) == QtGui.QColor('blue')
+    assert target.pixelColor(0, 0).alpha() == 0
 
 
 def test_paint_when_crop_mode(qapp, item):
@@ -794,48 +796,48 @@ def test_mouse_press_event_crop_mode_outside_handle_outside_crop(
                          [((25, 40), 'crop_handle_topleft', (25, 40)),
                           ((0, 0), 'crop_handle_topleft', (0, 0)),
                           ((-5, -5), 'crop_handle_topleft', (0, 0)),
-                          ((40, 60), 'crop_handle_topleft', (40, 60)),
-                          ((100, 80), 'crop_handle_topleft', (40, 60)),
+                          ((40, 60), 'crop_handle_topleft', (39, 59)),
+                          ((100, 80), 'crop_handle_topleft', (39, 59)),
                           ((25, 40), 'crop_handle_bottomleft', (25, 40)),
                           ((0, 80), 'crop_handle_bottomleft', (0, 80)),
                           ((-5, 85), 'crop_handle_bottomleft', (0, 80)),
-                          ((40, 20), 'crop_handle_bottomleft', (40, 20)),
-                          ((45, 15), 'crop_handle_bottomleft', (40, 20)),
+                          ((40, 20), 'crop_handle_bottomleft', (39, 21)),
+                          ((45, 15), 'crop_handle_bottomleft', (39, 21)),
                           ((25, 40), 'crop_handle_bottomright', (25, 40)),
-                          ((10, 20), 'crop_handle_bottomright', (10, 20)),
-                          ((5, 15), 'crop_handle_bottomright', (10, 20)),
+                          ((10, 20), 'crop_handle_bottomright', (11, 21)),
+                          ((5, 15), 'crop_handle_bottomright', (11, 21)),
                           ((100, 80), 'crop_handle_bottomright', (100, 80)),
                           ((105, 85), 'crop_handle_bottomright', (100, 80)),
                           ((25, 40), 'crop_handle_topright', (25, 40)),
-                          ((10, 0), 'crop_handle_topright', (10, 0)),
-                          ((5, -5), 'crop_handle_topright', (10, 0)),
-                          ((100, 60), 'crop_handle_topright', (100, 60)),
-                          ((105, 65), 'crop_handle_topright', (100, 60)),
+                          ((10, 0), 'crop_handle_topright', (11, 0)),
+                          ((5, -5), 'crop_handle_topright', (11, 0)),
+                          ((100, 60), 'crop_handle_topright', (100, 59)),
+                          ((105, 65), 'crop_handle_topright', (100, 59)),
                           ((25, 40), 'crop_edge_top', (25, 40)),
                           ((0, 0), 'crop_edge_top', (0, 0)),
                           ((-5, -5), 'crop_edge_top', (0, 0)),
-                          ((100, 60), 'crop_edge_top', (100, 60)),
-                          ((105, 65), 'crop_edge_top', (100, 60)),
+                          ((100, 60), 'crop_edge_top', (100, 59)),
+                          ((105, 65), 'crop_edge_top', (100, 59)),
                           ((25, 40), 'crop_edge_bottom', (25, 40)),
-                          ((0, 20), 'crop_edge_bottom', (0, 20)),
-                          ((-5, 15), 'crop_edge_bottom', (0, 20)),
+                          ((0, 20), 'crop_edge_bottom', (0, 21)),
+                          ((-5, 15), 'crop_edge_bottom', (0, 21)),
                           ((100, 80), 'crop_edge_bottom', (100, 80)),
                           ((105, 85), 'crop_edge_bottom', (100, 80)),
                           ((25, 40), 'crop_edge_left', (25, 40)),
                           ((0, 0), 'crop_edge_left', (0, 0)),
                           ((-5, -5), 'crop_edge_left', (0, 0)),
-                          ((40, 80), 'crop_edge_left', (40, 80)),
-                          ((45, 85), 'crop_edge_left', (40, 80)),
+                          ((40, 80), 'crop_edge_left', (39, 80)),
+                          ((45, 85), 'crop_edge_left', (39, 80)),
                           ((25, 40), 'crop_edge_right', (25, 40)),
-                          ((10, 0), 'crop_edge_right', (10, 0)),
-                          ((5, -5), 'crop_edge_right', (10, 0)),
+                          ((10, 0), 'crop_edge_right', (11, 0)),
+                          ((5, -5), 'crop_edge_right', (11, 0)),
                           ((100, 80), 'crop_edge_right', (100, 80)),
                           ((105, 85), 'crop_edge_right', (100, 80))])
 def test_ensure_point_within_crop_bounds(
         point, handle, expected, qapp, item):
-    pixmap = MagicMock()
-    pixmap.size.return_value = QtCore.QRectF(0, 0, 100, 80)
-    item.pixmap = MagicMock(return_value=pixmap)
+    pixmap = QtGui.QPixmap(100, 80)
+    pixmap.fill(QtGui.QColor('blue'))
+    item.setPixmap(pixmap)
     item.crop_temp = QtCore.QRectF(10, 20, 30, 40)
     result = item.ensure_point_within_crop_bounds(
         QtCore.QPointF(*point), getattr(item, handle))
@@ -855,10 +857,10 @@ def test_ensure_point_within_crop_bounds(
 @patch('prism.selection.SelectableMixin.mouseMoveEvent')
 def test_mouse_move_when_crop_mode_inside_handle(
         mouse_mock, start, pos, handle, expected, qapp, item):
-    pixmap = MagicMock()
-    pixmap.size.return_value = QtCore.QRectF(0, 0, 100, 80)
+    pixmap = QtGui.QPixmap(100, 80)
+    pixmap.fill(QtGui.QColor('blue'))
+    item.setPixmap(pixmap)
     item.crop_mode = True
-    item.pixmap = MagicMock(return_value=pixmap)
     item.crop_temp = QtCore.QRectF(10, 20, 30, 40)
     item.crop_mode_event_start = QtCore.QPointF(*start)
     item.crop_mode_move = getattr(item, handle)

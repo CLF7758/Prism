@@ -68,11 +68,11 @@ def load_prism(filename, scene, worker=None):
     return io.read()
 
 
-def save_prism(filename, scene, create_new=False, worker=None):
+def save_prism(filename, scene, create_new=False, worker=None, board_snapshot=None):
     """Save Prism native file."""
     logger.info(f'Saving to file {filename}...')
     logger.debug(f'Create new: {create_new}')
-    io = SQLiteIO(filename, scene, create_new, worker=worker)
+    io = SQLiteIO(filename, scene, create_new, worker=worker, board_snapshot=board_snapshot)
     io.write()
     logger.info('End save')
 

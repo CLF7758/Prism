@@ -1,0 +1,46 @@
+{
+  "checked_on": "2026-10-19",
+  "scope": "Unified Prism preview library and UE native asset collection. User supplies true UE parent materials.",
+  "authoritative_plan": "../feature-plans/Prism-整体开发方案-材质展示库与UE收取.md",
+  "download_checklist": "../feature-plans/Prism-一次性下载总清单.md",
+  "repositories": [
+    {
+      "name": "BabylonJS/Babylon.js",
+      "ref": "8.26.0",
+      "repository": "https://github.com/BabylonJS/Babylon.js",
+      "zip": "https://github.com/BabylonJS/Babylon.js/archive/refs/tags/8.26.0.zip",
+      "required": "full source",
+      "used_for": "Prism preview only: existing PBR, SSS, Inspector; not generating UE parent materials",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "nsynkde/HyperVault",
+      "ref": "c9d9fcea7234e6482a43f4ba30ce263776054bd6",
+      "repository": "https://github.com/nsynkde/HyperVault",
+      "zip": "https://github.com/nsynkde/HyperVault/archive/c9d9fcea7234e6482a43f4ba30ce263776054bd6.zip",
+      "required": "full source, content and resources",
+      "used_for": "UE native asset collection and restoration; adaptation needed",
+      "license": "MIT"
+    },
+    {
+      "name": "BabylonJS/Assets",
+      "ref": "c81f5d744fe8d41acfebd89eaeb7008c6f9659e3",
+      "required": "selected environment files only",
+      "local_bundle": "../dependency-downloads/Prism-Babylon-environment-assets.zip",
+      "license": "CC BY 4.0 unless asset-specific notices override"
+    }
+  ],
+  "user_provided": [
+    "Actual UE parent materials, instances and dependencies",
+    "Validation project or migration package with exact UE version",
+    "External plugin information where applicable"
+  ],
+  "not_required": [
+    "AssetPort",
+    "MaterialVault",
+    "Three.js",
+    "BabylonJS/Editor",
+    "Material Maker"
+  ],
+  "status": "Plan and dependency evidence only. No Prism runtime or UE build verification."
+}

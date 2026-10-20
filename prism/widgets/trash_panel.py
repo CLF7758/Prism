@@ -22,7 +22,8 @@ from prism import commands, ui_tokens
 logger = logging.getLogger(__name__)
 
 #: 分区名（和资源树里显示的一致）
-SECTION_TITLES = {'canvas': '画布', 'mindmap': '脑图', 'document': '文档'}
+SECTION_TITLES = {'canvas': '画布', 'mindmap': '脑图', 'document': '文档',
+                  'material': '材质库'}
 NODE_TITLES = {'folder': '文件夹', 'page': '页面'}
 
 

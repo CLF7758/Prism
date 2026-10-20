@@ -6,7 +6,7 @@ from prism.i18n import _
 from prism import ui_tokens
 
 TYPE_LABELS = {'asset': 'Assets', 'document': 'Documents',
-               'mindmap': 'Mind maps', 'canvas': 'Canvases'}
+               'mindmap': 'Mind maps', 'canvas': 'Canvases', 'material': '材质球'}
 
 
 def result_kind(result):
@@ -51,8 +51,14 @@ class SearchCard(QtWidgets.QGraphicsObject):
         preview = QtCore.QRectF(10, 10, self.WIDTH-20, 104)
         kind = result_kind(self.result)
         item = self.host.resolve(self.result) if kind == 'asset' else None
+        material_preview = getattr(self.host, 'material_preview', None)
+        pixmap = material_preview(self.result) if kind == 'material' and material_preview else None
         from prism import lod
-        if item is not None and lod.draw_image(painter, item, preview, self.host):
+        if pixmap is not None:
+            painter.fillRect(preview, QtGui.QColor('#000'))
+            painter.drawPixmap(QtCore.QPointF(preview.center().x()-pixmap.width()/2,
+                                             preview.center().y()-pixmap.height()/2), pixmap)
+        elif item is not None and lod.draw_image(painter, item, preview, self.host):
             pass
         else:
             document = QtGui.QTextDocument()

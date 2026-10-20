@@ -250,10 +250,11 @@ def test_on_action_open_recent_file_when_unsaved_changes_confirmed(
 def test_open_from_file(clear_mock, view, qtbot):
     root = os.path.dirname(__file__)
     filename = os.path.join(root, 'assets', 'test1item.bee')
-    view.on_loading_finished = MagicMock()
+    view.on_loading_finished = MagicMock(wraps=view.on_loading_finished)
     view.open_from_file(filename)
     view.worker.wait()
     qtbot.waitUntil(lambda: view.on_loading_finished.called is True)
+    qtbot.waitUntil(lambda: view.scene.items_to_add.empty() and view._load_scheduler.finished is None)
     assert len(view.scene.items()) == 1
     item = view.scene.items()[0]
     assert item.isSelected() is False
@@ -621,10 +622,11 @@ def test_on_action_debuglog(show_mock, view):
 def test_on_action_insert_images_new_scene(
         dialog_mock, clear_mock, view, imgfilename3x3, qtbot):
     dialog_mock.return_value = ([imgfilename3x3], None)
-    view.on_insert_images_finished = MagicMock()
+    view.on_insert_images_finished = MagicMock(wraps=view.on_insert_images_finished)
     view.cancel_active_modes = MagicMock()
     view.on_action_insert_images()
     qtbot.waitUntil(lambda: view.on_insert_images_finished.called is True)
+    qtbot.waitUntil(lambda: view.scene.items_to_add.empty() and view._load_scheduler.finished is None)
     assert len(view.scene.items()) == 1
     item = view.scene.items()[0]
     assert item.isSelected() is True
@@ -640,10 +642,11 @@ def test_on_action_insert_images_existing_scene(
         dialog_mock, clear_mock, view, imgfilename3x3, qtbot, item):
     view.scene.addItem(item)
     dialog_mock.return_value = ([imgfilename3x3], None)
-    view.on_insert_images_finished = MagicMock()
+    view.on_insert_images_finished = MagicMock(wraps=view.on_insert_images_finished)
     view.cancel_active_modes = MagicMock()
     view.on_action_insert_images()
     qtbot.waitUntil(lambda: view.on_insert_images_finished.called is True)
+    qtbot.waitUntil(lambda: view.scene.items_to_add.empty() and view._load_scheduler.finished is None)
     assert len(view.scene.items()) == 2
     item = view.scene.items()[0]
     assert item.isSelected() is True
@@ -658,10 +661,11 @@ def test_on_action_insert_images_existing_scene(
 def test_on_action_insert_images_when_error(
         dialog_mock, clear_mock, view, imgfilename3x3, qtbot):
     dialog_mock.return_value = ([imgfilename3x3, 'iaeiae', 'trntrn'], None)
-    view.on_insert_images_finished = MagicMock()
+    view.on_insert_images_finished = MagicMock(wraps=view.on_insert_images_finished)
     view.cancel_active_modes = MagicMock()
     view.on_action_insert_images()
     qtbot.waitUntil(lambda: view.on_insert_images_finished.called is True)
+    qtbot.waitUntil(lambda: view.scene.items_to_add.empty() and view._load_scheduler.finished is None)
     assert len(view.scene.items()) == 1
     item = view.scene.items()[0]
     assert item.isSelected() is True
@@ -1362,6 +1366,7 @@ def test_mouse_press_sample_color_when_color(
         return_value=QtGui.QColor(255, 0, 0, 255))
     view.active_mode = view.SAMPLE_COLOR_MODE
     event = MagicMock()
+    event.position.return_value = QtCore.QPointF(2, 2)
     event.pos.return_value = QtCore.QPoint(2, 2)
     event.button.return_value = Qt.MouseButton.LeftButton
 
@@ -1382,6 +1387,7 @@ def test_mouse_press_sample_color_when_color_with_alpha(
         return_value=QtGui.QColor(255, 0, 0, 100))
     view.active_mode = view.SAMPLE_COLOR_MODE
     event = MagicMock()
+    event.position.return_value = QtCore.QPointF(2, 2)
     event.pos.return_value = QtCore.QPoint(2, 2)
     event.button.return_value = Qt.MouseButton.LeftButton
 
@@ -1401,6 +1407,7 @@ def test_mouse_press_sample_color_when_no_color(
     view.scene.sample_color_at = MagicMock(return_value=None)
     view.active_mode = view.SAMPLE_COLOR_MODE
     event = MagicMock()
+    event.position.return_value = QtCore.QPointF(2, 2)
     event.pos.return_value = QtCore.QPoint(2, 2)
     event.button.return_value = Qt.MouseButton.LeftButton
 
@@ -1416,6 +1423,7 @@ def test_mouse_press_sample_color_when_no_color(
 @patch('prism.view.PrismGraphicsView.cursor')
 def test_mouse_press_move_window(cursor_mock, mouse_event_mock, view):
     event = MagicMock()
+    event.position.return_value = QtCore.QPointF(2, 2)
     cursor_mock.return_value = MagicMock(
         pos=MagicMock(return_value=QtCore.QPointF(10.0, 20.0)))
     event.button.return_value = Qt.MouseButton.LeftButton
@@ -1432,7 +1440,9 @@ def test_mouse_press_move_window(cursor_mock, mouse_event_mock, view):
 @patch('PyQt6.QtWidgets.QGraphicsView.mousePressEvent')
 def test_mouse_press_when_move_window_active(mouse_event_mock, view):
     view.movewin_active = True
-    view.mousePressEvent(MagicMock())
+    event = MagicMock()
+    event.position.return_value = QtCore.QPointF(2, 2)
+    view.mousePressEvent(event)
     assert view.movewin_active is False
     mouse_event_mock.assert_not_called()
 
@@ -1458,6 +1468,7 @@ def test_key_press_when_move_window_active(key_event_mock, view):
 @patch('PyQt6.QtWidgets.QGraphicsView.mousePressEvent')
 def test_mouse_press_unhandled(mouse_event_mock, view):
     event = MagicMock()
+    event.position.return_value = QtCore.QPointF(2, 2)
     event.button.return_value = Qt.MouseButton.LeftButton
     event.modifiers.return_value = None
     view.mousePressEvent(event)

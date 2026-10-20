@@ -25,6 +25,7 @@ class CanvasTiles(QtCore.QObject):
         self.bytes = 0
         self.level = None
         self.timer = QtCore.QTimer(self)
+        self.timer.setObjectName('canvas.build_tiles')
         self.timer.setInterval(16)
         self.timer.timeout.connect(self._work)
         self.visible = set()
@@ -32,6 +33,31 @@ class CanvasTiles(QtCore.QObject):
         self.protected = set()
         self.coverage_missing = 0
         self._coverage_log_time = 0
+        self.context = None
+        self.contexts = OrderedDict()
+
+    def switch_context(self, context):
+        """Reuse a canvas's last pixels while its visible details refresh."""
+        if context == self.context:
+            return
+        self.timer.stop()
+        if self.tiles:
+            self.contexts[self.context] = (self.tiles, self.bytes, self.level)
+        self.tiles, self.bytes, self.level = self.contexts.pop(context, (OrderedDict(), 0, None))
+        self.context = context
+        # Cached pixels give immediate coverage, but edits and newly decoded
+        # previews must still refresh them when this canvas is revisited.
+        self.stale = set(self.tiles)
+        self.pending.clear()
+        self.visible.clear()
+        self.protected.clear()
+        self._trim_contexts()
+
+    def _trim_contexts(self):
+        total = self.bytes + sum(state[1] for state in self.contexts.values())
+        while total > self.BUDGET and self.contexts:
+            _context, state = self.contexts.popitem(last=False)
+            total -= state[1]
 
     @classmethod
     def rect(cls, key):
@@ -60,6 +86,8 @@ class CanvasTiles(QtCore.QObject):
         self.bytes = 0
         self.level = None
         self.protected.clear()
+        self.contexts.clear()
+        self.context = None
 
     def invalidate(self, regions=None):
         if not regions or any(r.isEmpty() for r in regions):
@@ -102,6 +130,7 @@ class CanvasTiles(QtCore.QObject):
             value = self.tiles.pop(victim)
             self.bytes -= value[0].sizeInBytes() + (value[2].sizeInBytes() if value[2] else 0)
             self.stale.discard(victim)
+        self._trim_contexts()
 
     def _has_cover(self, key):
         if key in self.tiles:

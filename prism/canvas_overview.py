@@ -77,19 +77,32 @@ class CanvasOverviewRenderer(QtCore.QObject):
 
     def queue_visible_details(self):
         from prism import lod
-        from prism.item_lifecycle import is_pixmap_item
+        from prism.item_lifecycle import is_pixmap_item, is_deleted
         view = self.view
         if not view.isVisible():
             return
         rect = view.mapToScene(view.viewport().rect()).boundingRect()
         scale = view.get_scale()*view.viewport().devicePixelRatioF()
-        for item in view.scene.items(rect, QtCore.Qt.ItemSelectionMode.IntersectsItemBoundingRect):
-            if not is_pixmap_item(item):
-                continue
+        revision = getattr(view.scene._viewport_items, 'layout_revision', 0)
+        key = (rect.x(), rect.y(), rect.width(), rect.height(), scale, revision)
+        if getattr(self, '_details_key', None) != key:
+            self._details_key = key
+            self._details_items = [item for item in view.scene.items(rect, QtCore.Qt.ItemSelectionMode.IntersectsItemBoundingRect)
+                                   if item.isVisible() and is_pixmap_item(item)]
+            self._details_cursor = 0
+        prefix_ready = True
+        for index in range(self._details_cursor, len(self._details_items)):
+            item = self._details_items[index]
+            if is_deleted(item) or item.scene() is not view.scene or not item.isVisible():
+                self._details_key = None
+                return
             size = item._image_size
             pixels = max(size.width(), size.height())*item.scale()*scale
-            if pixels > lod.OVERVIEW_MAX_PIXELS:
-                lod.base_preview_ready(item, pixels, view)
+            ready = lod.base_preview_ready(item, pixels, view)
+            if ready and prefix_ready:
+                self._details_cursor = index+1
+            elif not ready:
+                prefix_ready = False
                 app = QtCore.QCoreApplication.instance()
                 decoder = getattr(app, '_prism_display_decoder', None)
                 if decoder is not None and len(decoder.requests) >= decoder.max_pending:

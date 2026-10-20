@@ -28,3 +28,22 @@ def test_file_version_changes_cache_identity(tmp_path):
     old = image_pyramid.source_key(None, str(path), None)
     path.write_bytes(b'longer replacement')
     assert image_pyramid.source_key(None, str(path), None) != old
+
+
+def test_pyramid_reuses_preview_store_location_without_reopening_settings(tmp_path, monkeypatch):
+    preview_store = thumbnail_cache.ThumbnailCache(str(tmp_path/'previews'))
+    monkeypatch.setattr(thumbnail_cache, 'cache', lambda: preview_store)
+    monkeypatch.setattr(image_pyramid, '_cache', None)
+
+    def reopening_settings():
+        raise AssertionError('decoding must reuse the configured preview store')
+
+    monkeypatch.setattr(thumbnail_cache, 'cache_directory', reopening_settings)
+    pyramid = image_pyramid.cache()
+    assert image_pyramid.cache() is pyramid
+    assert pyramid.directory == str(tmp_path/'previews'/'pyramid')
+    image = QtGui.QImage(64, 32, QtGui.QImage.Format.Format_RGB32)
+    image.fill(QtGui.QColor('red'))
+    assert pyramid.store('location-test', image, 4096, 2048)
+    assert pyramid.load('location-test').size == QtCore.QSize(4096, 2048)
+    pyramid.close()

@@ -1,0 +1,28 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.4.2",
+	"FriendlyName": "HyperVault",
+	"Description": "The HyperVault is a Unreal Editor tool designed to generate asset packs, for easy sharing between projects.",
+	"Category": "NSYNK",
+	"CreatedBy": "NSYNK",
+	"CreatedByURL": "http://nsynk.de/",
+	"DocsURL": "https://docs.nsynk.de/en/Tools/Unreal/hyper-vault",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "Vault",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"WhitelistPlatforms": [
+				"Win64",
+				"Win32"
+			]
+		}
+	]
+}

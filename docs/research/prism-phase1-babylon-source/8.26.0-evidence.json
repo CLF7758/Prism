@@ -1,0 +1,52 @@
+[
+  {
+    "path": "license.md",
+    "status": 200,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/8.26.0/license.md"
+  },
+  {
+    "path": "NOTICE.md",
+    "status": 200,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/8.26.0/NOTICE.md"
+  },
+  {
+    "path": "packages/dev/core/src/Materials/PBR/pbrMaterial.ts",
+    "status": 200,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/8.26.0/packages/dev/core/src/Materials/PBR/pbrMaterial.ts"
+  },
+  {
+    "path": "packages/dev/core/src/Materials/PBR/pbrBaseMaterial.ts",
+    "status": 200,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/8.26.0/packages/dev/core/src/Materials/PBR/pbrBaseMaterial.ts"
+  },
+  {
+    "path": "packages/dev/core/src/Rendering/subSurfaceSceneComponent.ts",
+    "status": 200,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/8.26.0/packages/dev/core/src/Rendering/subSurfaceSceneComponent.ts"
+  },
+  {
+    "path": "packages/dev/core/src/Rendering/subSurfaceConfiguration.ts",
+    "status": 200,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/8.26.0/packages/dev/core/src/Rendering/subSurfaceConfiguration.ts"
+  },
+  {
+    "path": "packages/dev/inspector/src/components/actionTabs/tabs/propertyGrids/materials/pbrMaterialPropertyGridComponent.tsx",
+    "status": 200,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/8.26.0/packages/dev/inspector/src/components/actionTabs/tabs/propertyGrids/materials/pbrMaterialPropertyGridComponent.tsx"
+  },
+  {
+    "path": "packages/dev/inspector/src/components/actionTabs/tabs/propertyGrids/materials/pbrBaseMaterialPropertyGridComponent.tsx",
+    "status": 404,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/8.26.0/packages/dev/inspector/src/components/actionTabs/tabs/propertyGrids/materials/pbrBaseMaterialPropertyGridComponent.tsx"
+  },
+  {
+    "path": "packages/dev/serializers/src/babylonSerializer.ts",
+    "status": 404,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/8.26.0/packages/dev/serializers/src/babylonSerializer.ts"
+  },
+  {
+    "path": "packages/dev/core/src/Materials/material.ts",
+    "status": 200,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/8.26.0/packages/dev/core/src/Materials/material.ts"
+  }
+]

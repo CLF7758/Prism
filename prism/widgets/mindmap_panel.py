@@ -36,12 +36,10 @@ import logging
 import os
 import time
 
-# Chromium needs these before QtWebEngine initialises; without them a
-# headless or remote session fails to create a context at all.
-os.environ.setdefault(
-    'QTWEBENGINE_CHROMIUM_FLAGS',
-    '--disable-gpu --disable-software-rasterizer --no-sandbox '
-    '--disable-features=RendererCodeIntegrity')
+# Keep WebGL available for the shared material/GLB renderer. Headless tests
+# may still explicitly override Chromium flags in their own environment.
+from prism.webengine_runtime import configure_webengine
+configure_webengine()
 
 from PyQt6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
@@ -268,11 +266,9 @@ class MindMapPanel(QtWidgets.QWidget):
         tree = self._scene_tree()
         self._tree = tree
         if self._ready:
-            # Compare against what the page was actually given, not against
-            # ``self._tree``: an import replaces the tree behind this panel's
-            # back (view.py sets ``_tree`` then stores it), and comparing to
-            # our own copy would silently skip the push and leave the page
-            # showing the old map.
+            # Compare against what the page was actually given. The scene
+            # can be replaced by an import or project load independently
+            # of the last tree sent to the renderer.
             if tree == self._sent_tree:
                 return
             self._sent_tree = tree
@@ -282,12 +278,33 @@ class MindMapPanel(QtWidgets.QWidget):
             self._pending_tree = tree
         self._update_status()
 
+    def set_tree(self, tree):
+        """Replace the map from an import without reading the old renderer."""
+        self._adopt_images(tree)
+        self._set_scene_tree(tree)
+        self.load_from_scene()
+
     def store_to_scene(self):
         """Copy the current tree back into the scene for saving."""
+        project_id = self.view.scene.project_id
+        if (self._ready and self.web_view is not None and self._pending_tree is None
+                and not getattr(self, '_tree_loading', False)):
+            from prism.widgets.editor_snapshot import read_editor_snapshot
+            from prism.item_lifecycle import is_deleted
+            payload = read_editor_snapshot(self.web_view.page(),
+                'window.__searchSnapshot ? window.__searchSnapshot() : null',
+                valid=lambda: not is_deleted(self) and self.view.scene.project_id == project_id)
+            if is_deleted(self) or self.view.scene.project_id != project_id:
+                return False
+            if payload is None or parse_tree_payload(payload)[0] is None:
+                logger.warning('Mind map snapshot unavailable; refusing stale content')
+                return False
+            self._on_tree_changed(payload)
         if self._tree is None:
-            return
+            return True
         self._adopt_images(self._tree)
         self._set_scene_tree(self._tree)
+        return True
 
     def request_tree(self):
         if self._ready:
@@ -508,6 +525,7 @@ class MindMapPanel(QtWidgets.QWidget):
 
     def _push_tree_to_page(self, tree):
         """Send a tree (and its pictures) to the page."""
+        self._tree_loading = True
         self._bridge.loadTree.emit(self._payload_for(tree))
         self._echo_deadline = time.monotonic() + 3.0
 
@@ -521,6 +539,7 @@ class MindMapPanel(QtWidgets.QWidget):
         }, ensure_ascii=False)
 
     def _on_tree_loaded(self, ok, error):
+        self._tree_loading = not ok
         if ok and getattr(self, '_pending_view_restore', None) is not None:
             self.restore_search_view(self._pending_view_restore)
         if ok and getattr(self, '_pending_search', None) is not None:
@@ -558,7 +577,7 @@ class MindMapPanel(QtWidgets.QWidget):
         if not self._ready or self.web_view is None:
             callback(True)
             return
-        if self._pending_tree is not None:
+        if self._pending_tree is not None or getattr(self, '_tree_loading', False):
             callback(False)
             return
         project_id = self.view.scene.project_id

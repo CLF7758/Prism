@@ -1,0 +1,8 @@
+{
+  "url": "https://registry.npmjs.org/babylonjs-loaders/-/babylonjs-loaders-8.26.0.tgz",
+  "version": "8.26.0",
+  "sha256": "5fc7467d92860108ff0ffb9a41f23f599c02a93f8bdd604c6e7314f2c6c71334",
+  "license": "Apache-2.0",
+  "runtimeFile": "babylonjs.loaders.min.js",
+  "runtimeSha256": "7526ecce51b4c8980d4e36ff3252c387c2cc9a79803c1239dbc3d19a4f4263da"
+}

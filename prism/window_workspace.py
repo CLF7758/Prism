@@ -156,7 +156,8 @@ class WindowWorkspaceMixin:
         pages_removed = self._pages_under_node(node_id)
         # 删掉当前页之前，先把面板里的编辑写回 scene —— 回收站里要留着它。
         if self.current_page_id in pages_removed:
-            self._store_current_page()
+            if self._store_current_page() is False:
+                return
         # 后继必须在删之前算：删完它就不在兄弟列表里了。
         successor = (self._fallback_page_after_delete(node_id)
                      if self.current_page_id in pages_removed else None)
@@ -168,11 +169,15 @@ class WindowWorkspaceMixin:
             text += f'（含 {folders} 个文件夹、{pages} 个页面）'
         self._show_trash_toast(text, [node_id])
 
-    def _store_current_page(self):
+    def _store_current_page(self, current=None):
         """把当前页签里的编辑写回 scene（切页/删除前都该做这一步）。"""
-        current = self.tabs.currentWidget()
+        current = current if current is not None else self.tabs.currentWidget()
         if hasattr(current, 'store_to_scene'):
-            current.store_to_scene()
+            if current.store_to_scene() is False:
+                self.statusBar().showMessage(
+                    _('Editor content could not be read. Please retry.'), 6000)
+                return False
+        return True
 
     def _pages_under_node(self, node_id):
         """这个节点（含后代）里所有页面的 id。"""
@@ -322,7 +327,8 @@ class WindowWorkspaceMixin:
         successor = None
         if current_removed:
             # 删的是当前页：先把面板里的编辑存回，再找一个接班页。
-            self._store_current_page()
+            if self._store_current_page() is False:
+                return
             for node_id in roots:
                 successor = self._fallback_page_after_delete(node_id)
                 if successor:
@@ -548,6 +554,7 @@ class WindowWorkspaceMixin:
         self.current_page_kind = 'canvas'
         self.current_page_id = canvas_id
         self.view.current_canvas_id = canvas_id
+        self.view._overview_renderer.tiles.switch_context(canvas_id)
         # 打开工程显示**全部**素材。旧列表在的时候这里会自动选中第一个
         # 分类、只显示那一类；分类筛选的界面入口已经随列表删掉了，默认
         # 再藏素材就没人知道为什么看不见了。
@@ -572,6 +579,35 @@ class WindowWorkspaceMixin:
                 return None
         return 'default-canvas'
 
+    def _open_material_library_entry(self, folder_id=None):
+        if (folder_id is None
+                and self.tabs.currentWidget() is not self.material_library):
+            self.material_library.load_from_scene()
+            folder_id = self.material_library.folder_id
+        self.open_material_library(folder_id)
+
+    def open_material_library(self, folder_id=None, *, from_search=False):
+        if self._store_current_page() is False:
+            return
+        controller = getattr(self, 'search_controller', None)
+        if controller is not None and controller.active and not from_search:
+            controller.exit()
+        self.material_library.open_folder(folder_id)
+        self.current_page_kind = 'material'
+        self.current_page_id = None
+        self.tabs.setCurrentWidget(self.material_library)
+        tree = self.view.category_panel.resource_tree
+        model = tree.model()
+        if self.material_library.folder_id is None:
+            from prism.widgets.resource_tree_model import UI_SECTIONS
+            index = model.index(UI_SECTIONS.index('material'), 0)
+        else:
+            index = model.index_for_id(self.material_library.folder_id)
+        tree.setCurrentIndex(index)
+        tree.scrollTo(index)
+        self.view.category_panel._update_navigation()
+        self.material_library.setFocus()
+
     def _open_resource_page(self, kind, page_id):
         controller = getattr(self, 'search_controller', None)
         if controller is not None and controller.active:
@@ -583,16 +619,15 @@ class WindowWorkspaceMixin:
 
     @measured('workspace.open_page', 0)
     def open_workspace_page(self, kind, page_id):
+        if self._store_current_page() is False:
+            return
         trace_record('workspace_page', page_kind=kind, page_id=page_id)
         if getattr(self, 'current_page_id', None) != page_id:
-            self.view._overview_renderer.tiles.reset()
+            self.view._overview_renderer.tiles.switch_context(page_id)
         if hasattr(self, 'asset_browser'):
             self.asset_browser.list.clear_annotations()
         if hasattr(self, 'asset_browser'):
             self.asset_browser.saved_rule = None
-        current = self.tabs.currentWidget()
-        if hasattr(current, 'store_to_scene'):
-            current.store_to_scene()
         self.current_page_kind = kind
         self.current_page_id = page_id
         if kind == 'canvas':

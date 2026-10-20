@@ -110,6 +110,8 @@ def no_blocking_message_boxes():
     """
     with patch('PyQt6.QtWidgets.QMessageBox.question',
                return_value=QtWidgets.QMessageBox.StandardButton.Yes), \
+         patch('PyQt6.QtWidgets.QMessageBox.warning',
+               return_value=QtWidgets.QMessageBox.StandardButton.Ok), \
          patch('prism.view.PrismGraphicsView._ask_export_mode',
                return_value='adjusted'):
         yield
@@ -119,7 +121,13 @@ def no_blocking_message_boxes():
 def main_window(qtbot):
     from prism.__main__ import PrismMainWindow
     app = QtWidgets.QApplication.instance()
-    main = PrismMainWindow(app)
+    # Ordinary UI tests must not bind the user's capture port/global shortcut,
+    # watch their real clipboard or prewarm a new capture-helper process for
+    # every fixture. Integration tests start these adapters explicitly.
+    with patch('prism.browser_capture.BrowserCaptureService.start'), \
+         patch('prism.capture_hotkey.CaptureHotkey'), \
+         patch('prism.clipboard_capture.ClipboardCaptureAdapter.start'):
+        main = PrismMainWindow(app)
     qtbot.addWidget(main)
     yield main
     main.view.undo_stack.setClean()

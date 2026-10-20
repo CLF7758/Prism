@@ -164,21 +164,23 @@ def test_unsaved_import_keeps_original_after_file_deleted(qapp, tmp_path):
     assert item.original_bytes() == original
 
 
-def test_zoom_and_full_export_rehydrate_released_original(qapp, tmp_path):
+def test_zoom_and_full_export_rehydrate_released_original(view, tmp_path):
     path = tmp_path / 'original.png'
     image(1600, 900).save(str(path))
     item = fileio._load_image_item(str(path))
     assert item.ensure_full_pixmap()
     assert item.release_full_pixmap()
-    assert item.release_source_blob()
+    item.release_source_blob()  # It may already be released after display decode.
+    assert item._source_blob is None
+    view.scene.addItem(item)
     target = image(1600, 900)
     painter = QtGui.QPainter(target)
     try:
-        pixmap, _ = item._pixmap_for_painting(painter)
-        assert pixmap.size() == QtCore.QSize(1600, 900)
+        view.scene.render(painter, QtCore.QRectF(0, 0, 1600, 900), QtCore.QRectF(0, 0, 1600, 900))
     finally:
         painter.end()
     assert item.original_bytes() == path.read_bytes()
+    assert not item.has_full_pixmap()
 
 
 def test_save_as_rebinds_deferred_source_to_new_archive(view, tmp_path):

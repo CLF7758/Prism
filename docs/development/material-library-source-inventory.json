@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-19",
+  "dependencies": [
+    {
+      "name": "Babylon.js",
+      "source_directory": "E:\\eyes\\Babylon.js-master\\Babylon.js-master",
+      "checkout_type": "downloaded master archive; commit not established",
+      "runtime_integrated": false,
+      "checked_files": [
+        {
+          "path": "package.json",
+          "exists": true,
+          "sha256": "19a25b7752ed2bf54f2ee33bda83077b76133d9a8f5e28b913b946aca0f8f143"
+        },
+        {
+          "path": "license.md",
+          "exists": true,
+          "sha256": "9362ea9ea17cb221a20cbbd63f404710834cc273d2a9a7b60314fd68ab702cd6"
+        },
+        {
+          "path": "NOTICE.md",
+          "exists": true,
+          "sha256": "225463efd81558f120a6e0cdd7f4c1007ed486006d1228c4849fee0c49715823"
+        },
+        {
+          "path": "packages/dev/core/src/Materials/PBR/pbrSubSurfaceConfiguration.ts",
+          "exists": true,
+          "sha256": "321ad7e63d43a55d7bd01c5baeac655dc50672d3afb65e22620fcca595ed2530"
+        }
+      ]
+    },
+    {
+      "name": "HyperVault",
+      "source_directory": "E:\\eyes\\HyperVault-master\\HyperVault-master",
+      "checkout_type": "downloaded master archive; commit not established",
+      "runtime_integrated": false,
+      "checked_files": [
+        {
+          "path": "LICENSE",
+          "exists": true,
+          "sha256": "7ca4ac8945c1af178bac5831f98765b99dda35d43920b68236a152883aecefd4"
+        },
+        {
+          "path": "Vault/Vault.uplugin",
+          "exists": true,
+          "sha256": "9c5ce0f58ef405b5403510346ddaeef20b3e8eab5e854bae126ec28dabfd5a91"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/AssetPublisher.cpp",
+          "exists": true,
+          "sha256": "d4a76ac05f3a3510f5cd4afb1a156257b2c440b52facd8286ce0eb1e949c2ac1"
+        }
+      ]
+    }
+  ]
+}

@@ -8,6 +8,7 @@ class SceneLoadScheduler(QtCore.QObject):
         self.scene = view.scene
         self.finished = None
         self.timer = QtCore.QTimer(self)
+        self.timer.setObjectName('scene.install_items')
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.drain)
 

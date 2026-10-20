@@ -8,6 +8,36 @@ from tests.test_asset_browser import photo
 from tests.test_search_controller import submit
 
 
+def test_tile_render_visits_only_records_inside_source_rect(view, monkeypatch):
+    from prism.asset_records import ImageRecord
+    from prism.viewport_items import RecordLayer
+    for index in range(100):
+        record = ImageRecord({'x': index*200, 'data': {'imageWidth': 100, 'imageHeight': 100}},
+                             ('unused.prism', index+1))
+        view.scene.addItem(record)
+    drawn = []
+    monkeypatch.setattr(RecordLayer, 'draw_record', staticmethod(lambda painter, record, owner, exporting: drawn.append(record)))
+    image = QtGui.QImage(64, 64, QtGui.QImage.Format.Format_RGB32)
+    view._overview_renderer._render(image, QtCore.QRectF(0, 0, 64, 64), QtCore.QRectF(0, 0, 100, 100))
+    assert len(drawn) == 1
+
+
+def test_coarse_cover_selects_preview_for_actual_viewport(view):
+    image = QtGui.QImage(800, 400, QtGui.QImage.Format.Format_RGB32)
+    item = PrismPixmapItem(image)
+    item.setScale(1.5)
+    view.scene.addItem(item)
+    view.scale(.2, .2)
+    buffer = QtGui.QImage(64, 64, QtGui.QImage.Format.Format_RGB32)
+    painter = QtGui.QPainter(buffer)
+    try:
+        painter.scale(.02, .02)
+        assert round(lod.shown_pixels(item, painter)) == 16
+        assert round(lod.shown_pixels(item, painter, view)) == 240
+    finally:
+        painter.end()
+
+
 def test_levels_and_budget_preserve_original_and_adjusted_pixels(view, qapp):
     image = QtGui.QImage(800, 400, QtGui.QImage.Format.Format_RGB32)
     image.fill(QtGui.QColor('red'))

@@ -174,3 +174,10 @@ tools/review/
 /Prism-*-source.zip
 /SHA256-*.txt
 /prism/assets/ai/model.onnx
+
+# Private user texture originals and generated acceptance projects.
+/artifacts/material-tests/
+
+# Local audit projects, original assets, release staging and credentials never ship.
+/artifacts/
+/cache/

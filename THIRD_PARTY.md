@@ -29,6 +29,7 @@ design only, never for code or assets.
 | --- | --- | --- |
 | Quill (slab/quill) | BSD-3-Clause | The document editor's editing engine: rich text, lists, tables, code blocks and the HTML model the note is stored in. The upstream bundle ships unmodified in `prism/assets/editor/vendor` together with its BSD-3 license notice; nothing is fetched at runtime. |
 | simple-mind-map (wanglin2/mind-map) | MIT | The mind map tree schema (`data: {text, children, image, hyperlink, note, tag}`) is followed so the JSON stays compatible; the upstream bundle ships in `prism/assets/mindmap/vendor` with its MIT license notice. |
+| SurfaceStudio (XXLDinosaur/SurfaceStudio) | GPL-3.0-only | Original `drawCards`, escaping/number formatting helpers, card stylesheet and SVG symbols are bundled under `prism/assets/materials/surface-studio`. Copyright (C) 2026 XXLDinosaur. `LICENSE`, original source snapshots and `ORIGIN.json` are retained. Prism adds its QtWebChannel/data adapter and card overrides separately; no Blender bridge is loaded. |
 
 The document toolbar uses the same action set the earlier `QTextEdit`-based
 implementation took from Qt's `examples/widgets/richtext/textedit` example
@@ -60,3 +61,25 @@ Repository sources: https://github.com/InterwovenCode/ScreenPinKit ; https://git
 - Xhshow, https://github.com/Cloxl/xhshow, MIT, revision `b242a84f9c5a6a971bc4c90c63ad43345a4bf8a1`, supplies request signing and device identifiers for normal anonymous-session activation. PyCryptodome 3.23.0 supplies its cryptographic primitives. Both are isolated in `video-xhs`; pinned source and license are included in the component bundle. Temporary guest sessions remain in the worker's memory. Prism does not read Chrome credentials or solve verification challenges for this flow.
 
 PDF output uses the existing Qt PDF writer and Qt WebEngine print backend. Mind map layout still comes from the bundled MIT-licensed simple-mind-map library; Prism exports its complete rendered SVG rather than implementing another layout engine.
+
+## Material-library planning sources (2026-10-19, not runtime-integrated)
+
+Current scope: UE parent materials are supplied by the user. Prism preview settings never modify native UE materials. Babylon.js is the preview dependency; HyperVault is a native collection/restoration reference. AssetPort and Three.js below remain historical research inputs, not required runtime dependencies.
+
+- Babylon.js Assets environment snapshot `c81f5d744fe8d41acfebd89eaeb7008c6f9659e3`: `studio.env` and upstream notices are retained under `third_party/material-library/BabylonAssets/`, with source attribution, hashes and the CC BY 4.0 license in `ORIGIN.json` and the included notices. A redistribution ZIP with these same files is under `docs/dependency-downloads/`. The binary environment file is unchanged; the directory README was renamed to avoid collision.
+
+- Three.js 0.170.0 (r170), MIT: the offline browser module, package metadata and LICENSE are retained in `third_party/material-library/threejs/`. The npm tarball SHA-512 was checked against registry metadata. This is a preview integration candidate, not a claim of compatibility with the current Prism build.
+- AssetPort, MIT, commit `3b82afd755216c76d298db95aada37839c7fe10f`: a Python source subset, README, configuration, LICENSE, three candidate master-material assets and four default texture assets are retained in `third_party/material-library/AssetPort/`. Sources and assets came from the immutable commit; individual hashes are recorded. They are planning inputs, not loaded by Prism or included in its current installer. UE compatibility and complete template dependencies have not been tested.
+- HyperVault, MIT, commit `c9d9fcea7234e6482a43f4ba30ce263776054bd6`: 40 source, descriptor and documentation/license files are retained in `third_party/material-library/HyperVault/`. Copyright notices are preserved. Its asset publishing/loading code is a reuse candidate; no UE build or integration is claimed.
+- Exact file SHA-256 values and upstream locations are in `third_party/material-library/upstream-lock.json`. Other investigated projects are documented in `docs/research/`; license evidence there does not mean their code was integrated.
+
+
+## Integrated material preview dependencies (0.4.0)
+
+The planning list above records historical research; the following components are now integrated:
+
+- Babylon.js and glTF loaders 8.26.0, Apache-2.0: offline runtime, license and origin/hash records are distributed in `prism/assets/materials/babylon/`. The bundled studio environment carries its separate ENV-LICENSE and ENV-ORIGIN attribution.
+- SurfaceStudio, copyright 2026 XXLDinosaur, GPL-3.0-only: reused card presentation assets and retained upstream source are distributed under `prism/assets/materials/surface-studio/` with LICENSE and ORIGIN.json. Blender integration is not loaded.
+- The bundled color-picker component retains its upstream LICENSE and ORIGIN.json under `prism/vendor/vcolorpicker/`.
+
+Prism reuses Babylon's renderer and glTF loader rather than implementing a replacement engine. UE collection/restoration and the proposed FBX/OBJ model-library conversion are not shipped integrations.

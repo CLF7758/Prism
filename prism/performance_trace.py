@@ -17,6 +17,26 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 _active = None
 
 
+def process_memory_bytes():
+    """Current process resident bytes from the OS, without decoding any assets."""
+    if sys.platform == 'win32':
+        import ctypes
+        from ctypes import wintypes
+        class Counters(ctypes.Structure):
+            _fields_ = [('cb', wintypes.DWORD), ('faults', wintypes.DWORD)] + [
+                (name, ctypes.c_size_t) for name in ('peak', 'working', 'peak_paged', 'paged',
+                                                    'peak_nonpaged', 'nonpaged', 'pagefile', 'peak_pagefile')]
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.GetCurrentProcess.restype = wintypes.HANDLE
+        counters = Counters()
+        counters.cb = ctypes.sizeof(counters)
+        function = ctypes.WinDLL('psapi', use_last_error=True).GetProcessMemoryInfo
+        function.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+        if function(kernel.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+            return counters.working
+    return None
+
+
 def record(kind, **fields):
     trace = _active
     if trace is not None:
@@ -62,6 +82,8 @@ class PerformanceTrace(QtCore.QObject):
         self.last_action = None
         self.recent = deque(maxlen=128)
         self.last_heartbeat = time.perf_counter()
+        self.last_dispatch = None
+        self.dispatches_since_heartbeat = 0
         self.gui_thread = threading.get_ident()
         self.stopped = threading.Event()
         self.actions = set()
@@ -77,10 +99,14 @@ class PerformanceTrace(QtCore.QObject):
         self.timer.timeout.connect(self._heartbeat)
         self.timer.start()
         self.summary_time = time.perf_counter()
+        self.cpu_time = time.process_time()
         self.hook_actions(window)
         app.installEventFilter(self)
         app.aboutToQuit.connect(self.close)
         self.record('session_start', log=str(self.path), pid=os.getpid())
+        self.record('runtime', python=sys.version, platform=sys.platform, qt=QtCore.QT_VERSION_STR,
+                    webengine_flags=os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS', ''),
+                    qt_platform=app.platformName())
 
     def record(self, kind, **fields):
         if self.stopped.is_set():
@@ -160,8 +186,15 @@ class PerformanceTrace(QtCore.QObject):
                 reported = False
             elif not reported or now-last_report >= 5:
                 frame = sys._current_frames().get(self.gui_thread)
+                completed = self.last_dispatch
+                age = (now-completed[0])*1000 if completed else None
                 self.record('gui_stall', duration_ms=round(stalled*1000, 1),
                             last_action=self.last_action,
+                            completed_dispatches=self.dispatches_since_heartbeat,
+                            last_dispatch_age_ms=round(age, 1) if age is not None else None,
+                            last_dispatch_target=completed[1] if completed else None,
+                            last_dispatch_event=completed[2] if completed else None,
+                            timer_starved=age is not None and age < 100,
                             stack=traceback.format_stack(frame, limit=24) if frame else [])
                 reported, last_report = True, now
 
@@ -169,6 +202,7 @@ class PerformanceTrace(QtCore.QObject):
         now = time.perf_counter()
         gap = now-self.last_heartbeat
         self.last_heartbeat = now
+        self.dispatches_since_heartbeat = 0
         if gap > .25:
             self.record('gui_recovered', blocked_ms=round((gap-self.INTERVAL)*1000, 1), last_action=self.last_action)
         if now-self.summary_time >= 1:
@@ -181,13 +215,34 @@ class PerformanceTrace(QtCore.QObject):
             canvas = getattr(browser, 'list', None)
             asset_tiles = getattr(canvas, '_tiles', None)
             from prism import lod
+            library = getattr(self.window, 'material_library', None)
+            cpu = time.process_time()
+            self.record('process', rss_bytes=process_memory_bytes(),
+                        cpu_one_core_percent=round((cpu-self.cpu_time)/(now-self.summary_time)*100, 2))
+            self.cpu_time = cpu
+            if library is not None:
+                attachments = scene.attachments
+                self.record('material_performance', visible=library.isVisible(),
+                            records=library.materials.count(), selected=library.selected_id,
+                            jobs=len(library._jobs), worker_active=library._worker_pool.activeThreadCount(),
+                            worker_limit=library._worker_pool.maxThreadCount(),
+                            icon_pending=len(library._icon_pending), icon_cache=len(library._icon_cache),
+                            render_cache=len(library._render_cache),
+                            temporary_directories=len(library._render_directories),
+                            attachment_blobs_loaded=(attachments.loaded_count() if hasattr(attachments, 'loaded_count') else None),
+                            attachment_bytes_loaded=(attachments.total_loaded_bytes() if hasattr(attachments, 'total_loaded_bytes') else None))
+                self.record('material_cache', thumbnail_bytes=library._thumbnail_cache.cache.bytes,
+                            thumbnail_hits=library._thumbnail_cache.cache.hits,
+                            thumbnail_misses=library._thumbnail_cache.cache.misses,
+                            slot_icon_bytes=library._icon_cache.bytes)
             self.record('performance', dispatch_counts=dict(self.counts), max_dispatch_ms=round(self.max_dispatch, 3),
                         assets=scene._item_count, edit_objects=len(manager.materialized),
                         scale=round(view.transform().m11(), 6), tile_bytes=tiles.bytes,
                         tile_coverage_missing=tiles.coverage_missing,
                         tile_pending=len(tiles.pending), decode_pending=len(decoder.requests) if decoder else 0,
                         dropped_events=self.dropped, record_layers=len(manager.layers), image_cache_bytes=lod.cache().bytes,
-                        active_surface='assets' if canvas is not None and canvas.isVisible() else 'canvas',
+                        active_surface=('materials' if library is not None and library.isVisible() else
+                                        'assets' if canvas is not None and canvas.isVisible() else 'canvas'),
                         asset_tile_bytes=asset_tiles.bytes if asset_tiles else 0,
                         asset_tile_coverage_missing=asset_tiles.coverage_missing if asset_tiles else 0,
                         asset_tile_pending=len(asset_tiles.pending) if asset_tiles else 0,
@@ -197,11 +252,24 @@ class PerformanceTrace(QtCore.QObject):
             self.summary_time = now
 
     def dispatch_finished(self, receiver, event_type, milliseconds, *, nested_loop=False):
+        if threading.get_ident() != self.gui_thread:
+            return
+        self.last_dispatch = (time.perf_counter(), type(receiver).__name__, event_type)
+        self.dispatches_since_heartbeat += 1
         self.counts[str(event_type)] += 1
         if not nested_loop:
             self.max_dispatch = max(self.max_dispatch, milliseconds)
         if milliseconds >= 32:
+            try:
+                object_name = QtCore.QObject.objectName(receiver)
+                # PrismGraphicsView has a `parent` window attribute, which
+                # shadows QObject.parent(). Call the Qt base API directly.
+                parent = QtCore.QObject.parent(receiver)
+                owner = type(parent).__name__ if parent is not None else None
+            except (TypeError, RuntimeError):
+                object_name, owner = '', None
             self.record('nested_dispatch' if nested_loop else 'slow_dispatch', target=type(receiver).__name__, event_type=event_type,
+                        object_name=object_name, owner=owner,
                         duration_ms=round(milliseconds, 3), last_action=self.last_action)
 
     def hook_actions(self, widget):

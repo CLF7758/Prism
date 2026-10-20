@@ -8,10 +8,11 @@ from prism.widgets.resource_tree_model import (
 def test_true_ten_level_indexes_and_updates(qapp):
     service = ResourceTreeService('project')
     model = ResourceTreeModel(service)
-    assert model.rowCount() == 4
+    assert model.rowCount() == 5
     document = model.index(2, 0)
     assert model.data(document, SECTION_ROLE) == 'document'
-    assert model.data(model.index(3, 0)) == '标签'
+    assert model.data(model.index(3, 0)) == '材质库'
+    assert model.data(model.index(4, 0)) == '标签'
     blank = model.index(0, 0, document)
     assert model.data(blank, SECTION_ROLE) == 'document'
     assert model.data(blank, Qt.ItemDataRole.SizeHintRole).height() == 14

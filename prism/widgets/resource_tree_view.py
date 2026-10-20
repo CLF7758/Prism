@@ -89,8 +89,10 @@ class _BlankAreaDelegate(QtWidgets.QStyledItemDelegate):
         if (kind != 'blank' or
                 not option.state & QtWidgets.QStyle.StateFlag.State_MouseOver):
             return
-        hint = ('右键新建标签' if index.data(SECTION_ROLE) == 'tag'
-                else '右键新建页面或文件夹')
+        section = index.data(SECTION_ROLE)
+        hint = ('右键新建标签' if section == 'tag' else
+                '右键新建文件夹' if section == 'material' else
+                '右键新建页面或文件夹')
         painter.save()
         painter.setPen(QtGui.QColor(ui_tokens.COLOURS_DARK['text-secondary']))
         font = painter.font()
@@ -158,6 +160,7 @@ class ResourceTreeView(QtWidgets.QTreeView):
     #: 就地新建确认成功；参数是服务返回的节点字典。
     create_committed = QtCore.pyqtSignal(object)
     open_page_requested = QtCore.pyqtSignal(str, str)
+    open_material_requested = QtCore.pyqtSignal(object)
     delete_requested = QtCore.pyqtSignal(str)
     #: 批量操作（§7.5）：参数是被选中的节点 id 列表。
     move_requested = QtCore.pyqtSignal(list)
@@ -174,8 +177,9 @@ class ResourceTreeView(QtWidgets.QTreeView):
     #: 想看回收站（§7.6）。
     trash_requested = QtCore.pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, settings=None):
         super().__init__(parent)
+        self._settings = settings
         self.setObjectName('resourceTree')
         self.setIconSize(QtCore.QSize(16, 16))
         self.setItemDelegate(_BlankAreaDelegate(self))
@@ -204,6 +208,7 @@ class ResourceTreeView(QtWidgets.QTreeView):
         self._hover_timer.timeout.connect(self._expand_hovered)
         # 焦点 / 展开 / 滚动位置的变化都攒一下再写设置（§7.6）
         self._state_timer = QtCore.QTimer(self)
+        self._state_timer.setObjectName('resource_tree.save_state')
         self._state_timer.setSingleShot(True)
         self._state_timer.setInterval(self.STATE_SAVE_DELAY_MS)
         self._state_timer.timeout.connect(self.save_state)
@@ -439,6 +444,10 @@ class ResourceTreeView(QtWidgets.QTreeView):
         self._hover_index = None
 
     def _on_clicked(self, index):
+        if (index.data(SECTION_ROLE) == 'material'
+                and index.data(NODE_TYPE_ROLE) in ('section', 'folder')):
+            self.open_material_requested.emit(index.data(NODE_ID_ROLE))
+            return
         if index.data(NODE_TYPE_ROLE) == 'tag':
             self.tag_requested.emit(index.data(TAG_NAME_ROLE))
         if index.data(NODE_TYPE_ROLE) == 'page':
@@ -492,6 +501,16 @@ class ResourceTreeView(QtWidgets.QTreeView):
                 menu.addSeparator()
             menu.addAction('新建标签', self.new_tag_requested.emit)
             menu.addAction('管理标签', self.manage_tags_requested.emit)
+        elif section == 'material' and kind in ('section', 'blank', 'folder'):
+            parent_id = index.data(NODE_ID_ROLE) if kind == 'folder' else None
+            menu.addAction('打开材质库', lambda: self.open_material_requested.emit(parent_id))
+            menu.addAction('新建文件夹', lambda: self.create_requested.emit(
+                'material', 'folder', parent_id))
+            if kind == 'folder':
+                menu.addSeparator()
+                menu.addAction('重命名 (F2)', lambda: self.edit(index))
+                menu.addAction('移动到…', lambda: self.move_requested.emit([parent_id]))
+                menu.addAction('删除', lambda: self.delete_requested.emit(parent_id))
         elif kind in ('section', 'blank', 'folder'):
             parent_id = index.data(NODE_ID_ROLE) if kind == 'folder' else None
             page_title = {'canvas': '画布', 'mindmap': '脑图',
@@ -570,7 +589,7 @@ class ResourceTreeView(QtWidgets.QTreeView):
             event.accept()
             return
         if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                and is_node):
+                and (is_node or index.data(SECTION_ROLE) == 'material')):
             # §7.6：Enter 是「打开」，不是「重命名」（重命名归 F2）。
             self._open_current(index)
             event.accept()
@@ -594,6 +613,10 @@ class ResourceTreeView(QtWidgets.QTreeView):
 
     def _open_current(self, index):
         """Enter：页面就打开它；文件夹不自动展开（免得碰出重型编辑器）。"""
+        if (index.data(SECTION_ROLE) == 'material'
+                and index.data(NODE_TYPE_ROLE) in ('section', 'folder')):
+            self.open_material_requested.emit(index.data(NODE_ID_ROLE))
+            return
         if index.data(NODE_TYPE_ROLE) != 'page':
             return
         node_id = index.data(NODE_ID_ROLE)
@@ -669,6 +692,12 @@ class ResourceTreeView(QtWidgets.QTreeView):
     def _state_key(self, name):
         return f'{self.STATE_GROUP}/{self._project_id()}/{name}'
 
+    def _settings_store(self):
+        if self._settings is None:
+            from prism.config import PrismSettings
+            self._settings = PrismSettings()
+        return self._settings
+
     def _schedule_state_save(self, *_args):
         if self._state_timer.isActive():
             return
@@ -676,23 +705,25 @@ class ResourceTreeView(QtWidgets.QTreeView):
 
     def save_state(self):
         """把 activeNodeId、expandedIds、滚动锚点记下来。"""
-        from prism.config import PrismSettings
-
         model = self.model()
         if model is None or not self._project_id():
             return
-        settings = PrismSettings()
+        settings = self._settings_store()
         current = self.currentIndex()
         node_id = current.data(NODE_ID_ROLE) if current.isValid() else None
-        settings.setValue(self._state_key('active'), node_id or '')
         expanded = self._expanded_node_ids()
-        settings.setValue(self._state_key('expanded'),
-                          ','.join(expanded[:self.MAX_REMEMBERED_EXPANDED]))
         anchor = self.indexAt(QtCore.QPoint(1, 1))
         anchor_id = anchor.data(NODE_ID_ROLE) if anchor.isValid() else ''
         offset = self.verticalScrollBar().value()
-        settings.setValue(self._state_key('anchor'),
-                          f'{anchor_id or ""}|{offset}')
+        values = {'active': node_id or '',
+                  'expanded': ','.join(expanded[:self.MAX_REMEMBERED_EXPANDED]),
+                  'anchor': f'{anchor_id or ""}|{offset}'}
+        # Restore/layout can emit the same state repeatedly. Even a no-op
+        # QSettings.setValue posts an INI sync; only persist actual changes.
+        for name, value in values.items():
+            key = self._state_key(name)
+            if settings.value(key) != value:
+                settings.setValue(key, value)
 
     def _expanded_node_ids(self):
         """现在展开着的文件夹 id（含分区这一层的递归）。"""
@@ -718,12 +749,10 @@ class ResourceTreeView(QtWidgets.QTreeView):
 
     def restore_state(self):
         """把上次的焦点、展开、滚动位置放回去（无效 id 直接跳过）。"""
-        from prism.config import PrismSettings
-
         model = self.model()
         if model is None or not self._project_id():
             return
-        settings = PrismSettings()
+        settings = self._settings_store()
         raw = settings.value(self._state_key('expanded'), '', type=str) or ''
         for node_id in [part for part in raw.split(',') if part]:
             index = model.index_for_id(node_id)

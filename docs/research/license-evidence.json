@@ -1,0 +1,88 @@
+[
+  {
+    "name": "MaterialVault",
+    "repo": "ScottRaffertyCG/Material-Vault",
+    "ref": "main",
+    "url": "https://raw.githubusercontent.com/ScottRaffertyCG/Material-Vault/main/LICENSE",
+    "status": "read",
+    "sample": "MIT License\n\nCopyright (c) 2024 MaterialVault Contributors\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof "
+  },
+  {
+    "name": "AssetPort",
+    "repo": "Colosyn/Asset-Port",
+    "ref": "main",
+    "url": "https://raw.githubusercontent.com/Colosyn/Asset-Port/main/LICENSE",
+    "status": "read",
+    "sample": "MIT License\n\nCopyright (c) 2026 Colosyn (Shahnawaz Hussain)\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof"
+  },
+  {
+    "name": "threejs",
+    "repo": "mrdoob/three.js",
+    "ref": "r170",
+    "url": "https://raw.githubusercontent.com/mrdoob/three.js/r170/LICENSE",
+    "status": "read",
+    "sample": "The MIT License\n\nCopyright © 2010-2024 three.js authors\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof thi"
+  },
+  {
+    "name": "MaterialMaker",
+    "repo": "RodZill4/material-maker",
+    "ref": "master",
+    "url": "https://raw.githubusercontent.com/RodZill4/material-maker/master/LICENSE.md",
+    "status": "read",
+    "sample": "# MIT License\n\nCopyright (c) 2018-present Rodolphe Suescun and contributors\n\nPermission is hereby granted, free of charge, to any person obt"
+  },
+  {
+    "name": "fastcdc",
+    "repo": "iscc/fastcdc-py",
+    "ref": "master",
+    "url": "https://raw.githubusercontent.com/iscc/fastcdc-py/master/LICENSE",
+    "status": "read",
+    "sample": "The MIT License (MIT)\n\nCopyright (c) 2020 Titusz Pan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this s"
+  },
+  {
+    "name": "MaterialX",
+    "repo": "AcademySoftwareFoundation/MaterialX",
+    "ref": "main",
+    "url": "https://raw.githubusercontent.com/AcademySoftwareFoundation/MaterialX/main/LICENSE",
+    "status": "read",
+    "sample": "                                 Apache License\n                           Version 2.0, January 2004\n                        http://www.apac"
+  },
+  {
+    "name": "OpenImageIO",
+    "repo": "AcademySoftwareFoundation/OpenImageIO",
+    "ref": "main",
+    "url": "https://raw.githubusercontent.com/AcademySoftwareFoundation/OpenImageIO/main/LICENSE.md",
+    "status": "read",
+    "sample": "                                 Apache License\n                           Version 2.0, January 2004\n                        http://www.apac"
+  },
+  {
+    "name": "restic",
+    "repo": "restic/restic",
+    "ref": "master",
+    "url": "https://raw.githubusercontent.com/restic/restic/master/LICENSE",
+    "status": "read",
+    "sample": "BSD 2-Clause License\n\nCopyright (c) 2014, Alexander Neumann <alexander@bumpern.de>\nAll rights reserved.\n\nRedistribution and use in source an"
+  },
+  {
+    "name": "Trilium",
+    "repo": "TriliumNext/Trilium",
+    "url": "https://raw.githubusercontent.com/TriliumNext/Trilium/develop/LICENSE",
+    "error": "404 Client Error: Not Found for url: https://raw.githubusercontent.com/TriliumNext/Trilium/develop/LICENSE"
+  },
+  {
+    "name": "zstd",
+    "repo": "facebook/zstd",
+    "ref": "dev",
+    "url": "https://raw.githubusercontent.com/facebook/zstd/dev/LICENSE",
+    "status": "read",
+    "sample": "BSD License\n\nFor Zstandard software\n\nCopyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.\n\nRedistribution and use in sour"
+  },
+  {
+    "name": "Trilium",
+    "repo": "TriliumNext/Trilium",
+    "ref": "main",
+    "url": "https://raw.githubusercontent.com/TriliumNext/Trilium/main/LICENSE",
+    "status": "read",
+    "sample": "                    GNU AFFERO GENERAL PUBLIC LICENSE\n                       Version 3, 19 November 2007\n\n Copyright (C) 2007 Free Software "
+  }
+]

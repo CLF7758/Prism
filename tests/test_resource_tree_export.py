@@ -87,7 +87,7 @@ def test_tag_rows_keep_their_own_menu(qtbot):
     """标签分区的右键菜单不该出现「导出…」。"""
     _service, model, view, _requests = a_tree(qtbot)
 
-    menu = view.menu_for_index(model.index(3, 0))
+    menu = view.menu_for_index(model.index(4, 0))
 
     assert export_action(menu) is None
 

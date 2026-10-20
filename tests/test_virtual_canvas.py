@@ -368,6 +368,20 @@ def test_selection_add_contains_and_rotated_hit_tests_match_qt(view, tmp_path):
     assert first._graphics is second._graphics is None
 
 
+def test_query_enclosing_rotated_records_uses_index_bounds(view, tmp_path, monkeypatch):
+    item = record(view, tmp_path)
+    item.setRotation(45)
+    bounds = item.sceneBoundingRect().adjusted(-10, -10, 10, 10)
+    def unnecessary_outline():
+        raise AssertionError('fully enclosed records do not need transformed outlines')
+    monkeypatch.setattr(item, 'shape', unnecessary_outline)
+    for mode in (QtCore.Qt.ItemSelectionMode.ContainsItemShape,
+                 QtCore.Qt.ItemSelectionMode.IntersectsItemShape,
+                 QtCore.Qt.ItemSelectionMode.ContainsItemBoundingRect,
+                 QtCore.Qt.ItemSelectionMode.IntersectsItemBoundingRect):
+        assert item in view.scene.items(bounds, mode)
+
+
 def test_empty_archive_uses_original_file_and_never_replaces_good_archive(view, tmp_path):
     import sqlite3
     from prism import image_decode

@@ -1,0 +1,7 @@
+{
+  "package": "vcolorpicker",
+  "version": "1.4.4",
+  "url": "https://files.pythonhosted.org/packages/83/8a/aa085b7f24473349881064c4a1deca3727ca7a64dfd4a28fdb9f5d20529c/vcolorpicker-1.4.4.tar.gz",
+  "sha256": "17f68f7bb8d0170a0d7d0f304419a9fc4ac22121bc2a7727df1283d74d91afa3",
+  "source": "https://github.com/nlfmt/pyqt-colorpicker"
+}

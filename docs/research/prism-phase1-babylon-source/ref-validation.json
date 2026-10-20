@@ -1,0 +1,73 @@
+[
+  {
+    "url": "https://github.com/BabylonJS/Babylon.js",
+    "status": 200,
+    "oid": [
+      "1431d93dbd9dd6051575fafcc43db9806d0483c4"
+    ],
+    "paths": [
+      ".azure-pipelines",
+      ".build",
+      ".editorconfig",
+      ".gitattributes",
+      ".githooks",
+      ".github",
+      ".gitignore",
+      ".hintrc",
+      ".npmrc",
+      ".prettierignore",
+      ".prettierrc",
+      ".vscode",
+      "/",
+      "CHANGELOG.md",
+      "CNAME",
+      "CNAME.txt",
+      "CODE_OF_CONDUCT.md",
+      "NOTICE.md",
+      "contributing.md",
+      "eslint.config.mjs",
+      "lerna.json",
+      "license.md",
+      "lint-staged.config.mjs",
+      "nx.json",
+      "package-lock.json",
+      "package.json",
+      "packages",
+      "playwright.browserstack.config.ts",
+      "playwright.config.ts",
+      "playwright.es6vis.config.ts",
+      "playwright.khr-interactivity.config.ts",
+      "readme-es6.md",
+      "readme.md",
+      "scripts",
+      "specs",
+      "tsconfig.build.json",
+      "tsconfig.devpackages.json",
+      "tsconfig.json",
+      "tsconfig.smartFilters.json",
+      "tsconfig.test.json",
+      "tsdoc.json",
+      "vitest.config.mts",
+      "vitest.setup.ts"
+    ]
+  },
+  {
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/master/license.md",
+    "status": 200,
+    "saved": "docs\\research\\prism-phase1-babylon-source\\tag-master-license.md"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/master/packages/dev/core/src/Materials/PBR/pbrSubSurfaceConfiguration.ts",
+    "status": 200,
+    "saved": "docs\\research\\prism-phase1-babylon-source\\tag-master-pbrSubSurfaceConfiguration.ts"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/9.31.0/packages/dev/core/src/Materials/PBR/pbrSubSurfaceConfiguration.ts",
+    "status": 404
+  },
+  {
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/8.26.0/packages/dev/core/src/Materials/PBR/pbrSubSurfaceConfiguration.ts",
+    "status": 200,
+    "saved": "docs\\research\\prism-phase1-babylon-source\\tag-8.26.0-pbrSubSurfaceConfiguration.ts"
+  }
+]

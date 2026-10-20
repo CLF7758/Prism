@@ -1,0 +1,42 @@
+[
+  {
+    "path": "license.md",
+    "status": 404,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/f1128df057531ce6321408a36188516f3e1e4f72/license.md"
+  },
+  {
+    "path": "LICENSE",
+    "status": 404,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/f1128df057531ce6321408a36188516f3e1e4f72/LICENSE"
+  },
+  {
+    "path": "packages/dev/core/src/Materials/PBR/pbrMaterial.ts",
+    "status": 404,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/f1128df057531ce6321408a36188516f3e1e4f72/packages/dev/core/src/Materials/PBR/pbrMaterial.ts"
+  },
+  {
+    "path": "packages/dev/core/src/Materials/PBR/pbrSubSurfaceConfiguration.ts",
+    "status": 404,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/f1128df057531ce6321408a36188516f3e1e4f72/packages/dev/core/src/Materials/PBR/pbrSubSurfaceConfiguration.ts"
+  },
+  {
+    "path": "packages/dev/core/src/Rendering/subSurfaceSceneComponent.ts",
+    "status": 404,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/f1128df057531ce6321408a36188516f3e1e4f72/packages/dev/core/src/Rendering/subSurfaceSceneComponent.ts"
+  },
+  {
+    "path": "packages/dev/inspector/src/components/actionTabs/tabs/propertyGrids/materials/pbrMaterialPropertyGridComponent.tsx",
+    "status": 404,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/f1128df057531ce6321408a36188516f3e1e4f72/packages/dev/inspector/src/components/actionTabs/tabs/propertyGrids/materials/pbrMaterialPropertyGridComponent.tsx"
+  },
+  {
+    "path": "packages/dev/core/src/Materials/PBR/pbrBaseMaterial.ts",
+    "status": 404,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/f1128df057531ce6321408a36188516f3e1e4f72/packages/dev/core/src/Materials/PBR/pbrBaseMaterial.ts"
+  },
+  {
+    "path": "packages/dev/serializers/src/glTF/2.0/glTFExporter.ts",
+    "status": 404,
+    "url": "https://raw.githubusercontent.com/BabylonJS/Babylon.js/f1128df057531ce6321408a36188516f3e1e4f72/packages/dev/serializers/src/glTF/2.0/glTFExporter.ts"
+  }
+]

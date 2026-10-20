@@ -9,7 +9,7 @@ py -3.12 -m venv "%~dp0.venv"
 if errorlevel 1 goto setup_failed
 
 :check_dependencies
-"%PYEXE%" -c "import importlib.util,sys; modules=('PyQt6','PyQt6.QtWebEngineWidgets','av','exif','lxml','numpy','onnxruntime','PIL','docx','rpack'); sys.exit(sys.version_info[:2] != (3,12) or any(importlib.util.find_spec(name) is None for name in modules))"
+"%PYEXE%" -c "import importlib.util,sys; modules=('PyQt6','PyQt6.QtWebEngineWidgets','av','exif','lxml','numpy','onnxruntime','PIL','docx','rpack','qtpy'); sys.exit(sys.version_info[:2] != (3,12) or any(importlib.util.find_spec(name) is None for name in modules))"
 if not errorlevel 1 goto launch
 
 echo Installing Prism dependencies. The first launch requires internet access.

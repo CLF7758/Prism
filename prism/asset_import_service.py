@@ -19,8 +19,7 @@ import dataclasses
 import logging
 import os
 
-from prism.glb_preview import GLB_EXTENSIONS
-from prism.items import VIDEO_EXTENSIONS
+from prism.media_types import GLB_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +28,6 @@ logger = logging.getLogger(__name__)
 #: `main_controls._IMAGE_EXTS` 里有同样一份，但不能直接引用它：那个表是
 #: 私有的，而且把 `.glb/.gltf` 也算进去了 —— 在拖放那条路上那样没问题
 #: （都是"能丢进来的文件"），但拿它做分类会把 3D 模型当图片。
-IMAGE_EXTENSIONS = frozenset({
-    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff', '.tif',
-    '.svg', '.ico', '.jfif', '.jpe', '.ppm', '.pgm', '.pbm', '.xbm',
-    '.xpm', '.psd', '.exr', '.hdr',
-})
-
 #: 分类名。界面按这个决定交给哪个加载函数。
 IMAGE = 'image'
 VIDEO = 'video'

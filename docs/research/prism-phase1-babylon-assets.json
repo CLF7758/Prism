@@ -1,0 +1,60 @@
+[
+  {
+    "url": "https://github.com/BabylonJS/Assets",
+    "status": 200,
+    "size": 298073,
+    "paths": [
+      ".gitignore",
+      "/",
+      "Assets.md",
+      "IES",
+      "LICENSE",
+      "README.md",
+      "_headers",
+      "core",
+      "environments",
+      "fonts",
+      "ibl",
+      "libGenerator",
+      "lottie",
+      "luts",
+      "materials/checkerboard",
+      "meshes",
+      "mixamo",
+      "nme/customFrames",
+      "package-lock.json",
+      "package.json",
+      "particles",
+      "photoDomes",
+      "skyboxes",
+      "sound",
+      "splats",
+      "sprites",
+      "structure.json",
+      "textures"
+    ],
+    "commit": [
+      "c81f5d744fe8d41acfebd89eaeb7008c6f9659e3"
+    ]
+  },
+  {
+    "url": "https://raw.githubusercontent.com/BabylonJS/Assets/master/license.md",
+    "status": 404,
+    "size": 14
+  },
+  {
+    "url": "https://raw.githubusercontent.com/BabylonJS/Assets/master/LICENSE.md",
+    "status": 404,
+    "size": 14
+  },
+  {
+    "url": "https://raw.githubusercontent.com/BabylonJS/Assets/master/environments/environmentSpecular.env",
+    "status": 404,
+    "size": 14
+  },
+  {
+    "url": "https://raw.githubusercontent.com/BabylonJS/Assets/master/environments/environmentSpecular.env.license",
+    "status": 404,
+    "size": 14
+  }
+]

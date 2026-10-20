@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 #: 三种页面类型，和现有代码里的取值一致。
 KINDS = ('canvas', 'document', 'mindmap')
 
-TREE_SECTIONS = ('canvas', 'mindmap', 'document')
+PAGE_SECTIONS = KINDS
+TREE_SECTIONS = ('canvas', 'mindmap', 'document', 'material')
 
 
 def legacy_page_nodes(pages, project_id):
@@ -45,7 +46,7 @@ def legacy_page_nodes(pages, project_id):
     for page in pages:
         page_id = page.get('id')
         if (not page_id or page_id in by_id or
-                page.get('kind') not in TREE_SECTIONS):
+                page.get('kind') not in PAGE_SECTIONS):
             raise ValueError('旧页面 ID 或类型无效，不能安全迁移')
         by_id[page_id] = page
 
@@ -74,7 +75,7 @@ def legacy_page_nodes(pages, project_id):
                              if parent_id is not None}
     nodes = []
     recovery_ids = {}
-    for section in TREE_SECTIONS:
+    for section in PAGE_SECTIONS:
         if any(p['kind'] == section and p['id'] in invalid for p in pages):
             folder_id = stable_id('recovery', section)
             recovery_ids[section] = folder_id
@@ -175,6 +176,8 @@ class ResourceTreeService(QtCore.QObject):
                     node.get('section') not in TREE_SECTIONS or
                     node.get('nodeType') not in ('folder', 'page')):
                 raise ValueError('资源树节点类型或归属无效')
+            if node['section'] == 'material' and node['nodeType'] != 'folder':
+                raise ValueError('Material library entries are not workspace pages')
             self._title(node.get('title', ''))
             parent_id = node.get('parentId')
             if parent_id is not None:
@@ -229,6 +232,8 @@ class ResourceTreeService(QtCore.QObject):
     def _create(self, section, parent_id, node_type, title, page_id=None):
         if section not in TREE_SECTIONS:
             raise ValueError('未知分区')
+        if section == 'material' and node_type != 'folder':
+            raise ValueError('Material library entries are not workspace pages')
         self._validate_parent(section, parent_id)
         title = self._title(title)
         self._unique_title(section, parent_id, node_type, title)

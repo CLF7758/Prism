@@ -1,0 +1,356 @@
+{
+  "checked_on": "2026-10-19",
+  "upstreams": [
+    {
+      "name": "threejs",
+      "repository": "https://github.com/mrdoob/three.js",
+      "version": "0.170.0",
+      "tag": "r170",
+      "package_tarball": "https://registry.npmjs.org/three/-/three-0.170.0.tgz",
+      "integrity": "sha512-FQK+LEpYc0fBD+J8g6oSEyyNzjp+Q7Ks1C568WWaoMRLW+TkNNWmenWeGgJjV105Gd+p/2ql1ZcjYvNiPZBhuQ==",
+      "gitHead": "beab9e845f9e5ae11d648f55b24a0e910b56a85a",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "4c40a1ef62450b857c3b2aaf294936304cd552d965fbcd9d32d4c5bcf4ba4454"
+        },
+        {
+          "path": "three.module.min.js",
+          "sha256": "08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7"
+        },
+        {
+          "path": "package.json",
+          "sha256": "2caf5d31ca4368c7e39e7e598dd95774fe1bdaae7cfbc5b073c8dcb5ec7e25da"
+        }
+      ],
+      "status": "downloaded; not registered with Prism runtime"
+    },
+    {
+      "name": "AssetPort",
+      "repository": "https://github.com/Colosyn/Asset-Port",
+      "commit": "3b82afd755216c76d298db95aada37839c7fe10f",
+      "files": [
+        {
+          "path": "asset_port/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "asset_port/config.py",
+          "sha256": "0a71481a3d1df9b9865283779bb286230ef5171a5530390bd221b2f0b142860a"
+        },
+        {
+          "path": "asset_port/detector.py",
+          "sha256": "1c2cb574ba730426b431737f895a5eff956361d1ad43a179dadcc47c8d8d1233"
+        },
+        {
+          "path": "asset_port/gui_helper.py",
+          "sha256": "93020460d004889727087fa1add639f2428abd5346e7f75e112d8cfcfeb886b0"
+        },
+        {
+          "path": "asset_port/importer.py",
+          "sha256": "e395d93a63f0e0273ba2f545f7806acbdac5e7b1d6024a723fafc8bfc426904b"
+        },
+        {
+          "path": "asset_port/logger.py",
+          "sha256": "8c06f1a64a303c0e7897af3c8bb4aa74765ffd7173c48b151b08749045a1e9d5"
+        },
+        {
+          "path": "asset_port/materials.py",
+          "sha256": "c577592d3a0ff45bea0660b17f9a9566a754a1f8541992a77570c0129706575d"
+        },
+        {
+          "path": "asset_port/models.py",
+          "sha256": "157c5ce7de8d1e6b1e8e3c77ffe910391d3382b1df0d562c3bae6c520b253de0"
+        },
+        {
+          "path": "asset_port/presets.py",
+          "sha256": "553d7ae0c9f8d6371895ab0fed91dbe7fc34cbb5d2eb425369a0ea3d305e02ba"
+        },
+        {
+          "path": "asset_port/retarget.py",
+          "sha256": "20709b1b1dc6529813b6ed958b0e5c099160181edf91ee2201441214dd1a3d13"
+        },
+        {
+          "path": "asset_port/router.py",
+          "sha256": "f1ed523d9025b429e60190adb24458d26b5f16e0171a407d5d38f6f84d5c4147"
+        },
+        {
+          "path": "asset_port/Validator.py",
+          "sha256": "5011db3f60ebea57b64e60056440ff916c14ebb1a91522183aa0ffd08cd13fc9"
+        },
+        {
+          "path": "importer_config.json",
+          "sha256": "67b45ca809e843aa1bdadd4d4f84137590eb0e111736b94ef27de7dbde808693"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "5ac2c06d99afad894608309ed25eadb2806c740cb71247e93cba16d64bc9aa5a"
+        },
+        {
+          "path": "README.md",
+          "sha256": "949b9b1de8800b5a653c88a3ad2d97dc861fd76c8f6a8a229953edbb2bff6e49"
+        }
+      ],
+      "status": "source verified; candidate three material templates downloaded where available; not UE-tested",
+      "template_assets": [
+        {
+          "path": "Materials/M_Master_Opaque.uasset",
+          "sha256": "9e82261ba24a0499f17d15e9aaad7925b2363cfde9bb6603c6e4056f069ba1c8",
+          "size": 82334,
+          "source": "https://raw.githubusercontent.com/Colosyn/Asset-Port/3b82afd755216c76d298db95aada37839c7fe10f/Materials/M_Master_Opaque.uasset",
+          "status": "downloaded; not loaded or compatibility tested"
+        },
+        {
+          "path": "Materials/M_Master_Masked.uasset",
+          "sha256": "4905ec9b3caf11ce61b8096b227b5108e306125901f5d26d66b7a2104c41a21a",
+          "size": 88726,
+          "source": "https://raw.githubusercontent.com/Colosyn/Asset-Port/3b82afd755216c76d298db95aada37839c7fe10f/Materials/M_Master_Masked.uasset",
+          "status": "downloaded; not loaded or compatibility tested"
+        },
+        {
+          "path": "Materials/M_Master_Translucent.uasset",
+          "sha256": "0b73cba5c0b0b89aca4f8902b1afe000d632752908834ee1c93711ddf4669051",
+          "size": 89879,
+          "source": "https://raw.githubusercontent.com/Colosyn/Asset-Port/3b82afd755216c76d298db95aada37839c7fe10f/Materials/M_Master_Translucent.uasset",
+          "status": "downloaded; not loaded or compatibility tested"
+        },
+        {
+          "path": "Materials/T_Default_Black_VT.uasset",
+          "sha256": "deeccdb60dedf3dff489e56e9785a3424d3e0767ed0d9237ad2cabf30be12e79",
+          "size": 4678,
+          "source": "https://raw.githubusercontent.com/Colosyn/Asset-Port/3b82afd755216c76d298db95aada37839c7fe10f/Materials/T_Default_Black_VT.uasset",
+          "status": "downloaded; not loaded or compatibility tested"
+        },
+        {
+          "path": "Materials/T_Default_Grey_VT.uasset",
+          "sha256": "89134faf880e3e863f5c06ae80e6dbf706cf2d5993a6ffabcea874481dc64c1d",
+          "size": 4827,
+          "source": "https://raw.githubusercontent.com/Colosyn/Asset-Port/3b82afd755216c76d298db95aada37839c7fe10f/Materials/T_Default_Grey_VT.uasset",
+          "status": "downloaded; not loaded or compatibility tested"
+        },
+        {
+          "path": "Materials/T_Default_Texture_VT.uasset",
+          "sha256": "2554599e7789d080c59ebb2d97729e791129863654eff284ad23d8840c83242b",
+          "size": 34360,
+          "source": "https://raw.githubusercontent.com/Colosyn/Asset-Port/3b82afd755216c76d298db95aada37839c7fe10f/Materials/T_Default_Texture_VT.uasset",
+          "status": "downloaded; not loaded or compatibility tested"
+        },
+        {
+          "path": "Materials/T_Default_White_VT.uasset",
+          "sha256": "dec13c37626f2cda97d0118466cb70ba11a49d838473732ed1c5f3eeedce9fb8",
+          "size": 4568,
+          "source": "https://raw.githubusercontent.com/Colosyn/Asset-Port/3b82afd755216c76d298db95aada37839c7fe10f/Materials/T_Default_White_VT.uasset",
+          "status": "downloaded; not loaded or compatibility tested"
+        }
+      ]
+    },
+    {
+      "name": "HyperVault",
+      "repository": "https://github.com/nsynkde/HyperVault",
+      "commit": "c9d9fcea7234e6482a43f4ba30ce263776054bd6",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "7ca4ac8945c1af178bac5831f98765b99dda35d43920b68236a152883aecefd4",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "sha256": "10d7668d7552cc743c4b27956a8609d9a93ba17eaf82971c542b4a082805a8e0",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/README.md"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/AssetPublisher.cpp",
+          "sha256": "d4a76ac05f3a3510f5cd4afb1a156257b2c440b52facd8286ce0eb1e949c2ac1",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/AssetPublisher.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/AssetPublisherTagsCustomization.cpp",
+          "sha256": "0af47d2cc25434f48495adcecf429ee79d8d613bc235ff06c923bb81356e871f",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/AssetPublisherTagsCustomization.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/ContentBrowserMenuExtension.cpp",
+          "sha256": "55d059bd6036bb0ce7ba954a0b0d60e0917b44bdd2f39e2b163130f0c8e3f5fb",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/ContentBrowserMenuExtension.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/MetadataOps.cpp",
+          "sha256": "89bc3bb5f2f13f27a5697a3ab711ead9115f59cea3baf1bed909e37acc8b9335",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/MetadataOps.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/SAssetPackTile.cpp",
+          "sha256": "2f8f64841b2bc71db8acf36c8e9e52a0c26bab121af24012b663a60556106157",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/SAssetPackTile.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/SBatchPublisherWindow.cpp",
+          "sha256": "e17582111d7552439ef89aa55118a0f84fb4a5f0d7eb02d0f53981c05d477e56",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/SBatchPublisherWindow.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/SLoaderWindow.cpp",
+          "sha256": "4a511024790c181238abf4254f70b891a873a0537f14ad040b8203ea60ad0558",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/SLoaderWindow.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/SPublisherWindow.cpp",
+          "sha256": "5ad12ce133fb9b2a1b3afdcc1578393abe2a97b9e252d48a42ad9a10fc77258d",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/SPublisherWindow.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/SSettingsWindow.cpp",
+          "sha256": "91924c036a503735c7f6fb7ee77dc96ada7e07e4c25128df27ff0c2f02ebf364",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/SSettingsWindow.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/SVaultRootPanel.cpp",
+          "sha256": "d6098274c7d0df43fb7bde6f255027218b2f39e0e7fbeeaa3884a760ca41b0c8",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/SVaultRootPanel.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/SVaultSetupWizard.cpp",
+          "sha256": "4632c07dd997dd3ede104e0aa8e9c41642801feb7bb4e20b8b6d922c11e54d28",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/SVaultSetupWizard.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/Vault.cpp",
+          "sha256": "b0f9876f069cdde4623795640dbeaa466dee24d96300c568eda9cf209d786be1",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/Vault.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/VaultCommands.cpp",
+          "sha256": "129e68ef5e6111efc19cb51d3f8c27691e9a97b1791b77257dd0aa276e858072",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/VaultCommands.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/VaultOutputLog.cpp",
+          "sha256": "fce7a0acfc18956a4db59451efc23b4f8fba914930512d960fed2f7e861c3a24",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/VaultOutputLog.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/VaultScriptingLibrary.cpp",
+          "sha256": "4dd698f13247bdc4b0a4fe71d692dba1726ff4f472b6f7976b3e21ec38bb8402",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/VaultScriptingLibrary.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/VaultSettings.cpp",
+          "sha256": "30b1e99399ccc412a747f18f08e1bccde828b3201a6b4f13a471deca5c5535cc",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/VaultSettings.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/VaultStyle.cpp",
+          "sha256": "5291c5b94ede8097c09ebacb9c6b4526882c1336b34566dc9fc6b61db6743691",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/VaultStyle.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Private/VaultTypes.cpp",
+          "sha256": "2b7110ff32597a56686870a2f24bae6f662fec25cc653efd1de63ae2a98bc6ca",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Private/VaultTypes.cpp"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/AssetPublisher.h",
+          "sha256": "a3394c495d7666be8c7f1919119bc2a3f6c83bf074dd4262426c88195ea75c7a",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/AssetPublisher.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/AssetPublisherTagsCustomization.h",
+          "sha256": "fbf3f35f6d546d6453c2a7d1d31592c78982a958df056c55ef7caae961099d13",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/AssetPublisherTagsCustomization.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/ContentBrowserMenuExtension.h",
+          "sha256": "fcd99efcdd9e16ffeed9f4eb223b6eb8a0dcb710ffdf2f7234d03bf3a766a194",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/ContentBrowserMenuExtension.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/MetadataOps.h",
+          "sha256": "781a20cedf3a6faf4dc03e6ecadc7925d41bc01c84f6955dd1a5538fc53ac9da",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/MetadataOps.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/SAssetPackTile.h",
+          "sha256": "9e0bbc868771c5d3bcecce9ca1fd4de8bbcc580ec933ab9873294a02947186ec",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/SAssetPackTile.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/SBatchPublisherWindow.h",
+          "sha256": "a949bf4c4fc96a67852df33ce91d2f12eaa223c3a4423b4b63a331e35fad6e1d",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/SBatchPublisherWindow.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/SLoaderWindow.h",
+          "sha256": "17a82bc2e3afd2b61febbfbc0751052b63c649441e68a99b32b6d9173bc71e48",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/SLoaderWindow.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/SPublisherWindow.h",
+          "sha256": "1d187e552579f7944cac282b505b05c4a63ad4f608ff4a9cf121a0ac2f9e063a",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/SPublisherWindow.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/SSettingsWindow.h",
+          "sha256": "1cf21b599b15e62f34ae30879026b1e1ed3ec0ebcd0c33357209be319675ebc0",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/SSettingsWindow.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/SVaultRootPanel.h",
+          "sha256": "a349695c4f8cf3241ea1e2ba91f7880e3215552055cb42a1a60e9ff85f1ead2a",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/SVaultRootPanel.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/SVaultSetupWizard.h",
+          "sha256": "c1c9e150cc343c0ff09aef6fd54e1840c14c08abae4013d7458427661916cc11",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/SVaultSetupWizard.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/Vault.h",
+          "sha256": "56d64c74f7c961638b731f186b167e63db466c29756eecc8190c9fc4163201c7",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/Vault.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/VaultCommands.h",
+          "sha256": "dd02a148ba24692e1276e03ea49169faf81f083ab7fa377f9e6563c09b57e892",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/VaultCommands.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/VaultOutputLog.h",
+          "sha256": "ff87d1415929d65867f35ae1a13cd70cc5224a2aab3ddc8a53343c9d4db8e35f",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/VaultOutputLog.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/VaultScriptingLibrary.h",
+          "sha256": "1b7199550faaed5e285c200637f5dc1a194d64d10f4ea507ee8f31a38cdef176",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/VaultScriptingLibrary.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/VaultSettings.h",
+          "sha256": "c852b9bd686accc619bca30037644fca18c073d640a17ed38acd948982d7e11f",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/VaultSettings.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/VaultStyle.h",
+          "sha256": "f2a0209730c1ba77cbd62ffbb093c1003055ee8e5f4bfcfe77cbeefe4b7ff608",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/VaultStyle.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Public/VaultTypes.h",
+          "sha256": "c69e600fb7cd8b31992ff63f4b1712fa18fc2bbd110aa7a1c76d6d7efee5f633",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Public/VaultTypes.h"
+        },
+        {
+          "path": "Vault/Source/Vault/Vault.Build.cs",
+          "sha256": "2f91603ae302cf36f04ea359248a084f5fe4aa9e28b0ef449dca4012a85918cc",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Source/Vault/Vault.Build.cs"
+        },
+        {
+          "path": "Vault/Vault.uplugin",
+          "sha256": "9c5ce0f58ef405b5403510346ddaeef20b3e8eab5e854bae126ec28dabfd5a91",
+          "source": "https://raw.githubusercontent.com/nsynkde/HyperVault/c9d9fcea7234e6482a43f4ba30ce263776054bd6/Vault/Vault.uplugin"
+        }
+      ],
+      "status": "source inspected; no UE compile or runtime test"
+    }
+  ]
+}

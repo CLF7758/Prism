@@ -51,6 +51,21 @@ class AssetDelegate(QtWidgets.QStyledItemDelegate):
             return
         painter.save()
         canvas = self.parent()
+        if isinstance(item, dict):
+            # Use the same reference-card renderer as global search. These
+            # cards never insert or mutate the source page in the scene.
+            from prism.widgets.search_canvas import SearchCard
+            if not hasattr(self, '_page_card'):
+                self._page_card = SearchCard(item, canvas)
+                self._page_card.setParent(self)
+            card = self._page_card
+            card.result = item
+            card.setSelected(bool(option.state & QtWidgets.QStyle.StateFlag.State_Selected))
+            painter.translate(option.rect.topLeft())
+            painter.scale(option.rect.width()/card.WIDTH, option.rect.height()/card.HEIGHT)
+            card.paint(painter, option)
+            painter.restore()
+            return
         if getattr(canvas, 'colour_group', None) and getattr(item, 'color_group', None) != canvas.colour_group:
             painter.setOpacity(.2)
         painter.setClipRect(option.rect)
@@ -180,6 +195,8 @@ class AssetBrowser(QtWidgets.QWidget):
 
     @measured('assets.open', 0)
     def open(self, mode='all', scope_pages=None, title=None, record=True):
+        if self.window_host._store_current_page() is False:
+            return
         trace_record('asset_scope', mode=mode, scope_pages=scope_pages, title=title)
         self.list.clear_annotations()
         self.mode = mode
@@ -225,7 +242,9 @@ class AssetBrowser(QtWidgets.QWidget):
             return
         self.catalog = self.view.category_panel.catalog
         text, expression = self.view.category_panel._split_query(self.search.text())
-        kind = 'asset' if self.mode in ('all', 'unclassified', 'untagged') else self.view.category_panel.search_kind
+        kind = self.view.category_panel.search_kind
+        if self.mode in ('unclassified', 'untagged') and kind == 'all':
+            kind = 'asset'
         unified = self.mode != 'visual' and (bool(self.search.text().strip()) or kind not in ('all', 'asset'))
         results = self.catalog.query(text='' if unified else text, tag_expression=expression,
             untagged_only=self.mode == 'untagged', min_rating=self.view.category_panel._min_rating,

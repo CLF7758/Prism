@@ -165,6 +165,17 @@ def search_project(scene, service, query, panels=(), tag_expression='', page_rec
         add('asset', title, [dict(field='asset', value=asset_search_text(item), item_id=item_key(item))],
             getattr(item, '_tags', []), item=item, item_id=item_key(item), result_id='asset:'+item_key(item),
             page_id=canvas_id, page_kind='canvas', path=path(node) if node else '画布')
+    from prism.material_service import iter_visible_materials
+    for material in iter_visible_materials(scene):
+        folder = material.get('folderId')
+        fields = [dict(field='material', value=material.get('notes', '')),
+                  dict(field='files', value=' '.join(file.get('name', '') for file in material.get('files', []))),
+                  dict(field='engine', value=' '.join(str(package.get('engineVersion', ''))
+                       for package in material.get('nativePackages', []) if isinstance(package, dict)))]
+        add('material', material['name'], fields, material.get('tags', []),
+            material_id=material['id'], folder_id=folder, page_kind='material',
+            path='材质库' + (' / '+path(nodes[folder]) if folder in nodes else ''),
+            result_id='material:'+material['id'])
     needle = query.casefold().strip()
     def rank(result):
         title = result['title'].casefold()

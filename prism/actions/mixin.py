@@ -28,7 +28,39 @@ class ActionsMixin:
 
     def actiongroup_set_enabled(self, group, value):
         for action in self.prism_actiongroups[group]:
-            action.setEnabled(value)
+            blocked = getattr(self, '_material_blocked_actions', {})
+            if action in blocked:
+                blocked[action] = value
+            else:
+                action.setEnabled(value)
+
+    def set_material_navigation_active(self, active):
+        """Keep canvas shortcuts from editing a hidden canvas in the library."""
+        blocked = getattr(self, '_material_blocked_actions', {})
+        if active:
+            if blocked:
+                return
+            canvas_groups = {
+                'active_when_selection', 'active_when_single_image',
+                'active_when_items_in_scene', 'active_when_can_undo',
+                'active_when_can_redo',
+            }
+            canvas_ids = {
+                'paste', 'select_all', 'deselect_all', 'insert_images',
+                'insert_text', 'fit_scene', 'actual_size',
+            }
+            for definition in actions.values():
+                action = definition.qaction
+                if action is not None and action.parent() is self and (
+                        definition.group in canvas_groups
+                        or definition.id in canvas_ids):
+                    blocked[action] = action.isEnabled()
+                    action.setEnabled(False)
+            self._material_blocked_actions = blocked
+        else:
+            self._material_blocked_actions = {}
+            for action, enabled in blocked.items():
+                action.setEnabled(enabled)
 
     def build_menu_and_actions(self):
         """Creates a new menu or rebuilds the given menu."""

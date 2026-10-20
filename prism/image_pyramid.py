@@ -11,7 +11,10 @@ LEVELS = (32, 64, 192, 512, 1024)
 
 def cache():
     global _cache
-    directory = os.path.join(thumbnail_cache.cache_directory(), 'pyramid')
+    # The preview store already resolved the session's settings location.
+    # Reopening QSettings for every image can contend with its GUI-thread
+    # deferred INI sync and adds filesystem work even on a pyramid hit.
+    directory = os.path.join(thumbnail_cache.cache().directory, 'pyramid')
     with _lock:
         if _cache is None or _cache.directory != directory:
             _cache = thumbnail_cache.ThumbnailCache(directory, max_bytes=256*1024*1024, max_side=1024)

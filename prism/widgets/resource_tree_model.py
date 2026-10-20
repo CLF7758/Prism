@@ -25,7 +25,7 @@ DRAFT_PREFIX = 'draft:'
 #: 但如果哪天要和别的视图互换，这里也不用改。
 NODE_MIME = 'application/x-prism-tree-nodes'
 SECTION_TITLES = {'canvas': '画布', 'mindmap': '脑图',
-                  'document': '文档', 'tag': '标签'}
+                  'document': '文档', 'material': '材质库', 'tag': '标签'}
 NODE_ID_ROLE = Qt.ItemDataRole.UserRole + 1
 ASSET_COUNT_ROLE = Qt.ItemDataRole.UserRole + 5
 SECTION_ROLE = Qt.ItemDataRole.UserRole + 2
@@ -178,6 +178,8 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             if role == NODE_TYPE_ROLE:
                 return 'blank'
             if role == Qt.ItemDataRole.ToolTipRole:
+                if section == 'material':
+                    return '右键创建文件夹'
                 return '右键创建页面或文件夹' if section != 'tag' else '右键创建标签'
             if role == Qt.ItemDataRole.SizeHintRole:
                 height = 14
@@ -204,7 +206,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             name = key if node is None else ('folder' if node['nodeType'] == 'folder' else 'tag' if node['section'] == 'tag' else node['section'])
             colour = (ui_tokens.FOLDER_COLOURS.get((node or {}).get('colour', 'blue'), '#79AEFF')
                       if name == 'folder' else ui_tokens.SECTION_ICON_COLOURS.get(name, '#9EA5B1'))
-            return tinted_icon(name, colour)
+            return tinted_icon('library' if name == 'material' else name, colour)
         if role == Qt.ItemDataRole.ForegroundRole and node is None:
             return QtGui.QColor(ui_tokens.COLOURS_DARK['text-secondary'])
         if role == Qt.ItemDataRole.FontRole and node is None:
@@ -222,6 +224,14 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             return (node or {}).get('tagName')
         if role == Qt.ItemDataRole.ToolTipRole and (node or {}).get('nodeType') == 'tag':
             return node['tagName'] + '\n' + '、'.join(node.get('aliases', []))
+        if role == Qt.ItemDataRole.ToolTipRole and node is not None:
+            titles, seen = [], set()
+            current = node
+            while current is not None and current['id'] not in seen:
+                seen.add(current['id'])
+                titles.append(current['title'])
+                current = self._nodes.get(current.get('parentId'))
+            return '/'.join(reversed(titles))
         return None
 
     def flags(self, index):
@@ -231,7 +241,10 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         if key in self._implicit_records:
             return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         if key in UI_SECTIONS:
-            return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsDropEnabled
+            flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsDropEnabled
+            if key == 'material':
+                flags |= Qt.ItemFlag.ItemIsSelectable
+            return flags
         if key.startswith(BLANK_PREFIX):
             return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsDropEnabled
         if key in self._tag_records:
@@ -294,6 +307,8 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         self.clear_draft()
         if section not in TREE_SECTIONS or node_type not in ('folder', 'page'):
             raise ValueError('未知的节点类型')
+        if section == 'material' and node_type != 'folder':
+            raise ValueError('Material library entries are not workspace pages')
         key = DRAFT_PREFIX + uuid.uuid4().hex[:8]
         parent_key = parent_id or section
         rows = self._children.setdefault(parent_key, [])

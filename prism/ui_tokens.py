@@ -180,6 +180,7 @@ FOLDER_COLOURS = {
 
 #: 页面类型图标默认色（§5 末段）。
 SECTION_ICON_COLOURS = {
+    'material': '#D6B47A',
     'canvas': '#79AEFF',    # 蓝
     'mindmap': '#B49CE8',   # 紫
     'document': '#70C8D0',  # 青

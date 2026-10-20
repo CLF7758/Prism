@@ -29,6 +29,7 @@ class SearchController(QtCore.QObject):
         self._asset_index_key = None
         self._deleted_asset_pages = set()
         self.library.resource_nodes_changed.connect(self._invalidate_asset_index)
+        self.library.material_records_changed.connect(self._materials_changed)
         self.view.undo_stack.cleanChanged.connect(self._invalidate_asset_index)
         self.generation = 0
         self.active = False
@@ -43,6 +44,10 @@ class SearchController(QtCore.QObject):
         self.snapshot_pending = None
         self.wait_key = None
         self.page = SearchCanvas(self.resolve_asset, preview_text=self.preview_text)
+        from prism.material_cache import MaterialCache
+        self._material_previews = MaterialCache(128, 16*1024*1024,
+            lambda key, pixmap: len(key[1])+pixmap.width()*pixmap.height()*4)
+        self.page.material_preview = self.material_preview
         window.tabs.addTab(self.page, _('Search results'))
         self.page.selected.connect(self.show_detail)
         self.page.open_result.connect(self.open_result)
@@ -70,7 +75,7 @@ class SearchController(QtCore.QObject):
         old_search.hide()
         old_search.textChanged.disconnect(window.asset_browser.schedule)
         self.input = SearchInput()
-        self.input.setPlaceholderText(_('Search assets, document text, mind map nodes and canvas content'))
+        self.input.setPlaceholderText(_('Search assets, materials, document text, mind map nodes and canvas content'))
         self.input.setClearButtonEnabled(True)
         self.input.addAction(window.asset_browser.search.actions()[0].icon(), QtWidgets.QLineEdit.ActionPosition.LeadingPosition)
         self.input.setToolTip(self.library.search.toolTip())
@@ -253,7 +258,7 @@ class SearchController(QtCore.QObject):
             hits = [r for r in hits if result_kind(r) == 'asset' and
                     getattr(r['item'], '_rating', 0) >= self.min_rating and
                     (self.color is None or getattr(r['item'], 'color_group', None) == self.color)]
-        counts = {k: sum(result_kind(r) == k for r in hits) for k in ('asset', 'document', 'mindmap', 'canvas')}
+        counts = {k: sum(result_kind(r) == k for r in hits) for k in ('asset', 'document', 'mindmap', 'canvas', 'material')}
         counts['all'] = len(hits)
         kind = self.library.search_kind
         hits = [r for r in hits if kind == 'all' or result_kind(r) == kind]
@@ -294,7 +299,8 @@ class SearchController(QtCore.QObject):
             service = self.library.resource_service
             page_ids = {n.get('pageId') for i in service._descendants(value)
                         if (n := service._by_id(i)) and not n.get('deletedAt')}
-            return result.get('page_id') in page_ids
+            return (result.get('folder_id') in ({value} | set(service._descendants(value)))
+                    if result_kind(result) == 'material' else result.get('page_id') in page_ids)
         if kind == 'category':
             item = result.get('item')
             return item is not None and any(c == value or tags.is_descendant(c, value)
@@ -314,6 +320,33 @@ class SearchController(QtCore.QObject):
 
     def _invalidate_asset_index(self, *_):
         self._asset_index_key = None
+
+    def _materials_changed(self, change):
+        if change.get('operation') == 'preview':
+            return
+        if (change.get('operation') == 'configure' and not change.get('tagsChanged')
+                and not change.get('filesChanged')):
+            return
+        if self.active or self.input.text().strip():
+            self.schedule()
+
+    def material_preview(self, result):
+        material = self.library.material_service.get(result.get('material_id'))
+        if not material or material.get('preview', {}).get('discardedAdjustments'):
+            return None
+        entry = self.view.scene.attachments.get(material.get('preview', {}).get('thumbnailAttachmentId'))
+        if not entry:
+            return None
+        key = (self.view.scene.project_id, entry[2])
+        pixmap = self._material_previews.get(key)
+        if pixmap is None:
+            pixmap = QtGui.QPixmap()
+            if not pixmap.loadFromData(entry[2]):
+                return None
+            pixmap = pixmap.scaled(216,104,QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                                   QtCore.Qt.TransformationMode.SmoothTransformation)
+            self._material_previews[key] = pixmap
+        return pixmap
 
     def resolve_asset(self, result):
         scene = self.view.scene
@@ -337,6 +370,9 @@ class SearchController(QtCore.QObject):
             return False
         if result_kind(result) == 'asset':
             return self.resolve_asset(result) is not None
+        if result_kind(result) == 'material':
+            from prism.material_service import iter_visible_materials
+            return any(material['id'] == result.get('material_id') for material in iter_visible_materials(self.view.scene))
         page_id = result.get('page_id')
         return any(p['id'] == page_id for p in self.library._pages_with_implicit_defaults()) and not any(
             n.get('pageId') == page_id and n.get('deletedAt') for n in self.library.resource_service.nodes)
@@ -347,6 +383,9 @@ class SearchController(QtCore.QObject):
         if kind == 'asset':
             item = self.resolve_asset(result)
             return asset_search_text(item) if item is not None else _('Content changed; refresh results')
+        if kind == 'material':
+            material = self.library.material_service.get(result.get('material_id'))
+            return (material.get('notes', '') + '\n' + ', '.join(material.get('tags', []))) if material else ''
         page_id = result.get('page_id')
         panel = self.window._page_panels.get(page_id)
         if page_id == 'default-document':
@@ -397,6 +436,8 @@ class SearchController(QtCore.QObject):
             kind, page_id = self.library.catalog.locate(item)
             self.window.open_workspace_page(kind, page_id)
             self._locate_item(item)
+        elif result_kind(result) == 'material':
+            self.window.material_library.reveal_material(result['material_id'], from_search=True)
         else:
             self.window.open_workspace_page(result['page_kind'], result['page_id'])
             self.locate_match()

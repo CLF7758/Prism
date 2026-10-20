@@ -4,12 +4,14 @@ from pathlib import Path
 import time
 import weakref
 from PyQt6 import QtCore, QtGui, sip
+from prism.performance_trace import measured
 
 MAX_PENDING = 128
 CACHE_BYTES = 32*1024*1024
 _service = None
 
 
+@measured('video.preview.decode', 32)
 def opening_frame(path):
     from prism.fileio.video_pyav import av, OPEN_OPTIONS, frame_to_qimage
     first = None
@@ -149,9 +151,9 @@ class Thumbnails(QtCore.QObject):
 
 
 def request(item):
-    from prism.fileio.video_pyav import available
-    if not available():
-        return False
+    # Importing PyAV loads native codecs and can block for hundreds of ms.
+    # The worker imports/probes it; an unavailable backend follows the same
+    # asynchronous QtMultimedia fallback as an undecodable video.
     global _service
     app = QtCore.QCoreApplication.instance()
     if _service is None or sip.isdeleted(_service):

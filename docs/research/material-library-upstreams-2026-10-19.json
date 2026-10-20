@@ -1,0 +1,54 @@
+{
+  "checked_on": "2026-10-19",
+  "method": "Agent-Reach 1.5.0 Exa discovery + GitHub public API metadata; no compilation verification",
+  "repositories": [
+    {
+      "repo": "mrdoob/three.js",
+      "error": "403 Client Error: rate limit exceeded for url: https://api.github.com/repos/mrdoob/three.js"
+    },
+    {
+      "repo": "RodZill4/material-maker",
+      "error": "403 Client Error: rate limit exceeded for url: https://api.github.com/repos/RodZill4/material-maker"
+    },
+    {
+      "repo": "AcademySoftwareFoundation/MaterialX",
+      "error": "403 Client Error: rate limit exceeded for url: https://api.github.com/repos/AcademySoftwareFoundation/MaterialX"
+    },
+    {
+      "repo": "AcademySoftwareFoundation/OpenImageIO",
+      "error": "403 Client Error: rate limit exceeded for url: https://api.github.com/repos/AcademySoftwareFoundation/OpenImageIO"
+    },
+    {
+      "repo": "facebook/zstd",
+      "error": "403 Client Error: rate limit exceeded for url: https://api.github.com/repos/facebook/zstd"
+    },
+    {
+      "repo": "iscc/fastcdc-py",
+      "error": "403 Client Error: rate limit exceeded for url: https://api.github.com/repos/iscc/fastcdc-py"
+    },
+    {
+      "repo": "restic/restic",
+      "error": "403 Client Error: rate limit exceeded for url: https://api.github.com/repos/restic/restic"
+    },
+    {
+      "repo": "TriliumNext/Trilium",
+      "error": "403 Client Error: rate limit exceeded for url: https://api.github.com/repos/TriliumNext/Trilium"
+    },
+    {
+      "repo": "Unreal-Vault/Vault-Dev",
+      "error": "403 Client Error: rate limit exceeded for url: https://api.github.com/repos/Unreal-Vault/Vault-Dev"
+    },
+    {
+      "repo": "Colosyn/Asset-Port",
+      "error": "403 Client Error: rate limit exceeded for url: https://api.github.com/repos/Colosyn/Asset-Port"
+    },
+    {
+      "repo": "williamchange/material-maker-threejs",
+      "error": "403 Client Error: rate limit exceeded for url: https://api.github.com/repos/williamchange/material-maker-threejs"
+    },
+    {
+      "repo": "Sizigi/armorpaint",
+      "error": "403 Client Error: rate limit exceeded for url: https://api.github.com/repos/Sizigi/armorpaint"
+    }
+  ]
+}

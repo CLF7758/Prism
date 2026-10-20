@@ -74,7 +74,7 @@ def test_page_rows_have_no_import(qtbot):
 def test_tag_rows_have_no_import(qtbot):
     _service, model, view, _requests = a_tree(qtbot)
 
-    menu = view.menu_for_index(model.index(3, 0))
+    menu = view.menu_for_index(model.index(4, 0))
 
     assert import_action(menu) is None
 

@@ -105,19 +105,20 @@
   },
   {
     "name": "pillow",
-    "version": "12.3.0",
+    "version": "13.0.0",
     "license": "MIT-CMU",
     "project_urls": [
       "Release notes, https://pillow.readthedocs.io/en/stable/releasenotes/index.html",
       "Changelog, https://github.com/python-pillow/Pillow/releases",
       "Documentation, https://pillow.readthedocs.io",
-      "Funding, https://tidelift.com/subscription/pkg/pypi-pillow?utm_source=pypi-pillow&utm_medium=pypi",
-      "Homepage, https://python-pillow.github.io",
+      "Funding, https://tidelift.com/lifter/search/pypi/pillow",
+      "Homepage, https://python-pillow.org",
       "Mastodon, https://fosstodon.org/@pillow",
+      "Security, https://pillow.readthedocs.io/en/stable/handbook/security.html",
       "Source, https://github.com/python-pillow/Pillow"
     ],
     "notices": [
-      "pillow-12.3.0.dist-info__licenses__LICENSE"
+      "pillow-13.0.0.dist-info__licenses__LICENSE"
     ]
   },
   {

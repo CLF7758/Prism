@@ -734,7 +734,8 @@ def test_has_single_image_selection_when_multi_selection(view, item):
 @patch('PyQt6.QtWidgets.QGraphicsScene.mousePressEvent')
 def test_mouse_press_event_when_right_click(mouse_mock, view):
     event = MagicMock(
-        button=MagicMock(return_value=Qt.MouseButton.RightButton))
+        button=MagicMock(return_value=Qt.MouseButton.RightButton),
+        scenePos=MagicMock(return_value=QtCore.QPointF(0, 0)))
     view.scene.mousePressEvent(event)
     event.accept.assert_not_called()
     mouse_mock.assert_not_called()
