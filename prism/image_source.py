@@ -4,6 +4,27 @@ import os
 
 logger = logging.getLogger(__name__)
 
+
+def generated_png_bytes(item):
+    """Create a lossless source only for genuinely source-less generated pixels.
+
+    A named imported image with lost bytes is not a generated image. Never
+    legitimize its preview as a replacement original during save.
+    """
+    if (getattr(item, '_source_path', None) or getattr(item, '_prism_source', None)
+            or getattr(item, 'filename', None)):
+        raise ValueError('导入图片的原件未留存，已停止保存，不会把预览图当作原件。')
+    from PyQt6 import QtCore
+    image = item.pixmap().toImage()
+    if image.isNull():
+        raise ValueError('没有可保存的原始像素。')
+    data = QtCore.QByteArray()
+    buffer = QtCore.QBuffer(data)
+    buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
+    if not image.save(buffer, 'PNG'):
+        raise ValueError('无法无损保存生成的图片。')
+    return bytes(data), 'png'
+
 class ImageSourceMixin:
     def get_filename_for_export(self, imgformat, save_id_default=None):
         save_id = self.save_id or save_id_default
@@ -83,6 +104,19 @@ class ImageSourceMixin:
         """
         if self._source_blob is not None:
             return self._source_blob
+        if self._prism_source:
+            # The embedded reference is authoritative. Do not mask a busy,
+            # corrupt or missing object by guessing from a filename on disk.
+            from prism.source_store import read_archive
+            from prism.storage.contracts import StorageError, StorageErrorKind
+            blob = read_archive(self._prism_source)
+            if not blob:
+                raise StorageError(StorageErrorKind.MISSING,
+                                   'Embedded original image is missing; no replacement was used')
+            self._source_blob = blob
+            if self._source_format is None:
+                self._source_format = self._format_from_bytes(blob) or 'png'
+            return blob
         if self._source_path and os.path.isfile(self._source_path):
             try:
                 with open(self._source_path, 'rb') as f:
@@ -94,30 +128,10 @@ class ImageSourceMixin:
                         or 'png')
                 return self._source_blob
             except (OSError, TypeError):
-                logger.debug('Could not read deferred source %s',
-                             self._source_path, exc_info=True)
-        if self._prism_source:
-            prism_path, item_id = self._prism_source
-            try:
-                from prism.source_store import read_archive
-                blob = read_archive((prism_path, item_id))
-                if blob:
-                    self._source_blob = blob
-                    if self._source_format is None:
-                        self._source_format = (
-                            self._format_from_bytes(self._source_blob)
-                            or 'png')
-                    return self._source_blob
-            except Exception:
-                logger.debug('Could not read deferred source from %s',
-                             prism_path, exc_info=True)
-        if self._prism_source and self.filename and os.path.isfile(self.filename):
-            try:
-                with open(self.filename, 'rb') as source:
-                    self._source_blob = source.read()
-                return self._source_blob or None
-            except OSError:
-                logger.debug('Could not recover original %s', self.filename, exc_info=True)
+                logger.warning('Could not read retained original source %s', self._source_path, exc_info=True)
+                raise
+        if self._source_path:
+            raise FileNotFoundError('Retained original image is missing: '+str(self._source_path))
         return None
 
     def original_format(self):

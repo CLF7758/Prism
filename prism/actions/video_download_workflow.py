@@ -166,6 +166,12 @@ class CanvasDownloads(QtCore.QObject):
         for asset in assets:
             path=asset.get('original_path') or asset['path']
             if asset['asset_type']=='image':
+                from prism.source_store import retain_file
+                try:
+                    path = retain_file(path)
+                except OSError as error:
+                    node.status.setText('原图留存失败，未导入：'+str(error))
+                    return
                 item=PrismPixmapItem(QtGui.QImage(),Path(asset['path']).name)
                 item._source_path=path
                 size=asset['image']

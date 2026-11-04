@@ -257,6 +257,12 @@
     let pendingImageNodes = [];
     let pendingPush = null;
     let viewRestoring = false;
+    let pendingHostTree = null;
+    let resizeFrame = null;
+    // The library reports failures through its errorHandler.  The paste
+    // fallback needs to know that reading the clipboard failed, so the
+    // last error code is kept here.
+    let lastMapError = null;
 
     const EMPTY_TREE = { data: { text: '中心主题' }, children: [] };
 
@@ -428,16 +434,29 @@
       applyingFromHost = true;
       try {
         if (mindMap) {
+          mindMap.setMode(window.__prismPreviewReadonly ? 'readonly' : 'edit');
           mindMap.setData(data);
           mindMap.setLayout(layout);
         } else {
           mindMap = new MindMap({
+            readonly: !!window.__prismPreviewReadonly,
             el: document.getElementById('map'),
             data,
             layout,
             mousewheelAction: 'zoom',
             enableFreeDrag: true,
             selectTranslateStep: 3,
+            // The library ships with "right button box-selects, left button
+            // drags the canvas".  A right-button drag is also the gesture
+            // that opens a context menu, so a group of nodes could only be
+            // box-selected while holding Ctrl - an ordinary left drag did
+            // nothing but move the canvas.  Left selects, right (or middle)
+            // pans, which is what the gesture is expected to do.
+            useLeftKeySelectionRightKeyDrag: true,
+            errorHandler: (code, detail) => {
+              lastMapError = code;
+              console.error(code, detail);
+            },
             themeConfig: {
               backgroundColor: '#1C1C1E', lineColor: '#737F92', lineWidth: 2,
               lineStyle: 'curve', paddingX: 12, paddingY: 8,
@@ -568,10 +587,30 @@
     function wireMindMap() {
       const exec = mindMap.execCommand.bind(mindMap);
       mindMap.execCommand = (command, ...args) => {
+        if (window.__prismPreviewReadonly) return;
         // Explicit user collapse/expand owns its value; returning must not undo it.
         if (!searchLocating && command === 'SET_NODE_EXPAND' && args[0]) searchExpanded.delete(args[0].getData('uid'));
         if (!searchLocating && (command === 'EXPAND_ALL' || command === 'UNEXPAND_TO_LEVEL')) searchExpanded.clear();
         return exec(command, ...args);
+      };
+      // Every paste entry point - the toolbar button, the context menu and
+      // the library's own Ctrl+V shortcut - ends up in the renderer's
+      // paste().  It reads the system clipboard, which is what pasting from
+      // another application means, but it only falls back to the branch
+      // copied inside this map when the clipboard API is missing entirely.
+      // A read that fails - it does inside the embedded WebEngine - leaves
+      // nothing pasted at all, so the copy buffer, which holds the very
+      // same data, is used as the fallback here.
+      const paste = mindMap.renderer.paste.bind(mindMap.renderer);
+      mindMap.renderer.paste = async () => {
+        lastMapError = null;
+        await paste();
+        if (lastMapError === 'read_clipboard_error') {
+          const buffer = mindMap.renderer.beingCopyData;
+          if (buffer && buffer.length) {
+            mindMap.execCommand('PASTE_NODE', buffer);
+          }
+        }
       };
       mindMap.on('data_change', () => {
         if (applyingFromHost) return;
@@ -656,7 +695,7 @@
     }
 
     function pushTree() {
-      if (!bridge || !mindMap) return;
+      if (!bridge || !mindMap || pendingHostTree !== null) return;
       const tree = collectTree();
       bridge.pushTree(JSON.stringify({ tree, images: newImages }));
       newImages = {};
@@ -1032,7 +1071,7 @@
       ['删除主题', 'Delete', () => mindMap.execCommand('REMOVE_NODE')],
       ['hr'],
       ['复制分支', 'Ctrl+C', () => mindMap.renderer.copy()],
-      ['粘贴', 'Ctrl+V', () => mindMap.execCommand('PASTE_NODE')],
+      ['粘贴', 'Ctrl+V', () => mindMap.renderer.paste()],
       ['hr'],
       ['添加概要', 'Ctrl+G', () => mindMap.execCommand('ADD_GENERALIZATION')],
       ['添加边界', '', () => mindMap.execCommand('ADD_OUTER_FRAME', activeNodes()[0])],
@@ -1091,6 +1130,15 @@
       menuEl.style.display = 'none';
     }
 
+    ['click', 'change', 'paste', 'drop', 'contextmenu', 'beforeinput'].forEach((type) => {
+      document.addEventListener(type, (event) => {
+        if (!window.__prismPreviewReadonly) return;
+        if (type === 'click' && event.target.closest('#map')) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }, true);
+    });
+
     document.addEventListener('mousedown', (event) => {
       if (!menuEl.contains(event.target)) closeMenu();
     }, true);
@@ -1134,7 +1182,8 @@
       let images = {};
       try {
         const parsed = payload ? JSON.parse(payload) : null;
-        if (parsed && parsed.tree) {
+        window.__setPrismPreviewReadonly(!!(parsed && parsed.readonly));
+        if (parsed && Object.prototype.hasOwnProperty.call(parsed, 'tree')) {
           tree = parsed.tree;
           images = parsed.images || {};
         } else {
@@ -1147,6 +1196,39 @@
       createMindMap(tree);
     }
 
+    function installHostTree() {
+      const rect = document.getElementById('map').getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      if (pendingHostTree !== null) {
+        const payload = pendingHostTree.payload;
+        pendingHostTree = null;
+        try {
+          loadFromHost(payload);
+          bridge.notifyTreeLoaded(true, '');
+        } catch (error) {
+          setStatus('载入失败: ' + error);
+          bridge.notifyTreeLoaded(false, String(error));
+        }
+      } else if (mindMap) {
+        mindMap.resize();
+      }
+    }
+
+    // A hidden Qt tab can receive its tree before it has a usable viewport.
+    // Keep the latest payload intact, then install it when layout gives space.
+    new ResizeObserver(() => {
+      if (resizeFrame !== null) return;
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        installHostTree();
+      });
+    }).observe(document.getElementById('map'));
+
+    window.__setPrismPreviewReadonly = (readonly) => {
+      window.__prismPreviewReadonly = !!readonly;
+      if (mindMap) mindMap.setMode(readonly ? 'readonly' : 'edit');
+    };
+
     if (typeof QWebChannel === 'undefined') {
       setStatus('QWebChannel 不可用，无法与 Prism 通信');
     } else {
@@ -1154,13 +1236,8 @@
         bridge = channel.objects.bridge;
 
         bridge.loadTree.connect((json) => {
-          try {
-            loadFromHost(json);
-            bridge.notifyTreeLoaded(true, '');
-          } catch (error) {
-            setStatus('载入失败: ' + error);
-            bridge.notifyTreeLoaded(false, String(error));
-          }
+          pendingHostTree = {payload: json};
+          installHostTree();
         });
 
         bridge.requestTree.connect(() => {

@@ -13,10 +13,13 @@ from PyQt6.QtCore import QSize
 
 from prism.workspace_service import TREE_SECTIONS
 from prism import ui_tokens
+from prism.i18n import _
 from prism.widgets.components.icons import tinted_icon
 
 
-UI_SECTIONS = TREE_SECTIONS + ('tag',)
+# UI-only until the model domain is integrated with full/partial project saves.
+# Never put scaffold folders into WorkspaceService or material_records.
+UI_SECTIONS = TREE_SECTIONS + ('model', 'tag')
 BLANK_PREFIX = 'blank:'
 #: 临时节点的 key 前缀。草稿行只在模型里存在 —— 名字确认之前服务层一个字节
 #: 都没写过，所以按 Esc 取消不会留下任何痕迹（连"已修改"都不会标）。
@@ -26,6 +29,7 @@ DRAFT_PREFIX = 'draft:'
 NODE_MIME = 'application/x-prism-tree-nodes'
 SECTION_TITLES = {'canvas': '画布', 'mindmap': '脑图',
                   'document': '文档', 'material': '材质库', 'tag': '标签'}
+SECTION_TITLES['model'] = '模型库'
 NODE_ID_ROLE = Qt.ItemDataRole.UserRole + 1
 ASSET_COUNT_ROLE = Qt.ItemDataRole.UserRole + 5
 SECTION_ROLE = Qt.ItemDataRole.UserRole + 2
@@ -49,6 +53,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         self._draft = None
         self._tag_records = {}
         self._asset_counts = {}
+        self._model_count = None
         self._implicit_records = {}
         self._load()
         service.changed.connect(self._on_service_changed)
@@ -149,6 +154,9 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         return len(self._children.get(self._key(parent), []))
 
     def hasChildren(self, parent=QtCore.QModelIndex()):
+        # Library roots always keep their disclosure arrow, including empty ones.
+        if parent.isValid() and self._key(parent) in UI_SECTIONS:
+            return True
         return any(not key.startswith(BLANK_PREFIX) for key in self._children.get(self._key(parent), []))
 
     def columnCount(self, parent=QtCore.QModelIndex()):
@@ -159,6 +167,13 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             return None
         key = self._key(index)
         if role == ASSET_COUNT_ROLE:
+            if key == 'model':
+                # The model count is independent of the canvas catalogue and
+                # counts model entries only - never a texture, a BIN file or
+                # a cover. None means "not known yet", not zero.
+                return self._model_count
+            if self._asset_counts is None:
+                return None
             node = self._nodes.get(key)
             if node is not None and node['nodeType'] == 'tag':
                 return node.get('assetCount', 0)
@@ -206,7 +221,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             name = key if node is None else ('folder' if node['nodeType'] == 'folder' else 'tag' if node['section'] == 'tag' else node['section'])
             colour = (ui_tokens.FOLDER_COLOURS.get((node or {}).get('colour', 'blue'), '#79AEFF')
                       if name == 'folder' else ui_tokens.SECTION_ICON_COLOURS.get(name, '#9EA5B1'))
-            return tinted_icon('library' if name == 'material' else name, colour)
+            return tinted_icon('library' if name in ('material', 'model') else name, colour)
         if role == Qt.ItemDataRole.ForegroundRole and node is None:
             return QtGui.QColor(ui_tokens.COLOURS_DARK['text-secondary'])
         if role == Qt.ItemDataRole.FontRole and node is None:
@@ -234,6 +249,27 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             return '/'.join(reversed(titles))
         return None
 
+    def set_model_count(self, count):
+        """Publish the number of model entries for the model section row.
+
+        The total, the number of hits and the number of shown models are
+        three different numbers. The tree shows the total only.
+        """
+        if self._model_count == count:
+            return
+        self._model_count = count
+        index = self._index_for('model')
+        if index.isValid():
+            self.dataChanged.emit(index, index, [ASSET_COUNT_ROLE])
+
+    def model_section_enabled(self):
+        """Whether the model section may hold real folders.
+
+        The section stays UI-only until the model domain's saves are
+        accepted, so no drop or creation is offered before that.
+        """
+        return bool(getattr(self.service, 'model_section_enabled', False))
+
     def flags(self, index):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
@@ -241,6 +277,11 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         if key in self._implicit_records:
             return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         if key in UI_SECTIONS:
+            if key == 'model':
+                flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+                if self.model_section_enabled():
+                    flags |= Qt.ItemFlag.ItemIsDropEnabled
+                return flags
             flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsDropEnabled
             if key == 'material':
                 flags |= Qt.ItemFlag.ItemIsSelectable
@@ -271,11 +312,28 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             self.endResetModel()
         if self._asset_counts == counts:
             return
-        self._asset_counts = dict(counts)
+        previous = self._asset_counts
+        self._asset_counts = None if counts is None else dict(counts)
+        changed_pages = (None if previous is None or counts is None else
+                         {key for key in previous.keys() | counts.keys()
+                          if previous.get(key, 0) != counts.get(key, 0)})
+        affected = set()
         for key, node in self._nodes.items():
-            if node['section'] == 'canvas':
-                index = self._index_for(key)
-                self.dataChanged.emit(index, index, [ASSET_COUNT_ROLE])
+            if node['section'] != 'canvas':
+                continue
+            if changed_pages is None:
+                affected.add(key)
+            elif node.get('pageId') in changed_pages:
+                while key in self._nodes and key not in affected:
+                    affected.add(key)
+                    key = self._nodes[key].get('parentId')
+        # Resolving every sibling with list.index made a large canvas section
+        # quadratic. Visit rows once and notify only changed pages/ancestors.
+        for siblings in self._children.values():
+            for row, key in enumerate(siblings):
+                if key in affected:
+                    index = self._make_index(row, key)
+                    self.dataChanged.emit(index, index, [ASSET_COUNT_ROLE])
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if role != Qt.ItemDataRole.EditRole or not index.isValid():
@@ -297,7 +355,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
 
     # ── 就地新建：草稿行 ──────────────────────────────────────────
 
-    def begin_draft(self, section, node_type, parent_id, title):
+    def begin_draft(self, section, node_type, parent_id, title, *, after_id=None):
         """Show a temporary row for a node that does not exist yet.
 
         Nothing is written to the service until the name is confirmed:
@@ -305,9 +363,9 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         no dirty flag, no undo entry (C5 / §7.4).
         """
         self.clear_draft()
-        if section not in TREE_SECTIONS or node_type not in ('folder', 'page'):
+        if not self.service._section_allowed(section) or node_type not in ('folder', 'page'):
             raise ValueError('未知的节点类型')
-        if section == 'material' and node_type != 'folder':
+        if section in ('material', 'model') and node_type != 'folder':
             raise ValueError('Material library entries are not workspace pages')
         key = DRAFT_PREFIX + uuid.uuid4().hex[:8]
         parent_key = parent_id or section
@@ -316,9 +374,13 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         at = len(rows)
         if rows and rows[-1].startswith(BLANK_PREFIX):
             at = len(rows) - 1
+        if after_id in rows:
+            at = rows.index(after_id) + 1
+        else:
+            after_id = None
         self.beginInsertRows(self._index_for(parent_key), at, at)
         self._draft = {'key': key, 'section': section, 'nodeType': node_type,
-                       'parentId': parent_id, 'title': str(title)}
+                       'parentId': parent_id, 'title': str(title), 'afterId': after_id}
         rows.insert(at, key)
         self.endInsertRows()
         return self._index_for(key)
@@ -335,15 +397,16 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         if not self._draft:
             return
         key = self._draft['key']
-        self._draft = None
         for parent_key, rows in self._children.items():
             if key not in rows:
                 continue
             row = rows.index(key)
             self.beginRemoveRows(self._index_for(parent_key), row, row)
             rows.remove(key)
+            self._draft = None
             self.endRemoveRows()
             break
+        self._draft = None
 
     def _commit_draft(self, title):
         """Turn the temporary row into a real node, or refuse and keep it."""
@@ -357,7 +420,8 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         try:
             if draft['nodeType'] == 'folder':
                 node = self.service.createFolder(
-                    draft['section'], text, draft['parentId'])
+                    draft['section'], text, draft['parentId'],
+                    **({'after_id': draft['afterId']} if draft.get('afterId') else {}))
             else:
                 node = self.service.createPage(
                     draft['section'], text, uuid.uuid4().hex,
@@ -366,7 +430,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             # 重名 / 非法字符：把行放回去，并保留用户刚才输入的文字，
             # 让他接着改（§7.4「输入保留」）。
             self.begin_draft(draft['section'], draft['nodeType'],
-                             draft['parentId'], text)
+                             draft['parentId'], text, after_id=draft.get('afterId'))
             self.draft_refused.emit(str(exc))
             return False
         self.draft_committed.emit(node)
@@ -374,6 +438,55 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
 
     def index_for_id(self, node_id):
         return self._index_for(node_id)
+
+    # ── 一级分类的"第一个具体内容" ───────────────────────────────
+
+    def first_page_under(self, section):
+        """The first page under a section, in tree order.
+
+        A folder is descended into: the first concrete content of a section is
+        the first page, whether it sits directly under the section or inside
+        the section's first folder.
+
+        The implicit default canvas is a legacy landing spot, not a page of its
+        own, so the stored pages keep the project order and come first; the
+        implicit one is only used when the section holds no stored page.
+        ``None`` when the section holds no page at all.
+        """
+        keys = self._children.get(section, [])
+        node = self._first_page(keys, skip_implicit=True)
+        return node if node is not None else self._first_page(keys)
+
+    def first_folder_under(self, section):
+        """The first folder under a section, in tree order.
+
+        ``None`` when the section holds no folder (an empty section, or one
+        whose entries are pages).
+        """
+        for key in self._children.get(section, []):
+            if key.startswith(BLANK_PREFIX) or key.startswith(DRAFT_PREFIX):
+                continue
+            node = self._nodes.get(key)
+            if node is not None and node['nodeType'] == 'folder':
+                return node
+        return None
+
+    def _first_page(self, keys, skip_implicit=False):
+        for key in keys:
+            if key.startswith(BLANK_PREFIX) or key.startswith(DRAFT_PREFIX):
+                continue
+            node = self._nodes.get(key)
+            if node is None:
+                continue
+            if node['nodeType'] == 'page':
+                if skip_implicit and key in self._implicit_records:
+                    continue
+                return node
+            if node['nodeType'] == 'folder':
+                found = self._first_page(self._children.get(key, []))
+                if found is not None:
+                    return found
+        return None
 
     def set_tags(self, nodes):
         """Project tags are a live view, never duplicated in workspace storage."""
@@ -383,7 +496,9 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             parent_name = getattr(node.parent, 'name', node.parent)
             records[key] = {'id': key, 'section': 'tag', 'nodeType': 'tag',
                 'tagName': node.name, 'aliases': list(node.aliases),
-                'title': node.label, 'assetCount': node.count, 'order': order,
+                'title': node.label,
+                'assetCount': _('Preparing…') if node.count is None else node.count,
+                'order': order,
                 'parentId': 'catalogue-tag:' + parent_name if parent_name else None}
         if records != self._tag_records:
             self._tag_records = records
@@ -444,7 +559,7 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
             if mode == 'into' and target['nodeType'] != 'folder':
                 return '页面不能包含子项'
         elif mode == 'append':
-            if section not in TREE_SECTIONS:
+            if not self.service._section_allowed(section):
                 return '未知分区'
         else:
             return '不能移动到这里'
@@ -523,6 +638,31 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
         # 否则下面的重建会把它从 _children 里无声抹掉，模型和视图就对不上了。
         if self._draft is not None:
             self.clear_draft()
+        if _change.get('kind') == 'move':
+            # moveBatch has already validated these roots and assigns their
+            # final order consecutively at the destination's end. Keep every
+            # unrelated node/subtree and Qt persistent index in place.
+            for node in _change['nodes']:
+                node_id = node['id']
+                before = self._nodes[node_id]
+                source = before.get('parentId') or before['section']
+                target = node.get('parentId') or node['section']
+                source_row = self._children[source].index(node_id)
+                target_rows = self._children[target]
+                target_row = len(target_rows) - int(
+                    bool(target_rows) and target_rows[-1].startswith(BLANK_PREFIX))
+                if source == target and source_row == target_row - 1:
+                    self._nodes[node_id] = node
+                    continue
+                if self.beginMoveRows(self._index_for(source), source_row, source_row,
+                                      self._index_for(target), target_row):
+                    self._children[source].pop(source_row)
+                    if source == target and source_row < target_row:
+                        target_row -= 1
+                    self._children[target].insert(target_row, node_id)
+                    self._nodes[node_id] = node
+                    self.endMoveRows()
+            return
         old_nodes = self._nodes
         old_children = self._children
         new_nodes = {node['id']: dict(node) for node in self.service.nodes
@@ -565,32 +705,36 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
                 row = new_rows.index(node_id)
                 parent_index = self._index_for(parent_key)
                 self.beginInsertRows(parent_index, row, row)
-                self._nodes[node_id] = node
+                self._nodes = new_nodes
                 self._children[parent_key] = list(new_rows)
                 self._children[node_id] = []
                 self.endInsertRows()
                 return
 
-        # Removing a folder also removes its descendants.  Only the visible
-        # root row needs a removal notification; children vanish with it.
+        # Removing a folder also removes its descendants. Notify each selected
+        # root, including a multi-selection, so Qt can update persistent rows.
         if removed and not added:
             roots = [i for i in removed if old_nodes[i].get('parentId') not in removed]
-            if len(roots) == 1:
-                node_id = roots[0]
-                node = old_nodes[node_id]
-                parent_key = node.get('parentId') or node['section']
-                old_rows = old_children[parent_key]
-                new_rows = new_children[parent_key]
-                if [i for i in old_rows if i != node_id] == new_rows:
-                    row = old_rows.index(node_id)
-                    parent_index = self._index_for(parent_key)
-                    self.beginRemoveRows(parent_index, row, row)
-                    self._children[parent_key] = list(new_rows)
-                    for key in removed:
+            if all([i for i in rows if i not in removed] == new_children.get(parent, [])
+                   for parent, rows in old_children.items() if parent not in removed):
+                ordered = sorted(roots, key=lambda i: (
+                    old_nodes[i].get('parentId') or old_nodes[i]['section'],
+                    self._index_for(i).row()), reverse=True)
+                for node_id in ordered:
+                    node = self._nodes[node_id]
+                    parent_key = node.get('parentId') or node['section']
+                    row = self._children[parent_key].index(node_id)
+                    self.beginRemoveRows(self._index_for(parent_key), row, row)
+                    self._children[parent_key].pop(row)
+                    pending = [node_id]
+                    while pending:
+                        key = pending.pop()
+                        pending.extend(self._children.get(key, ()))
                         self._nodes.pop(key, None)
                         self._children.pop(key, None)
                     self.endRemoveRows()
-                    return
+                self._nodes = new_nodes
+                return
 
         if not added and not removed:
             moved = [i for i in old_nodes if old_nodes[i].get('parentId') !=
@@ -619,10 +763,21 @@ class ResourceTreeModel(QtCore.QAbstractItemModel):
                     self.endMoveRows()
                     return
 
-        # Structural edits can affect two sibling groups (a move) or an
-        # entire subtree (trash). layoutChanged preserves stable IDs without
-        # the old QListWidget's clear-and-rebuild flicker.
+        # layoutChanged alone cannot insert/remove rows. In particular, a bulk
+        # removal otherwise leaves persistent tail indexes beyond rowCount,
+        # which only surface as endInsertRows warnings on the next creation.
+        if added or removed:
+            self.beginResetModel()
+            self._nodes = new_nodes
+            self._children = new_children
+            self.endResetModel()
+            return
+
+        # Reorders keep node identities, but Qt still needs their new indexes.
         self.layoutAboutToBeChanged.emit()
+        previous = self.persistentIndexList()
+        keys = [self._key(index) for index in previous]
         self._nodes = new_nodes
         self._children = new_children
+        self.changePersistentIndexList(previous, [self._index_for(key) for key in keys])
         self.layoutChanged.emit()

@@ -1,0 +1,16 @@
+{
+  "version": 7,
+  "environment": "babylon/monochrome_studio_02_2k.env",
+  "environmentIntensity": 1.0,
+  "toneMapping": "aces",
+  "exposure": 1.0,
+  "normalConvention": "DirectX",
+  "untexturedColor": [1.0, 1.0, 1.0],
+  "colorGamma": 2.2,
+  "selectionDurationMs": 1200,
+  "lights": [],
+  "libraries": {
+    "material": {"environmentIntensity": 1.0, "exposure": 1.0},
+    "model": {"environmentIntensity": 1.0, "exposure": 1.0}
+  }
+}

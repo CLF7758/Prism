@@ -4,11 +4,23 @@ import logging
 import sys
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+try:
+    from ctypes import wintypes
+except ImportError:  # pragma: no cover - not Windows
+    wintypes = None
+
+#: The offset of the ``message`` field inside a native MSG.  It is **not** the
+#: first field: the struct starts with the window handle, so reading the
+#: first four bytes would read a handle and never match a message id.
+_MESSAGE_FIELD_OFFSET = wintypes.MSG.message.offset if wintypes is not None else 8
+
 logger = logging.getLogger(__name__)
 
 
 class CaptureHotkey(QtCore.QAbstractNativeEventFilter):
     IDENTIFIER = 0x5052
+    #: The only native message this filter cares about.
+    WM_HOTKEY = 0x0312
 
     def __init__(self, view, action):
         super().__init__()
@@ -65,9 +77,27 @@ class CaptureHotkey(QtCore.QAbstractNativeEventFilter):
             self.action.setToolTip(f'屏幕截图（全局快捷键 {value}）')
 
     def nativeEventFilter(self, event_type, message):
-        from ctypes import wintypes
+        # Every native message of the process arrives here, and Chromium sends
+        # thousands of them while it opens a window.  Without a registered
+        # shortcut there is nothing to look for, so the filter stays out of
+        # the way instead of reading every message.
+        if not self.registered:
+            return False, 0
+        # Only WM_HOTKEY matters, and its id is the ``message`` field of the
+        # MSG.  Reading just that field keeps the common case free of any
+        # structure work: materializing a whole MSG in Python for every
+        # message the process receives is expensive, and the library panel
+        # construction produces thousands of them -- that cost showed up as
+        # 45-118 ms blocks on the GUI thread right after a project opened.
+        try:
+            native_id = ctypes.c_uint.from_address(
+                int(message) + _MESSAGE_FIELD_OFFSET).value
+        except (TypeError, ValueError):
+            return False, 0
+        if native_id != self.WM_HOTKEY:
+            return False, 0
         native = ctypes.cast(int(message), ctypes.POINTER(wintypes.MSG)).contents
-        if native.message == 0x0312 and native.wParam == self.IDENTIFIER:
+        if native.wParam == self.IDENTIFIER:
             QtCore.QTimer.singleShot(0, self.view.on_action_screen_capture)
             return True, 0
         return False, 0

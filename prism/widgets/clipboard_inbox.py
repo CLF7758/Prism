@@ -202,10 +202,19 @@ class ClipboardInboxDialog(QtWidgets.QDialog):
         if not items:
             self._report(_('Select a capture in the list first.'))
             return
+        import_allowed = getattr(self, 'import_allowed', None)
+        if import_allowed is not None and not import_allowed():
+            self._report(_('Opening is still preparing safe saving; '
+                           'captures remain in the inbox. Please retry when it finishes.'))
+            return
         # Hand them over; the window decides where they land.  Only after
         # that succeeds are they taken out of the inbox.
         page_id = self.page_box.currentData()
         self.import_requested.emit(items, page_id)
+        if import_allowed is not None and not import_allowed():
+            self._report(_('Opening is still preparing safe saving; '
+                           'captures remain in the inbox. Please retry when it finishes.'))
+            return
         self.service.take(items)
         target = self.page_box.currentText()
         self._report(_('Sent {n} capture(s) to "{target}".').format(

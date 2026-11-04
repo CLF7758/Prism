@@ -215,8 +215,9 @@ def test_ctrl_save_flushes_current_material_form(main_window, tmp_path, qtbot):
     # Keep the real save handler and worker; only answer its filename dialog.
     with patch('PyQt6.QtWidgets.QFileDialog.getSaveFileName', return_value=(filename, '')):
         actions['save'].qaction.trigger()
-    qtbot.waitUntil(lambda: window.view.filename == filename, timeout=15000)
-    with sqlite3.connect(filename) as connection:
+    from prism.storage.managed import database_path
+    qtbot.waitUntil(lambda: window.view.filename == database_path(filename), timeout=15000)
+    with sqlite3.connect(database_path(filename)) as connection:
         payload = connection.execute('SELECT payload FROM material_records WHERE id=?',
                                      (record_id,)).fetchone()[0]
     import json

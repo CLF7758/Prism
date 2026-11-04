@@ -22,10 +22,16 @@ from prism import commands
 from prism.config import PrismSettings
 from prism.fileio.errors import PrismFileIOError
 from prism.fileio.image import load_image
-from prism.fileio.sql import SQLiteIO, is_prism_file
+from prism.fileio.sql import (SQLiteIO, is_prism_file, is_readonly_project,
+                               request_readonly_project,
+                               load_deferred_board_extras,
+                               read_page_body, read_attachment,
+                               StoredBody, StoredAttachment)
 from prism.glb_preview import GLB_EXTENSIONS
 from prism.items import (PrismGlbItem, PrismPixmapItem, PrismVideoItem,
                          VIDEO_EXTENSIONS)
+
+from prism.performance_trace import open_phase
 
 
 __all__ = [
@@ -37,6 +43,15 @@ __all__ = [
     'load_media',
     'ThreadedLoader',
     'PrismFileIOError',
+    'is_readonly_project',
+    'request_readonly_project',
+    # The deferred bodies. The interface layer asks for these through this
+    # package; it must not reach into `prism.fileio.sql` for them.
+    'load_deferred_board_extras',
+    'read_page_body',
+    'read_attachment',
+    'StoredBody',
+    'StoredAttachment',
 ]
 
 
@@ -61,23 +76,87 @@ def _read_local_source(path):
         return None
 
 
-def load_prism(filename, scene, worker=None):
-    """Load Prism native file."""
+def load_prism(filename, scene, worker=None, scope=None):
+    """Load Prism native file.
+
+    ``scope`` 是 item id 的序列：给定时只读这一页（有界按页打开），
+    未给定时是全量读取（旧行为）。按页读会在 scene 上登记
+    ``_loaded_scope_ids`` 与 ``_partial_project_source``，保存必须走部分快照。
+
+    Opening a 51.81 GiB project used to leave one unbreakable number in the
+    log. The two stages are timed separately so a slow open says which half
+    was slow: connecting/reading the archive, or turning rows into items.
+    """
     logger.info(f'Loading from file {filename}...')
-    io = SQLiteIO(filename, scene, readonly=True, worker=worker)
-    return io.read()
+    with open_phase('read_archive', filename=str(filename),
+                    paged=scope is not None,
+                    source_bytes=(os.path.getsize(str(filename))
+                                  if os.path.exists(str(filename)) else None)):
+        io = SQLiteIO(filename, scene, readonly=True, worker=worker)
+        try:
+            return io.read(scope=scope)
+        finally:
+            io._close_connection()
 
 
-def save_prism(filename, scene, create_new=False, worker=None, board_snapshot=None):
+def _start_background_materialization(scene):
+    """Start extracting the embedded videos a save is about to write.
+
+    The bytes of an embedded video live inside the .prism archive and have
+    to be pulled out before they can be written into the new file.  Doing
+    that on the thread that saves would keep it busy for the whole
+    extraction, so the work is handed to ``source_store``'s background
+    service here, before the write starts.  ``SQLiteIO.insert_item`` then
+    finds the extracted file waiting for it and only has to copy it.
+    """
+    if scene is None:
+        return
+    try:
+        # ``PrismScene.items()`` sorts every item of the scene, which is
+        # far too much work for this scan; the base implementation hands
+        # out the plain list.
+        items = QtWidgets.QGraphicsScene.items(scene)
+    except (AttributeError, RuntimeError, TypeError):
+        return
+    for item in items:
+        if getattr(item, 'TYPE', None) != 'video':
+            continue
+        if not hasattr(item, 'save_id'):
+            # Only the items that are actually written are worth extracting.
+            continue
+        request = getattr(item, 'request_materialization', None)
+        if not callable(request):
+            continue
+        try:
+            request()
+        except Exception:                       # noqa: BLE001
+            logger.debug('Could not start the background materialization',
+                         exc_info=True)
+
+
+def save_prism(filename, scene, create_new=False, worker=None, board_snapshot=None,
+               partial_snapshot=None):
     """Save Prism native file."""
+    from prism.storage.managed import is_directory_target, root_for
+    if is_directory_target(filename) or root_for(filename) is not None:
+        from prism.storage.managed_io import save_directory
+        return save_directory(filename, scene, worker=worker, board_snapshot=board_snapshot,
+                              partial_snapshot=partial_snapshot)
     logger.info(f'Saving to file {filename}...')
     logger.debug(f'Create new: {create_new}')
-    io = SQLiteIO(filename, scene, create_new, worker=worker, board_snapshot=board_snapshot)
-    io.write()
+    # 内嵌视频的原始字节要先从存档里提出来。写入之前就在后台开始提取，
+    # 这样写盘线程走到 _ensure_materialized() 时字节多半已经就位，
+    # 提取本身也从来不在调用保存的那条线程上发生。
+    _start_background_materialization(scene)
+    io = SQLiteIO(filename, scene, create_new, worker=worker,
+                  board_snapshot=board_snapshot, partial_snapshot=partial_snapshot)
+    receipt = io.write()
     logger.info('End save')
+    return receipt
 
 
 def _load_image_item(filename, as_record=False):
+    retained = None
     local = filename if isinstance(filename, str) else (
         filename.toLocalFile() if filename.isLocalFile() else None)
     if local and os.path.isfile(local):
@@ -115,12 +194,27 @@ def _load_image_item(filename, as_record=False):
                 item._source_path = retained
                 item.reset_crop()
                 return item
-    image, name = load_image(filename)
+    if local:
+        if retained is None:
+            return None
+        # Decode the verified owned copy, never re-read a possibly changed
+        # external source after retaining it.
+        image, _ = load_image(retained)
+        name = os.path.normpath(local)
+        original_blob = None
+    else:
+        image, name, original_blob = load_image(filename, with_source=True)
+        if not original_blob:
+            return None
     if image.isNull():
         return None
     item = PrismPixmapItem(image, name)
-    if local and os.path.isfile(local):
+    if retained is not None:
         item._source_path = retained
+    else:
+        from urllib.parse import urlsplit
+        extension = os.path.splitext(urlsplit(name).path)[1]
+        item.set_source_blob(original_blob, item._format_from_bytes(original_blob) or extension)
     return item
 
 
@@ -192,7 +286,7 @@ def load_media_with_originals(filenames, pos, scene, worker):
     return load_media(filenames, pos, scene, worker, force_video_embed=True)
 
 
-def load_media(filenames, pos, scene, worker, force_video_embed=False):
+def load_media(filenames, pos, scene, worker, force_video_embed=False, item_metadata=None):
     """Add images, videos and 3D models to existing scene."""
     from PyQt6.QtCore import QUrl
 
@@ -201,6 +295,23 @@ def load_media(filenames, pos, scene, worker, force_video_embed=False):
     worker.begin_processing.emit(len(filenames))
     from prism.asset_records import MIN_VIRTUAL_IMAGES
     virtual_images = len(filenames) >= MIN_VIRTUAL_IMAGES
+    metadata_offsets = {}
+    def packet(item, kind, path):
+        result = {'item':item, 'type':kind}
+        choices = (item_metadata or {}).get(path, ())
+        if choices:
+            number = metadata_offsets.get(path, 0)
+            metadata_offsets[path] = number + 1
+            data = dict(choices[number])
+            from prism.item_lifecycle import is_record
+            if is_record(item):
+                item._extra_data.update(data)
+                item.load_metadata_from_data(data)
+                item._display_thumbnail = data.get('displayThumbnail')
+                item._overview_payload = data.get('displayOverview')
+            else:
+                result['data'] = data  # Hydrated on the GUI before scene insertion.
+        return result
     for i, filename in enumerate(filenames):
         if i % 50 == 0 or i == len(filenames) - 1:
             worker.progress.emit(i)
@@ -240,7 +351,7 @@ def load_media(filenames, pos, scene, worker, force_video_embed=False):
                 item._video_url = QUrl.fromLocalFile(item._video_source_path)
             item.set_pos_center(pos)
             scene.add_item_later(
-                {'item': item, 'type': 'video'}, selected=len(filenames) <= 200)
+                packet(item, 'video', local_path), selected=len(filenames) <= 200)
             items.append(item)
         elif ext in GLB_EXTENSIONS:
             logger.info(f'Loading 3D model from file {local_path}')
@@ -250,7 +361,7 @@ def load_media(filenames, pos, scene, worker, force_video_embed=False):
                 continue
             item.set_pos_center(pos)
             scene.add_item_later(
-                {'item': item, 'type': 'glb'}, selected=len(filenames) <= 200)
+                packet(item, 'glb', local_path), selected=len(filenames) <= 200)
             items.append(item)
         else:
             logger.info(f'Loading image from file {filename}')
@@ -261,7 +372,7 @@ def load_media(filenames, pos, scene, worker, force_video_embed=False):
                 continue
             item.set_pos_center(pos)
             scene.add_item_later(
-                {'item': item, 'type': 'pixmap'}, selected=len(filenames) <= 200)
+                packet(item, 'pixmap', local_path), selected=len(filenames) <= 200)
             items.append(item)
 
         if worker.canceled:

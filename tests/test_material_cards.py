@@ -1,6 +1,7 @@
 """Exercise SurfaceStudio's actual HTML cards and the Qt selection bridge."""
 from PyQt6 import QtCore, QtWidgets
 from PyQt6.QtCore import Qt
+import pytest
 
 
 def javascript(grid, expression, qtbot):
@@ -114,3 +115,83 @@ def test_imported_record_ids_are_not_inserted_as_html(main_window, qtbot):
     assert javascript(page.materials, "Boolean(window.idInjected)", qtbot) is False
     javascript(page.materials, "document.querySelector('.asset-card').click()", qtbot)
     qtbot.waitUntil(lambda: page.selected_id == malicious_id)
+
+
+def test_the_card_surface_takes_f2_and_delete_from_the_canvas(main_window, qtbot):
+    """The card page must own F2 and Delete, and the canvas must not.
+
+    The canvas delete action is window scoped, so it would claim these keys
+    even when the card page has the focus.  Qt delivers the key press to the
+    focus widget only when the ShortcutOverride is accepted, and it triggers
+    the shortcut action when the override is ignored
+    (QEvent::ShortcutOverride).  Accepting it is therefore the only way to
+    give the key to the card page without letting the canvas delete a scene
+    item instead of the card.
+    """
+    from PyQt6 import QtGui
+    page, _records = show_cards(main_window, qtbot)
+    grid = page.materials
+    app = QtWidgets.QApplication.instance()
+    for key in (Qt.Key.Key_F2, Qt.Key.Key_Delete):
+        override = QtGui.QKeyEvent(QtCore.QEvent.Type.ShortcutOverride, key,
+                                   Qt.KeyboardModifier.NoModifier)
+        app.sendEvent(grid.web, override)
+        assert override.isAccepted(), \
+            'the card page must take the key, or the canvas action claims it: %s' % (key,)
+
+
+@pytest.mark.parametrize('asset_kind', ['material', 'model'])
+def test_card_context_menu_closes_on_escape_and_inspector_focus(
+        main_window, qtbot, asset_kind):
+    """Both library adapters share the same non-modal browser menu."""
+    page, records = show_cards(main_window, qtbot)
+    # Offscreen show() does not activate a native window. Without activation
+    # setFocus() has no effect, so no blur can be observed by Chromium.
+    main_window.activateWindow()
+    qtbot.waitUntil(lambda: QtWidgets.QApplication.activeWindow() is main_window)
+    grid = page.materials
+    assets = [dict(asset, assetKind=asset_kind) for asset in grid.assets]
+    grid.set_display_assets(assets)
+    qtbot.waitUntil(lambda: javascript(grid,
+        "assetsById.values().next().value.assetKind", qtbot) == asset_kind)
+    exported, renamed = [], []
+    grid.export_requested.connect(exported.append)
+    grid.rename_requested.connect(renamed.append)
+
+    def open_menu():
+        grid.web.setFocus()
+        javascript(grid, """(()=>{
+            const card=document.querySelector('.asset-card');card.focus();
+            card.dispatchEvent(new MouseEvent('contextmenu',
+                {bubbles:true,cancelable:true,clientX:60,clientY:60}));
+            return true;
+        })()""", qtbot)
+        assert javascript(grid, "Boolean(document.getElementById('material-menu'))", qtbot)
+
+    open_menu()
+    qtbot.keyClick(grid.web.focusProxy() or grid.web, Qt.Key.Key_Escape)
+    qtbot.waitUntil(lambda: not javascript(grid,
+        "Boolean(document.getElementById('material-menu'))", qtbot))
+    open_menu()
+    page.search.setFocus()
+    qtbot.waitUntil(lambda: page.search.hasFocus())
+    qtbot.waitUntil(lambda: not javascript(grid,
+        "Boolean(document.getElementById('material-menu'))", qtbot))
+    assert not exported and not renamed
+
+
+def test_inline_name_and_shift_range_use_real_bridge(main_window,qtbot,monkeypatch):
+    page,records=show_cards(main_window,qtbot)
+    grid=page.materials
+    from unittest.mock import Mock
+    dialog=Mock(side_effect=AssertionError('Inline rename must not open a dialog'))
+    monkeypatch.setattr(QtWidgets.QInputDialog,'getText',dialog)
+    javascript(grid,"document.querySelector('.asset-card h3').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))",qtbot)
+    qtbot.waitUntil(lambda:javascript(grid,"Boolean(document.querySelector('h3 input'))",qtbot))
+    javascript(grid,"(()=>{const i=document.querySelector('h3 input');i.value='Inline name';i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return true;})()",qtbot)
+    qtbot.waitUntil(lambda:any(r['name']=='Inline name' for r in page.records.records))
+    javascript(grid,"document.querySelectorAll('.asset-card')[0].click()",qtbot)
+    qtbot.waitUntil(lambda:len(grid.selected_ids)==1)
+    javascript(grid,"document.querySelectorAll('.asset-card')[2].dispatchEvent(new MouseEvent('click',{bubbles:true,shiftKey:true}))",qtbot)
+    qtbot.waitUntil(lambda:len(grid.selected_ids)==3)
+    assert not dialog.called

@@ -1,7 +1,7 @@
 """Clipboard actions kept separate from the graphics view."""
 import logging
 
-from PyQt6 import QtWidgets
+from PyQt6 import QtCore, QtWidgets
 
 from prism import commands, widgets
 from prism.i18n import _
@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 def paste(view):
     """Paste Prism items, an image, or text at the cursor position."""
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        return
     view.cancel_active_modes()
     logger.debug('Pasting from clipboard...')
     clipboard = QtWidgets.QApplication.clipboard()
@@ -46,3 +48,22 @@ def paste(view):
     message = _('No image data or text in clipboard or image too big')
     logger.info(message)
     widgets.PrismNotification(view, message)
+
+
+def copy_selection(scene, clipboard):
+    """Copy one scene selection through explicit scene/clipboard ports.
+
+    No view, action state or application clipboard lookup is retained here.
+    Return the copied count; an empty selection is a harmless no-op.
+    """
+    items = tuple(scene.selectedItems(user_only=True))
+    if not items:
+        return 0
+    items[0].copy_to_clipboard(clipboard)
+    scene.copy_selection_to_internal_clipboard()
+    mime = clipboard.mimeData()
+    if mime is not None:
+        from prism.clipboard_capture import ClipboardCaptureAdapter
+        ClipboardCaptureAdapter.mark_own_mime(mime)
+        mime.setData('prism/items', QtCore.QByteArray.number(len(items)))
+    return len(items)

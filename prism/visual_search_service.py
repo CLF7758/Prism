@@ -147,6 +147,8 @@ class VisualSearchService(QtCore.QObject):
         self.process.setArguments(arguments)
         environment = QtCore.QProcessEnvironment.systemEnvironment()
         environment.insert('PYTHONIOENCODING', 'utf-8')
+        import disk_objectstore
+        environment.insert('PRISM_STORAGE_SITE_PACKAGES', str(Path(disk_objectstore.__file__).resolve().parents[1]))
         environment.remove('PYTHONPATH')
         self.process.setProcessEnvironment(environment)
         self.process.start()

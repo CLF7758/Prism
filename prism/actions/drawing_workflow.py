@@ -265,9 +265,20 @@ class CanvasDrawingMixin:
                 break
 
     def _finish_pending_stroke(self):
-        """松开鼠标 / 切工具：结束编辑，图元留在场景里。"""
+        """松开鼠标 / 切工具：结束编辑，图元留在场景里。
+
+        落笔的那一刻图元就已经进场景（需求第十三条），所以结束时的
+        撤销登记用 `ignore_first_redo`：图元本来就在场景里，undo 把它
+        拿掉、redo 再放回来。这样画完的线 Ctrl+Z 能撤掉，与橡皮擦
+        （`commands.DeleteItems`）对称，而不是"画了撤不掉、擦了能撤销"。
+        """
+        item = self._draw_item
         self._draw_points = []
         self._draw_item = None
+        if item is not None and item.scene() is self.scene:
+            self.scene.undo_stack.push(
+                commands.InsertItems(self.scene, [item], ignore_first_redo=True))
+            self.mark_content_dirty()
 
     def _discard_pending_stroke(self):
         """没画完就中断了（退出模式 / 切工具）。

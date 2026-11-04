@@ -153,15 +153,26 @@ class VideoDownloadDialog(QtWidgets.QDialog):
             self.status.setText('正在导入其他素材，请稍后重试')
             return False
         self.view.window().open_workspace_page('canvas', context['canvas_id'])
+        window = self.view.window()
+        if hasattr(window, 'request_navigation') and (
+                window.tabs.currentWidget() is not window.canvas_page
+                or window.current_page_id != context['canvas_id']):
+            return False
         return True
 
     def import_video(self):
+        from prism.navigation import defer_navigation
+        if defer_navigation(self.view.window(), self.import_video, owner=self):
+            return
         result = self.selected_result()
         if result and self.destination(result):
             assets = result.get('assets') or [result]
             self.view.do_insert_images([asset.get('original_path') or asset['path'] for asset in assets], force_video_embed=True)
 
     def extract(self):
+        from prism.navigation import defer_navigation
+        if defer_navigation(self.view.window(), self.extract, owner=self):
+            return
         result = self.selected_result()
         if not result or not self.destination(result):
             return

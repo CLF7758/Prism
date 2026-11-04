@@ -1,13 +1,51 @@
 from unittest.mock import patch, MagicMock
+import gc
 import subprocess
 import sys
 
 from PyQt6 import QtCore, QtTest
 
-from prism.__main__ import PrismMainWindow, main
+from prism.__main__ import GC_THRESHOLDS, PrismMainWindow, main, tune_gc_for_large_projects
 from prism.assets import BeeAssets
 from prism.view import PrismGraphicsView
 from prism import ui_tokens
+
+
+def test_the_collector_walks_the_whole_heap_rarely():
+    """全量回收在大工程里是 17-144ms 的停顿，默认阈值太密。
+
+    线上 trace：一次开工程 6 次全量回收（425.2ms，其中 247.3ms 在 GUI
+    线程）；最重的会话一次开工程累计 2.32s，其中 1.75s 落在 GUI 线程。
+    真实 100k 工程实测（collector 计量罩住打开过程）：
+    (700,10,10) 全量回收 5 次 / 349.8ms / 最长 100.5ms；
+    (700,10,100) 全量回收 0 次 / 49.2ms / 最长 12.8ms。
+    """
+    previous = gc.get_threshold()
+    try:
+        tune_gc_for_large_projects()
+        assert gc.get_threshold() == GC_THRESHOLDS
+        # 默认 (700, 10, 10)：每 70000 次分配就走一遍全部存活对象。
+        assert gc.get_threshold()[2] >= 100
+    finally:
+        gc.set_threshold(*previous)
+
+
+def test_closing_the_window_leaves_the_window_state_on_disk(qapp, qtbot, main_window):
+    """窗口状态是退出时最后写的设置，必须在关窗返回前就落盘。
+
+    后台写线程按 150ms 合并窗口写盘，`aboutToQuit` 在之后才兜底。
+    进程在关窗后立刻被杀时，只有这里同步落盘才能保住窗口位置。
+    """
+    from PyQt6 import QtCore
+
+    window = main_window
+    window.show()
+    qapp.processEvents()
+    path = window.view.settings.fileName()
+    window.close()
+    disk = QtCore.QSettings(path, QtCore.QSettings.Format.IniFormat)
+    disk.sync()
+    assert disk.contains('MainWindow/geometry')
 
 
 def test_importing_window_classes_preserves_host_exception_hook():
@@ -129,15 +167,22 @@ def test_prismapplication_fileopenevent(open_mock, qapp, main_window):
 @patch('prism.__main__.PrismApplication')
 @patch('prism.__main__.CommandlineArgs')
 @patch('prism.config.PrismSettings.on_startup')
-def test_main(startup_mock, args_mock, app_mock, qapp, main_window):
+def test_main(startup_mock, args_mock, app_mock, qapp):
     app_mock.return_value = qapp
     args_mock.return_value.filename = None
     args_mock.return_value.loglevel = 'WARN'
     args_mock.return_value.debug_raise_error = ''
 
+    # main() owns and deletes this window. A qtbot-managed fixture would try
+    # to close the already-deleted C++ object during its own teardown.
+    with patch('prism.browser_capture.BrowserCaptureService.start'), \
+         patch('prism.capture_hotkey.CaptureHotkey'), \
+         patch('prism.clipboard_capture.ClipboardCaptureAdapter.start'):
+        owned_window = PrismMainWindow(qapp)
+
     with patch.object(qapp, 'exec') as exec_mock, \
             patch.object(sys, 'excepthook'), \
-            patch('prism.__main__.PrismMainWindow', return_value=main_window), \
+            patch('prism.__main__.PrismMainWindow', return_value=owned_window), \
             patch('prism.__main__.platform.python_version',
                   side_effect=ValueError('failed to parse vendor sys.version')) as version_parser:
         from prism import performance_trace

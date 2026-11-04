@@ -23,10 +23,13 @@ import logging
 import os
 import sqlite3
 import tempfile
+import threading
 import time
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, QUrl
+
+from prism import text_frame
 
 
 def _configure_media_backend():
@@ -527,6 +530,15 @@ class PrismPixmapItem(ImageSourceMixin, ImageCropMixin, PrismItemMixin, QtWidget
         self.color_group = None
         self.dominant_color = None
         self.init_metadata()
+        if not filename and not image.isNull():
+            # Clipboard/generated pixels have no file payload. Establish a
+            # lossless original at creation, before any display adjustment.
+            data = QtCore.QByteArray()
+            buffer = QtCore.QBuffer(data)
+            buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
+            if not image.save(buffer, 'PNG'):
+                raise ValueError('无法无损留存导入的位图，未创建素材。')
+            self.set_source_blob(bytes(data), 'png')
 
     @classmethod
     def create_from_data(self, **kwargs):
@@ -748,16 +760,29 @@ class PrismPixmapItem(ImageSourceMixin, ImageCropMixin, PrismItemMixin, QtWidget
 
     def _decode_source_blob(self):
         """Decode the stored original; the crop is deliberately kept."""
+        from prism.storage.contracts import StorageError
+        from prism.source_read_status import ReadFailure, read_failure
+        now = time.monotonic()
+        failure = getattr(self, '_source_read_error', None)
+        if (failure is not None and failure.retryable
+                and now < getattr(self, '_source_read_retry_at', 0)):
+            return False
         self._grayscale_cache = None
         self._display_decode_request = None
         try:
             result = image_decode.decode(*image_decode.source_snapshot(self))
-        except (OSError, sqlite3.Error):
-            logger.debug('Could not decode original image', exc_info=True)
+        except (OSError, sqlite3.Error, StorageError) as error:
+            self._source_read_error = failure = read_failure(error)
+            self._source_read_retry_at = now + image_decode.DECODE_RETRY_BACKOFF
+            if not failure.retryable:
+                logger.warning('Original image unavailable (%s): %s', failure.kind, failure.detail)
             return False
         if result is None:
+            self._source_read_error = ReadFailure('decode_failed', False, 'The source produced no decodable image')
             return False
         image, _size = result
+        self._source_read_error = None
+        self._source_read_retry_at = 0
         self._display_decode_failed = False
         pixmap = QtGui.QPixmap.fromImage(image)
         if self._image_size != pixmap.size():
@@ -1170,9 +1195,188 @@ class PrismTextItem(PrismItemMixin, QtWidgets.QGraphicsTextItem):
         self.init_selectable()
         self.is_editable = True
         self.edit_mode = False
+        # 文字框（0.3.11 text-frame 热修复）：None = 老工程那样按内容
+        # 自适应；用户第一次拖角之后才变成显式框。
+        self._frame_height = None
+        self._resize_state = None
+        self._caret_visible = True
+        self._caret_timer = None
         self._apply_style(color=color, font=font, size=size,
                           bold=bold, italic=italic)
+        frame = text_frame.read_size(kwargs)
+        if frame is not None:
+            self.set_frame_size(*frame)
         self.init_metadata()
+
+    # ── 文字框（frame）──────────────────────────────────────
+    #
+    # 文字框有自己的宽高：宽喂给 Qt 文档布局（窄了自动换行），高只
+    # 裁剪绘制（完整文字仍在文档里、仍在工程里）。拖角改的是框，不是
+    # 字号 —— 通用手柄那套 setScale 会把字号一起放大，文字框不该那样。
+
+    def bounding_rect_unselected(self):
+        """框的矩形（本图元本地坐标）。
+
+        没有显式框的老工程，这里就是文字自己的（自适应）盒子 ——
+        看起来和以前一模一样。
+        """
+        rect = QtWidgets.QGraphicsTextItem.boundingRect(self)
+        if self._frame_height is not None:
+            rect.setHeight(self._frame_height)
+        return rect
+
+    def boundingRect(self):
+        # Qt rejects mouse events outside boundingRect before testing shape.
+        # Include the visible corner dots and their hit zones, while keeping
+        # the saved text frame and text clipping on bounding_rect_unselected.
+        return SelectableMixin.boundingRect(self)
+
+    def get_flip_bounds(self):
+        # Text frames resize from their four corners; edges never mirror text.
+        return ()
+
+    def set_frame_size(self, width, height):
+        """改框的宽高，**不碰字号**。
+
+        宽高都是图元本地坐标（见 `prism/text_frame.py` 的说明），
+        所以它们跟着图元自己的缩放和视图缩放走，不是屏幕像素。
+        """
+        width, height = text_frame.clamp_size(width, height)
+        self.prepareGeometryChange()
+        self._frame_height = height
+        self.setTextWidth(width)
+        self.update()
+
+    def _trace_frame(self, phase, width=None, height=None):
+        """记一笔框的变化。**不记正文**。
+
+        一次拖动只记 start / end（或 cancel）两条，鼠标每动一下
+        都不记 —— 否则日志会被刷爆。
+        """
+        try:
+            from prism.performance_trace import record as trace_record
+        except Exception:
+            # 追踪模块是可选的（也归日志那边所有），它坏了不能连带
+            # 文字框不能用。
+            return
+        trace_record('text.frame.resize', phase=phase,
+                     item_id=self.save_id,
+                     width=round(float(width), 2) if width is not None else None,
+                     height=round(float(height), 2) if height is not None else None)
+
+    def mousePressEvent(self, event):
+        """文字框的角拖角改框；其它图元仍旧走通用手柄。
+
+        通用手柄（`SelectableMixin`）拖角是等比缩放整个图元，
+        那会把字号一起放大 —— 文字框不能这样，所以这里先接管。
+        """
+        if (event.button() == Qt.MouseButton.LeftButton
+                and self.has_selection_handles()):
+            for corner in self.corners:
+                if self.get_scale_bounds(corner).contains(event.pos()):
+                    if self._begin_frame_resize(corner):
+                        self._resize_pointer_offset = corner - self._resize_inverse.map(event.scenePos())
+                        event.accept()
+                        return
+                    break
+        super().mousePressEvent(event)
+
+    def _begin_frame_resize(self, corner):
+        """把这次拖动需要的东西**一次性冻住**。
+
+        拖动过程中图元本身要动（对角必须钉在原地），所以不能
+        每次用"当前的"变换去反算 —— 那样会漂。这里按下时就把
+        sceneTransform 和它的逆存下来，之后都在这个固定的坐标系
+        里解算。
+        """
+        transform = self.sceneTransform()
+        self._resize_state = (self.textWidth(), self._frame_height,
+                              QtCore.QPointF(self.pos()))
+        self._resize_transform = transform
+        # `QTransform.inverted()` 返回 (逆矩阵, 是否成功)，**不**原地修改。
+        # 缩放为 0 之类的退化变换没有逆，这时不去解算拖动。
+        inverse, invertible = transform.inverted()
+        if not invertible:
+            return False
+        self._resize_inverse = inverse
+        self._resize_pointer_offset = QtCore.QPointF()
+        self._resize_origin = self.bounding_rect_unselected().topLeft()
+        self._resize_anchor = self.get_scale_anchor(corner)
+        self._resize_direction = self.get_corner_direction(corner)
+        # 按住键盘才能收到 Esc（和裁剪模式一个路子）。
+        self.grabKeyboard()
+        self._trace_frame('start', self.textWidth(), self._frame_height)
+        return True
+
+    def mouseMoveEvent(self, event):
+        if self._resize_state is not None:
+            self._resize_to(event.scenePos())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def _resize_to(self, scene_pos):
+        """在按下时冻结的坐标系里解算这次拖动。"""
+        mouse = self._resize_inverse.map(scene_pos) + self._resize_pointer_offset
+        anchor = self._resize_anchor
+        direction = self._resize_direction
+        width = max(text_frame.MIN_FRAME_SIZE,
+                    (mouse.x() - anchor.x()) * direction.x())
+        height = max(text_frame.MIN_FRAME_SIZE,
+                     (mouse.y() - anchor.y()) * direction.y())
+        # 框的原点：对角不动，动的那个角跟着鼠标，所以原点要挪。
+        origin = QtCore.QPointF(
+            anchor.x() - width if direction.x() < 0 else anchor.x(),
+            anchor.y() - height if direction.y() < 0 else anchor.y())
+        self.set_frame_size(width, height)
+        self._move_origin_to(origin)
+
+    def _move_origin_to(self, origin):
+        """把框的原点放到冻结坐标系算出来的位置。"""
+        transform = self._resize_transform
+        before = transform.map(self._resize_origin)
+        after = transform.map(origin)
+        shift = after - before
+        if self.parentItem() is not None:
+            parent = self.parentItem()
+            shift = (parent.mapFromScene(after)
+                     - parent.mapFromScene(before))
+        self.setPos(self._resize_state[2] + shift)
+
+    def mouseReleaseEvent(self, event):
+        if self._resize_state is not None:
+            old = self._resize_state
+            self._end_frame_resize()
+            new = (self.textWidth(), self._frame_height,
+                   QtCore.QPointF(self.pos()))
+            if old != new:
+                self.scene().undo_stack.push(
+                    commands.ResizeTextFrame(self, old, new))
+                self._trace_frame('end', new[0], new[1])
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _end_frame_resize(self):
+        self._resize_state = None
+        self.ungrabKeyboard()
+
+    def cancel_frame_resize(self):
+        """取消正在进行的拖动：回到按下的那一刻。
+
+        不写撤销栈、不置脏 —— 一次取消不该留下任何痕迹。
+        """
+        if self._resize_state is None:
+            return False
+        width, height, pos = self._resize_state
+        self._end_frame_resize()
+        self.prepareGeometryChange()
+        self._frame_height = height
+        self.setTextWidth(width if width and width > 0 else -1)
+        self.setPos(pos)
+        self.update()
+        self._trace_frame('cancel', width, height)
+        return True
 
     def _apply_style(self, *, color=None, font=None, size=None,
                      bold=False, italic=False):
@@ -1234,6 +1438,9 @@ class PrismTextItem(PrismItemMixin, QtWidgets.QGraphicsTextItem):
         # 样式也存下来。以前只存文字，所以颜色字号改了也留不住 ——
         # 保存再打开就变回默认色。
         data = {'text': self.toPlainText()}
+        if self._frame_height is not None:
+            data[text_frame.WIDTH_FIELD] = self.textWidth()
+            data[text_frame.HEIGHT_FIELD] = self._frame_height
         data.update(self.style())
         data.update(self.get_metadata_save_data())
         return data
@@ -1247,13 +1454,78 @@ class PrismTextItem(PrismItemMixin, QtWidgets.QGraphicsTextItem):
         color.setAlpha(40)
         brush = QtGui.QBrush(color)
         painter.setBrush(brush)
-        painter.drawRect(QtWidgets.QGraphicsTextItem.boundingRect(self))
+        painter.drawRect(self.bounding_rect_unselected())
         option.state = QtWidgets.QStyle.StateFlag.State_Enabled
-        super().paint(painter, option, widget)
+        if not self.edit_mode:
+            # 超出框的部分只裁剪显示，文字本身还在文档里。
+            painter.save()
+            painter.setClipRect(self.bounding_rect_unselected())
+            super().paint(painter, option, widget)
+            painter.restore()
+            self.paint_selectable(painter, option, widget)
+            return
+        # 编辑态自己画：Qt 原生的粗光标和 cosmetic 细光标不能同时在。
+        painter.save()
+        painter.setClipRect(self.bounding_rect_unselected())
+        context = QtGui.QAbstractTextDocumentLayout.PaintContext()
+        context.palette.setColor(QtGui.QPalette.ColorRole.Text,
+                               self.defaultTextColor())
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            selection = QtGui.QAbstractTextDocumentLayout.Selection()
+            selection.cursor = cursor
+            selection.format.setBackground(QtGui.QColor('#3875d6'))
+            selection.format.setForeground(QtGui.QColor('white'))
+            context.selections = [selection]
+        self.document().documentLayout().draw(painter, context)
+        if self.hasFocus() and not cursor.hasSelection() and self._caret_visible:
+            self._draw_caret(painter, cursor)
+        painter.restore()
         self.paint_selectable(painter, option, widget)
 
+    def _draw_caret(self, painter, cursor):
+        """画编辑光标：**一个物理屏幕像素**宽。
+
+        pen 是 cosmetic 的，宽度按**设备像素**算，不随图元缩放、
+        视图缩放或 DPI 变大 —— 放大之后不会变成一条大黑条。
+        """
+        block = cursor.block()
+        layout = block.layout()
+        if layout is None:
+            return
+        line = layout.lineForTextPosition(cursor.positionInBlock())
+        if not line.isValid():
+            return
+        origin = self.document().documentLayout().blockBoundingRect(block).topLeft()
+        x = origin.x() + line.cursorToX(cursor.positionInBlock())[0]
+        y = origin.y() + line.y()
+        pen = QtGui.QPen(self.defaultTextColor())
+        pen.setWidthF(1.0)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.drawLine(QtCore.QPointF(x, y),
+                        QtCore.QPointF(x, y + line.height()))
+
+    def _start_caret_blink(self):
+        if self._caret_timer is None:
+            self._caret_timer = QtCore.QTimer(self)
+            self._caret_timer.setInterval(500)
+            self._caret_timer.timeout.connect(self._toggle_caret)
+        self._caret_visible = True
+        self._caret_timer.start()
+
+    def _stop_caret_blink(self):
+        if self._caret_timer is not None:
+            self._caret_timer.stop()
+        self._caret_visible = True
+
+    def _toggle_caret(self):
+        self._caret_visible = not self._caret_visible
+        self.update()
+
     def create_copy(self):
-        item = PrismTextItem(self.toPlainText())
+        # 用存盘那份数据造副本：框的宽高、样式都在里面。
+        item = PrismTextItem(**self.get_extra_save_data())
         item.setPos(self.pos())
         item.setZValue(self.zValue())
         item.setScale(self.scale())
@@ -1272,6 +1544,7 @@ class PrismTextItem(PrismItemMixin, QtWidgets.QGraphicsTextItem):
         if self.edit_mode or self.scene() is None:
             return
         self.edit_mode = True
+        self._start_caret_blink()
         self.old_text = self.toPlainText()
         self.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextEditorInteraction)
@@ -1283,6 +1556,7 @@ class PrismTextItem(PrismItemMixin, QtWidgets.QGraphicsTextItem):
         if not self.edit_mode or self.scene() is None:
             return
         self.edit_mode = False
+        self._stop_caret_blink()
         # reset selection:
         self.setTextCursor(QtGui.QTextCursor(self.document()))
         self.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
@@ -1301,6 +1575,13 @@ class PrismTextItem(PrismItemMixin, QtWidgets.QGraphicsTextItem):
         return super().has_selection_handles() and not self.edit_mode
 
     def keyPressEvent(self, event):
+        if (event.key() == Qt.Key.Key_Escape
+                and event.modifiers() == Qt.KeyboardModifier.NoModifier
+                and self._resize_state is not None):
+            # 正在拖框：Esc 取消这次拖动，不留撤销记录、不置脏。
+            self.cancel_frame_resize()
+            event.accept()
+            return
         if (event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return)
                 and event.modifiers() == Qt.KeyboardModifier.NoModifier):
             self.exit_edit_mode()
@@ -1706,6 +1987,7 @@ class PrismGlbItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         self._mesh = None
         self._load_error = None
         self._preview_window = None
+        self.init_metadata()
         self.init_selectable()
         self._build_thumbnail()
         logger.trace('Initialized %s', self)
@@ -1821,6 +2103,9 @@ class PrismGlbItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         }
         if self._is_reference and self._glb_path:
             data['modelPath'] = os.path.abspath(self._glb_path)
+        # 与图片/文字/画笔一致：逐条元数据（标签/分类/评分/备注/标题/
+        # 画布归属/回收站标记）必须写盘，否则保存重开后全部丢失。
+        data.update(self.get_metadata_save_data())
         return data
 
     def get_filename_for_export(self, imgformat, save_id_default=None):
@@ -1855,11 +2140,23 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         self.filename = filename
         self.is_image = False
         self.is_editable = False
+        self.init_metadata()
         self.init_selectable()
 
         self._video_url = video_url
         self._video_blob = video_blob
         self._is_reference = False
+        # 内嵌视频的惰性源引用 (archive_filename, item_id)。打开工程时
+        # 只登记这个引用，不立即把字节提取成临时文件；play/保存/导出
+        # 需要真实路径时才由 _ensure_materialized() 提取到 source_store
+        # 的临时目录。
+        self._prism_source = None
+        # 内嵌视频物化出的磁盘文件路径；引用视频保持 None（用 _video_url）。
+        self._video_source_path = None
+        # 后台物化的请求句柄；_ensure_materialized() 等的就是它。
+        self._materialization_request = None
+        # 保护"检查-提取-缓存"这段物化路径，double-check 后幂等。
+        self._materialize_lock = threading.Lock()
         self._playing = False
         self._loop = False
         self._muted = False
@@ -1882,6 +2179,142 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
 
         if filename:
             logger.trace('Initialized %s', self)
+
+    @property
+    def _video_source_path(self):
+        """The extracted original this item points at, if any.
+
+        The setter keeps ``source_store``'s lease informed: an extracted
+        original that an item still points at must not be collected while
+        a save or an export is reading it.
+        """
+        return getattr(self, '_PrismVideoItem__video_source_path', None)
+
+    @_video_source_path.setter
+    def _video_source_path(self, value):
+        from prism.source_store import (hold_materialization,
+                                        release_materialization)
+        previous = getattr(self, '_PrismVideoItem__video_source_path', None)
+        if previous == value:
+            return
+        if previous:
+            release_materialization(previous)
+        self.__video_source_path = value
+        if value:
+            hold_materialization(value)
+
+    def _video_suffix(self):
+        """The suffix the extracted original keeps."""
+        return os.path.splitext(self.filename or '')[1] or '.mp4'
+
+    def request_materialization(self, *, cancel_event=None):
+        """Start extracting this item's embedded bytes in the background.
+
+        The call returns immediately: a worker thread pulls the bytes out
+        of the .prism archive, so the caller - the GUI thread that plans
+        an export, for instance - never waits for them.  The returned
+        request is what :meth:`_ensure_materialized` waits for; the bytes
+        are pulled out at most once per source version, even when several
+        callers ask for the same one.
+        """
+        if not self._prism_source or self._is_reference:
+            return None
+        path = self._video_source_path
+        if path and os.path.isfile(path):
+            return None
+        from prism.source_store import materialization_service
+        request = materialization_service().request(
+            self._prism_source, self._video_suffix(),
+            cancel_event=(cancel_event if cancel_event is not None
+                          else threading.Event()))
+        self._materialization_request = request
+        return request
+
+    def _ensure_materialized(self):
+        """Make an embedded video's bytes available as a real file.
+
+        Opening a project only records ``_prism_source = (archive, item_id)``
+        for an embedded video; the bytes stay inside the .prism archive.  The
+        first caller that needs a real path (playback, save, export) lands
+        here and extracts them into ``source_store``'s temporary directory.
+        The result is cached in ``_video_source_path``/``_video_url`` and
+        reused afterwards, so the operation is idempotent.
+
+        Referenced videos (``_is_reference``) and items that already carry a
+        path or an in-memory blob are left untouched; the method just returns
+        their current local path.  Returns ``None`` when there is no usable
+        source.
+
+        The bytes themselves are pulled out by ``source_store``'s
+        materialization service, that is by a background worker; this method
+        only waits for that worker.  A caller on the GUI thread that has to
+        stay responsive starts the work with :meth:`request_materialization`
+        and comes back for the path later.
+        """
+        path = self._video_source_path
+        if path and os.path.isfile(path):
+            return path
+        if self._prism_source:
+            # 锁内再查一次：GUI 串行调用时这里是零竞争，但缩略图/播放/
+            # 保存可能在不同时机到来，double-check 保证幂等且不重复提取。
+            with self._materialize_lock:
+                path = self._video_source_path
+                if path and os.path.isfile(path):
+                    return path
+                extracted = self._extract_embedded_video()
+                self._video_source_path = extracted
+                self._video_url = QUrl.fromLocalFile(extracted)
+                # 缩略图此前因未物化被跳过；重置标记，让下一次 paint
+                # 重新抓取首帧。
+                if getattr(self, '_thumbnail_request_key', None) == 'deferred':
+                    self._thumbnail_request_key = None
+                return extracted
+        url = self._video_url
+        if url is not None and url.isLocalFile():
+            return url.toLocalFile()
+        return None
+
+    def _extract_embedded_video(self):
+        """Copy this item's embedded bytes out of the .prism archive.
+
+        The extraction runs on a background worker thread of
+        ``source_store``'s materialization service; this method waits for
+        its result.  The temporary file is written into ``source_store``'s
+        ``prism-originals-*`` directory — the same lease ``retain_stream``
+        uses.  Its lifetime belongs to that module, not to this item, so
+        ``cleanup()`` must not delete it.  A SHA-256 content fingerprint is
+        registered with ``source_store`` so the thumbnail cache keys the
+        extracted file by content instead of its per-open uuid path.
+
+        Raises ``RuntimeError`` (with a clear message) when the archive
+        record is missing/empty or the extraction fails; on failure no path
+        is recorded, so ``_video_source_path`` can never point at a half
+        written file.
+        """
+        from prism.source_store import (MaterializationCancelled,
+                                        materialization_service)
+        service = materialization_service()
+        try:
+            try:
+                return service.request(
+                    self._prism_source, self._video_suffix()).wait()
+            except MaterializationCancelled:
+                # 另一个消费者放弃了同一次提取：重开一次 —— 字节还在存档里。
+                return service.request(
+                    self._prism_source, self._video_suffix()).wait()
+        except Exception as error:
+            raise RuntimeError(
+                f'Cannot extract embedded video {self.filename or ""}: {error}') from error
+
+    def materialize_source(self):
+        """Force this item's embedded bytes onto disk, if any.
+
+        Mirrors ``ImageSourceMixin.materialize_source`` for the import
+        housekeeping path: an embedded video with an archive reference is
+        extracted now, while referenced videos and items that already hold
+        their bytes in memory or on disk are left unchanged.
+        """
+        self._ensure_materialized()
 
     def _generate_placeholder(self):
         """Create a placeholder thumbnail with a play icon."""
@@ -1908,7 +2341,18 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
     def _capture_thumbnail(self):
         if is_deleted(self):
             return
+        if self._thumbnail_ready:
+            return
         self._thumbnail_retry_scheduled = False
+        # 惰性内嵌视频还没物化：此刻抓帧要把整段视频从 .prism 存档里
+        # 提出来，等于把"打开只登记源引用"省下的开销又花回去。先保留
+        # 占位图，等 play/保存物化后再抓（_ensure_materialized 会重置
+        # 这个标记，让下一次 paint 重新尝试）。
+        if (self._prism_source
+                and not (self._video_source_path
+                         and os.path.isfile(self._video_source_path))):
+            self._thumbnail_request_key = 'deferred'
+            return
         from prism.video_thumbnails import request
         if not request(self):
             self._thumbnail_request_key = 'qtmultimedia'
@@ -1929,11 +2373,13 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         """
         if self._thumb_player is not None:
             return
-        player = QMediaPlayer()
-        audio = QAudioOutput()
+        if not self._video_url or not self._video_url.isLocalFile():
+            return
+        player = QMediaPlayer(QtWidgets.QApplication.instance())
+        audio = QAudioOutput(player)
         audio.setMuted(True)
         audio.setVolume(0)
-        sink = QVideoSink()
+        sink = QVideoSink(player)
         player.setAudioOutput(audio)
         player.setVideoOutput(sink)
         player.setSource(self._video_url)
@@ -1949,6 +2395,10 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
                     signal.disconnect(slot)
                 except (TypeError, RuntimeError):
                     pass
+            player.stop()
+            player.setSource(QUrl())
+            player.setVideoOutput(None)
+            player.setAudioOutput(None)
             player.deleteLater()
             sink.deleteLater()
             audio.deleteLater()
@@ -2007,6 +2457,13 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         item.filename = item.filename or data.get('filename')
         if data.get('videoWidth') and data.get('videoHeight'):
             item._video_dimensions = QtCore.QSize(int(data['videoWidth']), int(data['videoHeight']))
+        if data.get('displayThumbnail'):
+            item._display_thumbnail = data['displayThumbnail']
+            from prism.lod import thumbnail_pixmap
+            poster = thumbnail_pixmap(item, 192)
+            if poster is not None and not poster.isNull():
+                item.setPixmap(poster)
+                item._thumbnail_ready = True
         item.setOpacity(data.get('opacity', 1))
         if 'loop' in data:
             item._loop = data['loop']
@@ -2037,10 +2494,18 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
         size = getattr(self, '_video_dimensions', None)
         if size is not None:
             data.update(videoWidth=size.width(), videoHeight=size.height())
+        if getattr(self, '_thumbnail_ready', False):
+            from prism.lod import retain_thumbnail
+            retain_thumbnail(self, QtWidgets.QGraphicsPixmapItem.pixmap(self))
+        if getattr(self, '_display_thumbnail', None):
+            data['displayThumbnail'] = self._display_thumbnail
         if self._is_reference and self._video_url:
             path = self._video_url.toLocalFile()
             if path:
                 data['videoPath'] = os.path.abspath(path)
+        # 与图片/文字/画笔一致：逐条元数据（标签/分类/评分/备注/标题/
+        # 画布归属/回收站标记）必须写盘，否则保存重开后全部丢失。
+        data.update(self.get_metadata_save_data())
         return data
 
     def get_filename_for_export(self, imgformat, save_id_default=None):
@@ -2056,7 +2521,15 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
     # ── Playback ─────────────────────────────────────────────
 
     def play(self):
-        """Start or resume video playback."""
+        """Start playback without extracting an embedded BLOB on the GUI."""
+        if self._prism_source and not (self._video_source_path and os.path.isfile(self._video_source_path)):
+            from prism.video_thumbnails import request_materialization
+            request_materialization(self)
+            return
+        self._start_playback()
+
+    def _start_playback(self):
+        """GUI-only player setup after a usable local source is available."""
         if not self._video_url:
             return
         path = self._video_url.toLocalFile()
@@ -2076,9 +2549,9 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
             self._player_source = self._video_url
 
         if self._player is None:
-            self._player = QMediaPlayer()
-            self._audio_output = QAudioOutput()
-            self._video_sink = QVideoSink()
+            self._player = QMediaPlayer(QtWidgets.QApplication.instance())
+            self._audio_output = QAudioOutput(self._player)
+            self._video_sink = QVideoSink(self._player)
             self._player.setAudioOutput(self._audio_output)
             self._player.setVideoOutput(self._video_sink)
             self._audio_output.setMuted(self._muted)
@@ -2094,13 +2567,16 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
 
         self._player.play()
         self._playing = True
+        self._ensure_control_bar()
         if self._control_bar:
             self._control_bar.show()
             self._control_bar.update_state(True)
         self.update()
 
     def pause(self):
-        """Pause video playback."""
+        """Pause video playback, including a not-yet-ready play request."""
+        self._play_preparation_token = getattr(self, '_play_preparation_token', 0)+1
+        self._play_preparation_key = None
         if self._player:
             self._player.pause()
         self._playing = False
@@ -2226,6 +2702,7 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
             item._thumbnail_ready = True
             item._thumbnail_request_key = getattr(self, '_thumbnail_request_key', None)
         item._video_source_path = getattr(self, '_video_source_path', None)
+        item._prism_source = getattr(self, '_prism_source', None)
         item._is_reference = self._is_reference
         item._loop = self._loop
         item._muted = self._muted
@@ -2247,12 +2724,25 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
 
     def cleanup(self):
         """Stop playback and remove temporary files."""
+        self._play_preparation_token = getattr(self, '_play_preparation_token', 0)+1
+        self._play_preparation_key = None
+        self._playing = False
+        # 还在后台跑的物化请求没人要了：停掉它，半截文件会被删掉，
+        # 也不会进缓存（要的时候再提取一次）。
+        request = getattr(self, '_materialization_request', None)
+        if request is not None:
+            request.cancel()
+            self._materialization_request = None
         if self._player:
             self._player.stop()
             try:
                 self._player.mediaStatusChanged.disconnect()
             except (TypeError, RuntimeError):
                 pass
+            self._player.setSource(QUrl())
+            self._player.setVideoOutput(None)
+            self._player.setAudioOutput(None)
+            self._player.deleteLater()
             self._player = None
             self._audio_output = None
         if self._video_sink:
@@ -2263,11 +2753,17 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
             self._video_sink = None
         if self._thumb_player:
             self._thumb_player.stop()
-            try:
-                self._thumb_player.mediaStatusChanged.disconnect()
-                self._thumb_player.positionChanged.disconnect()
-            except (TypeError, RuntimeError):
-                pass
+            for signal in (self._thumb_player.mediaStatusChanged,
+                           self._thumb_player.positionChanged,
+                           self._thumb_player.errorOccurred):
+                try:
+                    signal.disconnect()
+                except (TypeError, RuntimeError):
+                    pass
+            self._thumb_player.setSource(QUrl())
+            self._thumb_player.setVideoOutput(None)
+            self._thumb_player.setAudioOutput(None)
+            self._thumb_player.deleteLater()
             self._thumb_player = None
             self._thumb_audio = None
         if self._thumb_sink:
@@ -2291,7 +2787,8 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
             if self._playing and self.scene():
                 self.scene().update(self.sceneBoundingRect())
         elif change == QtWidgets.QGraphicsItem.GraphicsItemChange.ItemSceneChange:
-            if self._playing:
+            if (self._playing or getattr(self, '_play_preparation_key', None)
+                    or (value is None and (self._player is not None or self._thumb_player is not None))):
                 self.cleanup()
             if value is None and self._control_bar:
                 # Item leaves the scene; drop the control bar with it
@@ -2300,14 +2797,15 @@ class PrismVideoItem(PrismItemMixin, QtWidgets.QGraphicsPixmapItem):
                 self._control_bar = None
         elif (change
               == QtWidgets.QGraphicsItem.GraphicsItemChange.ItemSceneHasChanged):
-            if self.scene() and self._control_bar is None:
-                from prism.widgets.video_controls import (
-                    PrismVideoControlProxy)
-                self._control_bar = PrismVideoControlProxy(self)
             # Capture thumbnail now that item is in scene and event loop is active
             if self._video_url and self.pixmap().size() == QtCore.QSize(640, 360):
                 QtCore.QTimer.singleShot(100, self._capture_thumbnail)
         return super().itemChange(change, value)
+
+    def _ensure_control_bar(self):
+        if self.scene() and self._control_bar is None:
+            from prism.widgets.video_controls import PrismVideoControlProxy
+            self._control_bar = PrismVideoControlProxy(self)
 
     def hoverEnterEvent(self, event):
         super().hoverEnterEvent(event)

@@ -57,7 +57,7 @@ def test_heartbeat_delay_can_be_distinguished_from_busy_gui_events(main_window, 
     try:
         trace.timer.stop()  # Delay only the diagnostic heartbeat, not the GUI.
         pulse.start()
-        qtbot.waitUntil(lambda: any(json.loads(value)['event'] == 'gui_stall'
+        qtbot.waitUntil(lambda: any(isinstance(value, dict) and value.get('event') == 'gui_stall'
                                    for value in list(trace.recent)), timeout=3000)
     finally:
         pulse.stop()
@@ -126,7 +126,11 @@ def test_diagnostics_preserve_exceptions_and_bound_queue(main_window, qapp, tmp_
     try:
         with pytest.raises(ValueError, match='original error'):
             fail()
-        assert trace.events.maxsize == 512
+        # The bounded queue is split in two: ordinary events have their own
+        # channel and the important ones (terminal, error, state) a reserved
+        # one that is never sacrificed to them. The total is still 512.
+        assert trace.events.maxsize + trace.important.maxsize == 512
+        assert trace.important.maxsize == 128
     finally:
         entries = rows(trace)
     assert any(r['event']=='operation' and r['failed'] for r in entries)
@@ -138,7 +142,10 @@ def test_event_bytes_and_crash_summary_are_bounded(main_window, qapp, tmp_path):
         for _ in range(150):
             trace.record('test_long', detail='x'*100000)
         assert len(trace.recent) == 128
-        assert all(len(entry) <= trace.MAX_EVENT_BYTES for entry in trace.recent)
+        # The ring holds the *encoded* size bound: the number of keys says
+        # nothing about how big the payload is.
+        assert all(len(json.dumps(entry, ensure_ascii=False).encode('utf-8'))
+                   <= trace.MAX_EVENT_BYTES for entry in trace.recent)
         try:
             raise ValueError('crash example')
         except ValueError as error:
@@ -148,5 +155,70 @@ def test_event_bytes_and_crash_summary_are_bounded(main_window, qapp, tmp_path):
         assert data['error'] == 'crash example'
         assert len(data['recent']) == 128
         assert data['traceback']
+        assert trace.recent[-1]['event'] == 'crash'
+        assert trace.recent[-1]['error'] == 'crash example'
+        assert trace.recent[-1]['exception_type'] == 'ValueError'
     finally:
         trace.close()
+
+
+def test_nested_timed_operations_have_unique_lifecycle_roles(main_window, qapp, tmp_path):
+    trace = trace_module.install(qapp, main_window, tmp_path)
+    try:
+        with trace_module.operation('outer', stage='reader') as outer:
+            outer['rows'] = 3
+            trace_module.record('sql.execute', duration_ms=25, query='fixture')
+            with trace_module.operation('inner'):
+                pass
+        @trace_module.measured('decorated', minimum_ms=1000)
+        def decorated():
+            return 7
+        assert decorated() == 7
+    finally:
+        entries = rows(trace)
+    lifecycle = [entry for entry in entries
+                 if entry['event'] in ('operation_start', 'operation')
+                 and entry.get('name') in ('outer', 'inner', 'decorated')]
+    starts = {entry['name']: entry for entry in lifecycle if entry['role'] == 'start'}
+    ends = {entry['name']: entry for entry in lifecycle if entry['role'] == 'end'}
+    assert set(starts) == set(ends) == {'outer', 'inner', 'decorated'}
+    assert len({entry['span_id'] for entry in starts.values()}) == 3
+    assert all(starts[name]['span_id'] == ends[name]['span_id'] for name in starts)
+    assert starts['inner']['parent_span_id'] == starts['outer']['span_id']
+    assert ends['outer']['rows'] == 3
+    assert ends['outer']['stage'] == 'reader'
+    attachment = next(entry for entry in entries if entry['event'] == 'sql.execute')
+    assert attachment['role'] == 'attachment'
+    assert attachment['span_id'] == starts['outer']['span_id']
+    assert attachment['priority'] == trace_module.PRIORITY_TERMINAL
+
+
+def test_nested_dispatches_keep_unique_identity_and_monotonic_intervals(
+        main_window, qapp, tmp_path):
+    trace = trace_module.install(qapp, main_window, tmp_path)
+    try:
+        outer_started = time.perf_counter()
+        outer_id = trace.dispatch_started(main_window, 1000, outer_started)
+        inner_started = time.perf_counter()
+        inner_id = trace.dispatch_started(main_window, 1001, inner_started)
+        trace.dispatch_finished(main_window, 1001, 40, started=inner_started)
+        trace.dispatch_finished(main_window, 1000, 50, started=outer_started)
+    finally:
+        entries = rows(trace)
+    dispatches = [entry for entry in entries
+                  if entry['event'] in ('slow_dispatch', 'nested_dispatch')]
+    assert len(dispatches) == 2
+    by_id = {entry['dispatch_id']: entry for entry in dispatches}
+    assert set(by_id) == {outer_id, inner_id}
+    assert by_id[inner_id]['parent_dispatch_id'] == outer_id
+    assert by_id[inner_id]['root_dispatch_id'] == outer_id
+    assert by_id[outer_id]['depth'] == 0 and by_id[inner_id]['depth'] == 1
+    assert all(entry['dispatch_end_monotonic'] >= entry['dispatch_start_monotonic']
+               for entry in dispatches)
+
+
+def test_stall_impact_policy_is_four_level_and_monotonic():
+    values = [trace_module.PerformanceTrace._impact_level(value)
+              for value in (100, 199.9, 200, 999.9, 1000, 4999.9, 5000)]
+    assert values == ['minor', 'minor', 'moderate', 'moderate',
+                      'severe', 'severe', 'extreme']

@@ -259,9 +259,60 @@ def test_two_creates_in_a_row_get_numbered_defaults(main_window):
     window = main_window
     panel = window.view.category_panel
     for expected in ('未命名文件夹', '未命名文件夹 2'):
+        # Choosing the section's creation menu explicitly creates at root;
+        # leaving the newly created folder selected now creates inside it.
+        panel.resource_tree.setCurrentIndex(panel.resource_tree.model().index(1, 0))
         window._create_resource_item('mindmap', 'folder', None)
         editor = current_editor(panel.resource_tree)
         assert editor.text() == expected, '连续新建时默认名要自动编号'
         confirm_the_editor(panel.resource_tree)
     titles = [n['title'] for n in panel.resource_service.listChildren('mindmap')]
     assert titles == ['未命名文件夹', '未命名文件夹 2']
+
+
+def test_folder_created_beside_selected_page_keeps_position_and_focus(main_window):
+    from prism.widgets.resource_tree_model import NODE_ID_ROLE
+    window = main_window
+    panel = window.view.category_panel
+    tree = panel.resource_tree
+    service = panel.resource_service
+    pages = [service.createPage('document', f'Page {i}', f'page-{i}') for i in range(100)]
+    tree.setCurrentIndex(tree.model().index_for_id(pages[49]['id']))
+    window._create_resource_item('document', 'folder', None)
+    draft_row = tree.model().draft_index().row()
+    confirm_the_editor(tree, '整理')
+    node = service.listChildren('document')[50]
+    assert node['title'] == '整理'
+    assert tree.currentIndex().data(NODE_ID_ROLE) == node['id']
+    assert tree.currentIndex().row() == draft_row
+    assert tree.viewport().rect().intersects(tree.visualRect(tree.currentIndex()))
+    restored = ResourceTreeService(service.project_id, service.nodes, model_section_enabled=True)
+    assert [n['id'] for n in restored.listChildren('document')] == [
+        n['id'] for n in service.listChildren('document')]
+
+
+def test_selected_folder_creates_inside_and_keeps_committed_child_selected(main_window):
+    window = main_window
+    panel = window.view.category_panel
+    folder = panel.resource_service.createFolder('mindmap', 'Parent')
+    tree = panel.resource_tree
+    tree.setCurrentIndex(tree.model().index_for_id(folder['id']))
+    window._create_resource_item('mindmap', 'folder', None)
+    confirm_the_editor(tree, 'Child')
+    child = panel.resource_service.listChildren('mindmap', folder['id'])[0]
+    assert tree.currentIndex() == tree.model().index_for_id(child['id'])
+    assert tree.currentIndex().parent() == tree.model().index_for_id(folder['id'])
+
+
+def test_repeated_adjacent_folder_insertions_keep_integral_persisted_order(qapp):
+    for section in ('canvas', 'mindmap', 'document', 'material', 'model'):
+        service = ResourceTreeService('project', model_section_enabled=True)
+        a = service.createFolder(section, 'A')
+        b = service.createFolder(section, 'B')
+        model = ResourceTreeModel(service)
+        for number in range(12):
+            draft = model.begin_draft(section, 'folder', None, 'New', after_id=a['id'])
+            assert model.setData(draft, f'New {number}', Qt.ItemDataRole.EditRole)
+        rows = service.listChildren(section)
+        assert [n['title'] for n in rows] == ['A'] + [f'New {n}' for n in reversed(range(12))] + ['B']
+        assert all(isinstance(n['order'], int) and model._nodes[n['id']]['order'] == n['order'] for n in rows)

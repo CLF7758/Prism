@@ -32,7 +32,10 @@ def test_toolbar_filters_legacy_canvas_with_new_pages(main_window):
     new_canvas = window.current_page_id
     assert not any(item.isVisible() for item in images)
     window._reload_workspace_pages()
-    assert window.current_page_id == 'default-canvas'
+    # The landing canvas is the first legal canvas in project order.  The
+    # images live on the legacy canvas, but that one is only an implicit
+    # landing spot -- it never outranks a canvas the project really stores.
+    assert window.current_page_id == new_canvas
     # Reload lands in the public asset browser; explicitly edit the real canvas.
     window.open_workspace_page('canvas', 'default-canvas')
     window.canvas_toolbar.gray.click()

@@ -111,8 +111,16 @@ class FramelessShellMixin:
             return
         # 补上最小化/最大化框和系统菜单样式，最大化/贴靠才正常。
         style = _user32.GetWindowLongPtrW(hwnd, GWL_STYLE)
-        style |= WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_THICKFRAME | WS_SYSMENU
-        _user32.SetWindowLongPtrW(hwnd, GWL_STYLE, style)
+        wanted = style | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_THICKFRAME | WS_SYSMENU
+        if wanted == style:
+            # 这四个位 Windows 默认的 WS_OVERLAPPEDWINDOW 本来就带齐，
+            # 改 style 不会有任何变化（实测 before/after 完全相同）。
+            # 但随后的 SWP_FRAMECHANGED 会让整棵控件树重算一次框架 ——
+            # 这在真实窗口上是启动里最大的一块开销，而 WM_NCCALCSIZE 在
+            # 句柄创建的那一刻就已经被 nativeEvent 接管，标题栏那时就砍掉了。
+            # 没有要重算的东西，就不要付这份代价。
+            return
+        _user32.SetWindowLongPtrW(hwnd, GWL_STYLE, wanted)
         # 强制重算非客户区，让 WM_NCCALCSIZE 立刻生效。
         _user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
@@ -149,6 +157,25 @@ class FramelessShellMixin:
         except Exception:  # pragma: no cover - 拿不到消息就交给父类
             return False, 0
 
+        if msg.message in (0x0002, 0x0018, 0x007D, 0x0082):
+            # WM_DESTROY / WM_SHOWWINDOW / WM_STYLECHANGED / WM_NCDESTROY.
+            # Native transitions may not originate in a Python hide() call.
+            # Observe the supplied HWND, never request/create a new handle.
+            try:
+                import os
+                import traceback
+                from prism.performance_trace import record
+                view = getattr(self, 'view', None)
+                fields = dict(message=int(msg.message), hwnd=int(msg.hWnd or 0),
+                              parameter=int(msg.wParam),
+                              opening=bool(getattr(view, '_project_opening', False)),
+                              open_epoch=getattr(view, '_trace_open_epoch', 0),
+                              callers=[f'{os.path.basename(f.filename)}:{f.lineno}:{f.name}'
+                                       for f in traceback.extract_stack(limit=12)[:-1]])
+                record('main_window_native_lifecycle', priority='state', **fields)
+                logger.info('Main window native lifecycle: %s', fields)
+            except Exception:
+                logger.debug('Native window lifecycle diagnostic unavailable', exc_info=True)
         if msg.message == WM_NCCALCSIZE and msg.wParam:
             return self._handle_nccalcsize(eventType, message, msg)
         return False, 0

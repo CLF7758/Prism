@@ -255,6 +255,9 @@ class DuplicateFinderDialog(QtWidgets.QDialog):
         Only the picked photo (or photos) is selected, so the canvas shows
         exactly where it sits instead of the bounding box of a whole group.
         """
+        from prism.navigation import defer_navigation
+        if defer_navigation(self.view.window(), self._locate_selected_images, owner=self):
+            return
         picked = self._selected_items()
         if not self.image_list.selectedItems():
             self._report(_('Select a photo in the list first.'))

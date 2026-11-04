@@ -8,11 +8,37 @@ import os
 from pathlib import Path
 import shutil
 import sys
+from importlib import metadata, util
 
 
 def copy_tree(source, target, exclude=()):
     shutil.copytree(source, target, dirs_exist_ok=True,
         ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.git', 'direct_url.json', *exclude))
+
+
+def copy_storage_dependencies(target):
+    """External visual workers cannot import pure modules from the EXE's PYZ."""
+    for module, distribution in (('disk_objectstore','disk-objectstore'),
+            ('sqlalchemy','SQLAlchemy'), ('click','click'), ('greenlet','greenlet'),
+            ('typing_extensions','typing_extensions')):
+        spec = util.find_spec(module)
+        if spec is None or not spec.origin:
+            if module == 'greenlet':
+                continue  # SQLAlchemy's optional async adapter is not used here.
+            raise RuntimeError('Missing visual storage dependency: '+module)
+        source = Path(spec.origin)
+        if spec.submodule_search_locations:
+            copy_tree(source.parent, target/module)
+        else:
+            shutil.copy2(source, target/source.name)
+        dist = metadata.distribution(distribution)
+        for entry in dist.files or ():
+            if any(part.endswith('.dist-info') for part in entry.parts) and entry.name != 'direct_url.json':
+                original = Path(dist.locate_file(entry))
+                if original.is_file():
+                    destination = target/entry
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(original, destination)
 
 
 def main():
@@ -57,6 +83,7 @@ def main():
             data['source']='upstream-source/src'
             (dst/'upstream.json').write_text(json.dumps(data,indent=2),encoding='utf-8')
         elif name == 'visual-search':
+            copy_storage_dependencies(dst/'runtime/Lib/site-packages')
             weight=src/'index/models/ViT-B-32.pt'
             with weight.open('rb') as f:
                 assert hashlib.file_digest(f,'sha256').hexdigest() == '40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af'

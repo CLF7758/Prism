@@ -84,6 +84,10 @@ _SCHEMA = (
 
 def cache_directory():
     """Directory holding the preview database."""
+    app = QtCore.QCoreApplication.instance()
+    directory = app.property('_prism_settings_directory') if app is not None else None
+    if directory:
+        return os.path.join(directory, 'previews')
     settings = PrismSettings()
     return os.path.join(os.path.dirname(settings.fileName()), 'previews')
 
@@ -183,6 +187,8 @@ class ThumbnailCache:
         self.max_bytes = max_bytes
         self.max_side = max_side
         self._local = threading.local()
+        self._initializing = threading.Lock()
+        self._initialized = False
         self._stores_since_prune = 0
         self._prune_after = 250
         self._failures = 0
@@ -196,13 +202,27 @@ class ThumbnailCache:
 
     def _connect(self):
         os.makedirs(self.directory, exist_ok=True)
-        self._discard_old_files()
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.execute('PRAGMA journal_mode=WAL')
-        connection.execute('PRAGMA synchronous=NORMAL')
-        connection.execute(_SCHEMA)
-        connection.commit()
-        return connection
+        # A cache miss may fall back to the source. Waiting thirty seconds on
+        # a preview writer instead stalls both decode workers during zoom.
+        connection = sqlite3.connect(self.path, timeout=.05)
+        try:
+            if not self._initialized:
+                if not self._initializing.acquire(blocking=False):
+                    raise sqlite3.OperationalError('preview database is locked during initialization')
+                try:
+                    if not self._initialized:
+                        self._discard_old_files()
+                        connection.execute('PRAGMA journal_mode=WAL')
+                        connection.execute(_SCHEMA)
+                        connection.commit()
+                        self._initialized = True
+                finally:
+                    self._initializing.release()
+            connection.execute('PRAGMA synchronous=NORMAL')
+            return connection
+        except Exception:
+            connection.close()
+            raise
 
     def _discard_old_files(self):
         """Remove leftovers from earlier preview formats, if any."""
@@ -245,6 +265,7 @@ class ThumbnailCache:
         """
         logger.warning('Preview cache unusable; rebuilding it', exc_info=True)
         self.close()
+        self._initialized = False
         for suffix in ('', '-wal', '-shm'):
             try:
                 os.remove(self.path + suffix)
@@ -254,6 +275,17 @@ class ThumbnailCache:
         if self._failures >= MAX_FAILURES:
             logger.warning('Giving up on the preview cache for this session')
             self._broken = True
+
+    def _handle_error(self, error):
+        """Contention is a temporary miss, never evidence of corruption."""
+        code = getattr(error, 'sqlite_errorcode', 0) & 255
+        if code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED) or 'locked' in str(error).lower():
+            connection = getattr(self._local, 'connection', None)
+            if connection is not None and connection.in_transaction:
+                connection.rollback()
+            logger.debug('Preview cache busy; using source for this request')
+            return
+        self._forget()
 
     # ── reading and writing ──────────────────────────────────────────
 
@@ -265,8 +297,8 @@ class ThumbnailCache:
             row = self.connection().execute(
                 'SELECT width, height, data FROM previews WHERE key=?',
                 (key,)).fetchone()
-        except sqlite3.Error:
-            self._forget()
+        except sqlite3.Error as error:
+            self._handle_error(error)
             return None
         if row is None:
             return None
@@ -294,8 +326,8 @@ class ThumbnailCache:
                 '(key, width, height, data, created_at) VALUES (?, ?, ?, ?, ?)',
                 (key, int(width), int(height), payload, time.time()))
             connection.commit()
-        except sqlite3.Error:
-            self._forget()
+        except sqlite3.Error as error:
+            self._handle_error(error)
             return False
         self._stores_since_prune += 1
         if self._stores_since_prune >= self._prune_after:
@@ -311,8 +343,8 @@ class ThumbnailCache:
         try:
             row = self.connection().execute(
                 'SELECT COUNT(*) FROM previews').fetchone()
-        except sqlite3.Error:
-            self._forget()
+        except sqlite3.Error as error:
+            self._handle_error(error)
             return 0
         return row[0] if row else 0
 
@@ -322,8 +354,8 @@ class ThumbnailCache:
         try:
             row = self.connection().execute(
                 'SELECT COALESCE(SUM(LENGTH(data)), 0) FROM previews').fetchone()
-        except sqlite3.Error:
-            self._forget()
+        except sqlite3.Error as error:
+            self._handle_error(error)
             return 0
         return row[0] if row else 0
 
@@ -347,8 +379,8 @@ class ThumbnailCache:
                 total -= size
                 removed += 1
             connection.commit()
-        except sqlite3.Error:
-            self._forget()
+        except sqlite3.Error as error:
+            self._handle_error(error)
             return removed
         if removed:
             logger.debug('Pruned %d cached previews (%d bytes left)',
@@ -365,8 +397,8 @@ class ThumbnailCache:
             connection.execute('DELETE FROM previews')
             connection.commit()
             connection.execute('VACUUM')
-        except sqlite3.Error:
-            self._forget()
+        except sqlite3.Error as error:
+            self._handle_error(error)
             return 0
         return removed
 

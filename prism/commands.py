@@ -78,6 +78,24 @@ def _trash_timestamp():
 _SELECTABLE = QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
 
 
+def _note_trash(event, items, stamp, undo=False):
+    """Record a soft delete or a restore: count, kinds, and the trash stamp.
+
+    The stamp is what makes "I deleted the wrong thing five minutes ago"
+    answerable later; item ids are bounded so a 5000-item delete stays one line.
+    """
+    try:
+        from prism.model_library.events import record_model_event
+        kinds = sorted({str(getattr(item, 'kind', '') or '') for item in items})
+        ids = [str(getattr(item, 'id', '') or '') for item in items][:8]
+        record_model_event(event, count=len(items), kinds=kinds[:8],
+                           item_ids=ids, ids_truncated=len(items) > 8,
+                           trash_stamp=str(stamp or ''), undo=bool(undo),
+                           state='restored' if undo else 'trashed')
+    except Exception:                                  # noqa: BLE001 - logging only
+        pass
+
+
 def _mark_item_trashed(item, stamp):
     """把一张素材标成"在回收站里"：盖时间戳、隐藏、取消可选中。
 
@@ -121,12 +139,14 @@ class TrashItems(QtGui.QUndoCommand):
         self.scene.deselect_all_items()
         for item in self.items:
             _mark_item_trashed(item, self._stamp)
+        _note_trash('model_items_trashed', self.items, self._stamp)
         self._notify()
 
     def undo(self):
         self.scene.deselect_all_items()
         for item in self.items:
             _mark_item_restored(item)
+        _note_trash('model_items_restored', self.items, self._stamp, undo=True)
         self._notify()
 
     def _notify(self):
@@ -284,7 +304,8 @@ class FlipItems(QtGui.QUndoCommand):
 
     def __init__(self, items, anchor, vertical):
         super().__init__(_('Flip items'))
-        self.items = [logical_item(item) for item in items]
+        self.items = [logical_item(item) for item in items
+                      if getattr(logical_item(item), 'TYPE', None) != 'text']
         self.anchor = anchor
         self.vertical = vertical
 
@@ -434,6 +455,30 @@ class CropItem(QtGui.QUndoCommand):
 
     def undo(self):
         self.item.crop = self.old_crop
+
+
+class ResizeTextFrame(QtGui.QUndoCommand):
+    """Keep text frame dimensions and anchored position in one undo step."""
+
+    def __init__(self, item, old_state, new_state):
+        super().__init__(_('Scale items'))
+        self.item = item
+        self.old_state = old_state
+        self.new_state = new_state
+
+    def _apply(self, state):
+        width, height, pos = state
+        self.item.prepareGeometryChange()
+        self.item._frame_height = height
+        self.item.setTextWidth(width)
+        self.item.setPos(pos)
+        self.item.update()
+
+    def redo(self):
+        self._apply(self.new_state)
+
+    def undo(self):
+        self._apply(self.old_state)
 
 
 class ChangeText(QtGui.QUndoCommand):

@@ -60,13 +60,27 @@ class _BlankAreaDelegate(QtWidgets.QStyledItemDelegate):
         """「+」在这行里的矩形；不是分区行就返回 None。"""
         if not index.isValid() or index.data(NODE_TYPE_ROLE) != 'section':
             return None
+        if index.data(SECTION_ROLE) == 'model' and not self._model_section_enabled():
+            return None  # No persistence-backed creation in the UI scaffold.
         side = self.ADD_BUTTON
         return QtCore.QRect(rect.right() - side - self.ADD_MARGIN,
                             rect.top() + (rect.height() - side) // 2,
                             side, side)
 
+    def _model_section_enabled(self):
+        """「模型库」分区能不能真的建文件夹。
+
+        这个门在树模型上（`ResourceTreeModel.model_section_enabled`），
+        delegate 自己不是视图、没有 `model()`。它挂在视图上
+        （``_BlankAreaDelegate(view)``），所以统一问父对象；父对象不是
+        `ResourceTreeView` 时按「未开放」处理，绝不默认放开写入。
+        """
+        view = self.parent()
+        checker = getattr(view, '_model_section_enabled', None)
+        return bool(checker()) if callable(checker) else False
+
     def paint(self, painter, option, index):
-        count = index.data(ASSET_COUNT_ROLE)
+        count = None if (index.data(SECTION_ROLE) == 'model' and index.data(NODE_TYPE_ROLE) == 'section') else index.data(ASSET_COUNT_ROLE)
         content = QtWidgets.QStyleOptionViewItem(option)
         if count is not None:
             content.rect = option.rect.adjusted(0, 0, -32, 0)
@@ -77,7 +91,8 @@ class _BlankAreaDelegate(QtWidgets.QStyledItemDelegate):
             font = painter.font()
             font.setPixelSize(11)
             painter.setFont(font)
-            painter.drawText(option.rect.adjusted(0, 0, -6, 0),
+            painter.drawText(option.rect.adjusted(0, 0,
+                             -32 if index.data(NODE_TYPE_ROLE) == 'section' else -6, 0),
                              Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(count))
             painter.restore()
         kind = index.data(NODE_TYPE_ROLE)
@@ -152,6 +167,53 @@ class _BlankAreaDelegate(QtWidgets.QStyledItemDelegate):
                 0, lambda idx=QtCore.QModelIndex(index): view.edit(idx))
 
 
+class _StickySectionRow(QtWidgets.QWidget):
+    """Paint the scrolled-off ancestor in place; the original tree owns all data."""
+    def __init__(self, tree):
+        super().__init__(tree.viewport())
+        self.tree = tree
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        self.index = QtCore.QPersistentModelIndex()
+        self.hide()
+
+    def paintEvent(self, event):
+        index = QtCore.QModelIndex(self.index)
+        if not index.isValid():
+            return
+        painter = QtGui.QPainter(self)
+        background = QtGui.QColor(ui_tokens.active_tokens()['sidebar-bg'])
+        background.setAlpha(255)
+        painter.fillRect(self.rect(), background)
+        option = QtWidgets.QStyleOptionViewItem()
+        self.tree.initViewItemOption(option)
+        self.tree.itemDelegate().initStyleOption(option, index)
+        option.rect = self.rect().adjusted(self.tree.indentation(), 0, 0, 0)
+        if self.tree.selectionModel().isSelected(index):
+            option.state |= QtWidgets.QStyle.StateFlag.State_Selected
+        self.tree.itemDelegate().paint(painter, option, index)
+        arrow = 'chevron-down' if self.tree.isExpanded(index) else 'chevron-right'
+        icon(arrow).paint(painter, QtCore.QRect(0, 0, self.tree.indentation(), self.height()))
+
+    def mousePressEvent(self, event):
+        index = QtCore.QModelIndex(self.index)
+        if event.button() != Qt.MouseButton.LeftButton or not index.isValid():
+            return super().mousePressEvent(event)
+        if event.position().x() < self.tree.indentation():
+            self.tree.setExpanded(index, not self.tree.isExpanded(index))
+        else:
+            plus = self.tree.itemDelegate().add_button_rect(self.rect(), index)
+            if plus is not None and plus.contains(event.position().toPoint()):
+                self.tree.menu_for_index(index).exec(event.globalPosition().toPoint())
+            else:
+                self.tree.setCurrentIndex(index)
+                self.tree.clicked.emit(index)
+        self.tree._sync_sticky_section()
+        event.accept()
+
+    def contextMenuEvent(self, event):
+        self.tree.menu_for_index(QtCore.QModelIndex(self.index)).exec(event.globalPos())
+
+
 class ResourceTreeView(QtWidgets.QTreeView):
     tag_requested = QtCore.pyqtSignal(str)
     rename_tag_requested = QtCore.pyqtSignal(str)
@@ -160,7 +222,13 @@ class ResourceTreeView(QtWidgets.QTreeView):
     #: 就地新建确认成功；参数是服务返回的节点字典。
     create_committed = QtCore.pyqtSignal(object)
     open_page_requested = QtCore.pyqtSignal(str, str)
+    #: 一级分类行被点了；参数是分区 key（画布 / 脑图 / 文档 / 材质库 / 模型库 / 标签）。
+    #: 分类行本身没有内容可展示，所以由窗口去解析该分区的**第一个具体内容**。
+    open_section_requested = QtCore.pyqtSignal(str)
     open_material_requested = QtCore.pyqtSignal(object)
+    open_model_requested = QtCore.pyqtSignal()
+    open_model_folder_requested = QtCore.pyqtSignal(object)
+    open_folder_requested = QtCore.pyqtSignal(object)
     delete_requested = QtCore.pyqtSignal(str)
     #: 批量操作（§7.5）：参数是被选中的节点 id 列表。
     move_requested = QtCore.pyqtSignal(list)
@@ -216,15 +284,101 @@ class ResourceTreeView(QtWidgets.QTreeView):
         self.collapsed.connect(self._schedule_state_save)
         self.verticalScrollBar().valueChanged.connect(self._schedule_state_save)
         self._trimming_selection = False
+        self._sticky_section = _StickySectionRow(self)
+        self.verticalScrollBar().valueChanged.connect(self._sync_sticky_section)
+        self.expanded.connect(self._sync_sticky_section)
+        self.collapsed.connect(self._sync_sticky_section)
+
+    def _sync_sticky_section(self, *_):
+        sticky = getattr(self, '_sticky_section', None)
+        if sticky is None or self.model() is None:
+            return
+        # Use the underlying view, not the overlay hit target, to find the
+        # section whose children are currently scrolling through the top.
+        index = super().indexAt(QtCore.QPoint(self.indentation() + 2, 0))
+        while index.parent().isValid():
+            index = index.parent()
+        rect = self.visualRect(index)
+        if (not index.isValid() or index.data(NODE_TYPE_ROLE) != 'section'
+                or not self.isExpanded(index) or rect.top() >= 0):
+            sticky.hide()
+            return
+        height = rect.height()
+        sticky.index = QtCore.QPersistentModelIndex(index)
+        sticky.setGeometry(0, 0, self.viewport().width(), height)
+        sticky.show()
+        sticky.raise_()
+        sticky.update()
+
+    def scrollContentsBy(self, dx, dy):
+        # QWidget.scroll also moves viewport children and cached pixels. Hide
+        # the overlay before that scroll, then reinstall it at y=0 and repaint
+        # the viewport so no old header text survives in the backing store.
+        sticky = getattr(self, '_sticky_section', None)
+        if sticky is not None:
+            sticky.hide()
+        super().scrollContentsBy(dx, dy)
+        self._sync_sticky_section()
+        self.viewport().update()
+
+    def drawBranches(self, painter, rect, index):
+        if index.data(NODE_TYPE_ROLE) == 'section':
+            # Native Qt suppresses arrows for roots with no visible children,
+            # even when hasChildren() is true. Paint every category explicitly.
+            arrow = 'chevron-down' if self.isExpanded(index) else 'chevron-right'
+            area = QtCore.QRect(rect.right() - self.indentation() + 1,
+                                rect.top(), self.indentation(), rect.height())
+            icon(arrow).paint(painter, area)
+            return
+        super().drawBranches(painter, rect, index)
+        if index.data(NODE_TYPE_ROLE) == 'blank':
+            return
+        # Only folder descendants get guides; section headers keep their
+        # existing arrows and compact spacing. Walk ancestors so a nested
+        # subtree does not interrupt its parent's continuing vertical line.
+        painter.save()
+        painter.setPen(QtGui.QPen(QtGui.QColor('#51545A'), 1))
+        current = index
+        x = rect.right() - self.indentation() // 2
+        first = True
+        while current.parent().isValid():
+            parent = current.parent()
+            if parent.data(NODE_TYPE_ROLE) != 'folder':
+                break
+            continues = current.row() + 1 < self.model().rowCount(parent)
+            middle = rect.center().y()
+            if first:
+                has_arrow = self.model().hasChildren(current)
+                gap = 6 if has_arrow else 0
+                painter.drawLine(x, rect.top(), x, middle - gap)
+                if continues:
+                    painter.drawLine(x, middle + gap, x, rect.bottom())
+                painter.drawLine(x + gap, middle, rect.right(), middle)
+            elif continues:
+                painter.drawLine(x, rect.top(), x, rect.bottom())
+            current = parent
+            x -= self.indentation()
+            first = False
+        painter.restore()
+
+    def indexAt(self, point):
+        sticky = getattr(self, '_sticky_section', None)
+        if sticky is not None and not sticky.isHidden() and sticky.geometry().contains(point):
+            return QtCore.QModelIndex(sticky.index)
+        return super().indexAt(point)
 
     def setModel(self, model):
+        if hasattr(self, '_sticky_section'):
+            self._sticky_section.hide()
         super().setModel(model)
         if model is None:
             return
+        view = getattr(self.parent(), 'view', None)
+        self._open_identity = (model.service.project_id, getattr(view, '_trace_open_epoch', None))
         model.modelReset.connect(self.sync_sections)
         model.rowsInserted.connect(self.sync_sections)
         self.sync_sections()
-        model.draft_committed.connect(self.create_committed)
+        model.draft_committed.connect(self._finish_create)
         model.draft_refused.connect(self._show_refusal)
         # 换工程了：把上次记下的焦点/展开/滚动位置放回去（§7.6）
         self.restore_state()
@@ -234,7 +388,7 @@ class ResourceTreeView(QtWidgets.QTreeView):
             selection.selectionChanged.connect(self._enforce_single_section)
 
     def sync_sections(self, *_args):
-        """Hide legacy drop-target rows; empty sections have no disclosure arrow."""
+        """Hide legacy drop-target rows without removing root disclosure arrows."""
         model = self.model()
         if model is None:
             return
@@ -246,14 +400,25 @@ class ResourceTreeView(QtWidgets.QTreeView):
             if not model.hasChildren(section):
                 self.collapse(section)
 
+    def _model_section_enabled(self):
+        """模型分区现在能不能真的建文件夹。
+
+        这道门由树模型持有（`ResourceTreeModel.model_section_enabled` →
+        `WorkspaceService.model_section_enabled`）：模型域的保存还没验收
+        之前它是关的，视图和 delegate 都按这条门走，谁都不单独放开。
+        """
+        model = self.model()
+        checker = getattr(model, 'model_section_enabled', None)
+        return bool(checker()) if callable(checker) else False
+
     def begin_create(self, section, node_type, parent_id=None,
-                     base_title=''):
+                     base_title='', *, after_id=None):
         """就地新建：临时行 → 展开父级 → 滚到它 → 全选改名（§7.4）。
 
         名字确认之前什么都没写进工程；按 Esc 这一行会直接消失。
         """
         model = self.model()
-        index = model.begin_draft(section, node_type, parent_id, base_title)
+        index = model.begin_draft(section, node_type, parent_id, base_title, after_id=after_id)
         parent_index = model.index_for_id(parent_id) if parent_id else \
             model.index(UI_SECTIONS.index(section), 0)
         if parent_index.isValid():
@@ -262,6 +427,12 @@ class ResourceTreeView(QtWidgets.QTreeView):
         self.scrollTo(index)
         self.edit(index)
         return index
+
+    def _finish_create(self, node):
+        index = self.model().index_for_id(node['id'])
+        self.setCurrentIndex(index)
+        self.scrollTo(index)
+        self.create_committed.emit(node)
 
     def _show_refusal(self, message):
         """命名被拒时给一句人话，不弹窗口（输入还留着，接着改就行）。"""
@@ -334,7 +505,40 @@ class ResourceTreeView(QtWidgets.QTreeView):
         reason = model.can_accept(ids, mode, node_id, section)
         return (None, reason) if reason else ((mode, node_id), '')
 
+    def _library_drop(self, event, *, commit=False):
+        from .library_transfer import ASSET_MIME, read_library_drag
+        if not event.mimeData().hasFormat(ASSET_MIME):
+            return False
+        event.ignore()
+        self._drop_intent = None
+        self.viewport().update()
+        model = self.model()
+        value = read_library_drag(event.mimeData(), model.service)
+        index = self.indexAt(event.position().toPoint())
+        if (not value or not index.isValid()
+                or index.data(SECTION_ROLE) != value['kind']
+                or index.data(NODE_TYPE_ROLE) not in ('section', 'folder')):
+            self._set_hover(None)
+            return True
+        folder_id = index.data(NODE_ID_ROLE) if index.data(NODE_TYPE_ROLE) == 'folder' else None
+        handler = getattr(self, 'library_drop_handler', None)
+        if handler is None:
+            self._set_hover(None)
+            return True
+        if commit and not handler(value['kind'], value['ids'], folder_id):
+            self._set_hover(None)
+            return True
+        event.setDropAction(Qt.DropAction.MoveAction)
+        event.accept()
+        self._drop_intent = ('into' if folder_id else 'append', folder_id)
+        self._drop_index = QtCore.QPersistentModelIndex(index)
+        self.viewport().update()
+        self._set_hover(index if folder_id else None)
+        return True
+
     def dragMoveEvent(self, event):
+        if self._library_drop(event):
+            return
         pos = event.position().toPoint()
         index = self.indexAt(pos)
         ids = self.model().dragged_ids(event.mimeData())
@@ -356,6 +560,11 @@ class ResourceTreeView(QtWidgets.QTreeView):
         event.accept()
 
     def dragEnterEvent(self, event):
+        from .library_transfer import read_library_drag
+        if read_library_drag(event.mimeData(), self.model().service):
+            event.setDropAction(Qt.DropAction.MoveAction)
+            event.accept()
+            return
         ids = self.model().dragged_ids(event.mimeData())
         if ids and all(i in self.model()._nodes and
                        self.model()._nodes[i]['nodeType'] in ('folder', 'page') for i in ids):
@@ -377,6 +586,7 @@ class ResourceTreeView(QtWidgets.QTreeView):
 
     def paintEvent(self, event):
         super().paintEvent(event)
+        self._sync_sticky_section()
         index = getattr(self, '_drop_index', None)
         if self._drop_intent is None or index is None or not index.isValid():
             return
@@ -396,6 +606,11 @@ class ResourceTreeView(QtWidgets.QTreeView):
         painter.end()
 
     def dropEvent(self, event):
+        if self._library_drop(event, commit=True):
+            self._set_hover(None)
+            self._drop_intent = None
+            self.viewport().update()
+            return
         # Recompute at release: selection and cached hover can be stale.
         pos = event.position().toPoint()
         index = self.indexAt(pos)
@@ -444,8 +659,24 @@ class ResourceTreeView(QtWidgets.QTreeView):
         self._hover_index = None
 
     def _on_clicked(self, index):
+        if QtWidgets.QApplication.keyboardModifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier):
+            return  # modified clicks organize selection, not navigation
+
+        if index.data(NODE_TYPE_ROLE) == 'section':
+            # A category row is not content itself: the window resolves the
+            # category's first concrete content (see _open_resource_section).
+            self.open_section_requested.emit(index.data(SECTION_ROLE))
+            return
+        if (index.data(NODE_TYPE_ROLE) == 'folder'
+                and index.data(SECTION_ROLE) in ('canvas', 'document', 'mindmap')):
+            self.open_folder_requested.emit(index)
+            return
+        if index.data(SECTION_ROLE) == 'model':
+            self.open_model_folder_requested.emit(index.data(NODE_ID_ROLE)
+                if index.data(NODE_TYPE_ROLE) == 'folder' else None)
+            return
         if (index.data(SECTION_ROLE) == 'material'
-                and index.data(NODE_TYPE_ROLE) in ('section', 'folder')):
+                and index.data(NODE_TYPE_ROLE) == 'folder'):
             self.open_material_requested.emit(index.data(NODE_ID_ROLE))
             return
         if index.data(NODE_TYPE_ROLE) == 'tag':
@@ -474,10 +705,17 @@ class ResourceTreeView(QtWidgets.QTreeView):
 
     def menu_for_index(self, index):
         """Build the menu from hit-tested section, never last selection."""
+        if index.isValid():
+            selection = self.selectionModel()
+            if not selection.isSelected(index):
+                selection.select(index, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect |
+                                 QtCore.QItemSelectionModel.SelectionFlag.Rows)
+            selection.setCurrentIndex(index, QtCore.QItemSelectionModel.SelectionFlag.NoUpdate)
         menu = QtWidgets.QMenu(self)
         node = self.model()._nodes.get(index.data(NODE_ID_ROLE), {}) if index.isValid() else {}
         if index.isValid() and (index.data(NODE_ID_ROLE) in self.model()._implicit_records or node.get('pageId') == 'default-canvas'):
             menu.addAction('打开画布', lambda: self._open_current(index))
+            self._add_export_action(menu, 'canvas', index.data(NODE_ID_ROLE))
             return menu
         # 选了好几个的时候，先把"批量"这件事说清楚（§7.5）。
         selected = self.selected_ids()
@@ -492,6 +730,22 @@ class ResourceTreeView(QtWidgets.QTreeView):
             menu.addSeparator()
         kind = index.data(NODE_TYPE_ROLE) if index.isValid() else None
         section = index.data(SECTION_ROLE) if index.isValid() else None
+        if section == 'model':
+            menu.addAction('打开模型库',
+                (lambda: self.open_model_folder_requested.emit(index.data(NODE_ID_ROLE)))
+                if kind == 'folder' else self.open_model_requested.emit)
+            if self._model_section_enabled():
+                parent_id = index.data(NODE_ID_ROLE) if kind == 'folder' else None
+                menu.addAction('新建文件夹', lambda: self.create_requested.emit(
+                    'model', 'folder', parent_id))
+                if kind == 'folder':
+                    menu.addSeparator()
+                    menu.addAction('重命名 (F2)', lambda: self.edit(index))
+                    menu.addAction('移动到…', lambda: self.move_requested.emit([parent_id]))
+            else:
+                pending = menu.addAction('导入与管理功能尚未接入')
+                pending.setEnabled(False)
+            return menu
         if kind == 'tag' or section == 'tag':
             if kind == 'tag':
                 name = index.data(TAG_NAME_ROLE)
@@ -535,6 +789,9 @@ class ResourceTreeView(QtWidgets.QTreeView):
                 self._add_export_action(menu, section, None)
         elif kind == 'page':
             node_id = index.data(NODE_ID_ROLE)
+            menu.addAction('新建同级文件夹', lambda: self.create_requested.emit(
+                section, 'folder', index.parent().data(NODE_ID_ROLE)
+                if index.parent().data(NODE_TYPE_ROLE) == 'folder' else None))
             menu.addAction('重命名 (F2)', lambda: self.edit(index))
             menu.addAction('移动到…', lambda: self.move_requested.emit(
                 [node_id]))
@@ -589,7 +846,7 @@ class ResourceTreeView(QtWidgets.QTreeView):
             event.accept()
             return
         if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                and (is_node or index.data(SECTION_ROLE) == 'material')):
+                and (is_node or index.data(SECTION_ROLE) in ('material', 'model'))):
             # §7.6：Enter 是「打开」，不是「重命名」（重命名归 F2）。
             self._open_current(index)
             event.accept()
@@ -613,6 +870,14 @@ class ResourceTreeView(QtWidgets.QTreeView):
 
     def _open_current(self, index):
         """Enter：页面就打开它；文件夹不自动展开（免得碰出重型编辑器）。"""
+        if (index.data(NODE_TYPE_ROLE) == 'folder'
+                and index.data(SECTION_ROLE) in ('canvas', 'document', 'mindmap')):
+            self.open_folder_requested.emit(index)
+            return
+        if index.data(SECTION_ROLE) == 'model':
+            self.open_model_folder_requested.emit(index.data(NODE_ID_ROLE)
+                if index.data(NODE_TYPE_ROLE) == 'folder' else None)
+            return
         if (index.data(SECTION_ROLE) == 'material'
                 and index.data(NODE_TYPE_ROLE) in ('section', 'folder')):
             self.open_material_requested.emit(index.data(NODE_ID_ROLE))
@@ -728,6 +993,8 @@ class ResourceTreeView(QtWidgets.QTreeView):
     def _expanded_node_ids(self):
         """现在展开着的文件夹 id（含分区这一层的递归）。"""
         model = self.model()
+        if model is None:
+            return []            # The tree has no model yet.
         found = []
 
         def walk(parent):
@@ -747,33 +1014,123 @@ class ResourceTreeView(QtWidgets.QTreeView):
         walk(QtCore.QModelIndex())
         return found
 
+    def replace_model(self, model):
+        """换模型，并把展开着的分类带过去。
+
+        A new model carries no expansion state, so every category that was
+        open collapses.  The node ids are stable, so the open folders can
+        simply be expanded again; the section rows have no node id, so they
+        are matched by their section ('canvas', 'mindmap', ...).
+
+        Without this the tree blinks shut every time the resource service is
+        reinstalled -- and that happens while a project opens, which is the
+        flash the user reports: the category that showed the current canvas
+        collapses and the whole interface jumps.
+        """
+        view = getattr(self.parent(), 'view', None)
+        identity = (model.service.project_id, getattr(view, '_trace_open_epoch', None))
+        same_open = identity == getattr(self, '_open_identity', None)
+        expanded = (self._expanded_node_ids() if same_open else [], self._expanded_sections())
+        self._open_identity = identity
+        self.setModel(model)
+        self._watch_model_resets(model)
+        self._apply_expansion(expanded)
+
+    def _watch_model_resets(self, model):
+        """A model reset throws the expansion away as well: keep it.
+
+        The tree is reset whenever the service reports added or removed
+        rows -- and that happens on the first count refresh after a project
+        opens, when the tag rows appear.  The user then sees the category
+        that was open close itself in the middle of the open, which is the
+        flash they report.
+        """
+        if model is None or model is getattr(self, '_reset_watched_model', None):
+            return
+        self._reset_watched_model = model
+        model.modelAboutToBeReset.connect(self._remember_expansion)
+        model.modelReset.connect(self._restore_expansion)
+
+    def _remember_expansion(self, *_):
+        self._pending_expansion = (self._expanded_node_ids(),
+                                    self._expanded_sections())
+
+    def _restore_expansion(self, *_):
+        pending = getattr(self, '_pending_expansion', None)
+        self._pending_expansion = None
+        self._apply_expansion(pending or ([], []))
+
+    def _apply_expansion(self, expanded):
+        """展开状态是视图的事：恢复的时候必须静音。
+
+        Restoring an expansion is not a user action: the signals stay
+        quiet, so the tree does not write its state again and the
+        application does not recount because of a state it already has.
+        """
+        folders, sections = expanded
+        model = self.model()
+        if model is None or (not folders and not sections):
+            return
+        self.blockSignals(True)
+        try:
+            for node_id in folders:
+                try:
+                    index = model.index_for_id(node_id)
+                except Exception:
+                    continue
+                if index.isValid():
+                    self.expand(index)
+            for section in sections:
+                index = self._section_index(model, section)
+                if index.isValid():
+                    self.expand(index)
+        finally:
+            self.blockSignals(False)
+
+    def _expanded_sections(self):
+        """The open section rows -- the tree's top level."""
+        model = self.model()
+        if model is None:
+            return []
+        found = []
+        root = QtCore.QModelIndex()
+        for row in range(model.rowCount(root)):
+            index = model.index(row, 0, root)
+            if index.data(NODE_TYPE_ROLE) != 'section':
+                continue
+            if not self.isExpanded(index):
+                continue
+            section = index.data(SECTION_ROLE)
+            if section:
+                found.append(section)
+        return found
+
+    @staticmethod
+    def _section_index(model, section):
+        """The row of a section, by its section name."""
+        root = QtCore.QModelIndex()
+        for row in range(model.rowCount(root)):
+            index = model.index(row, 0, root)
+            if (index.data(NODE_TYPE_ROLE) == 'section'
+                    and index.data(SECTION_ROLE) == section):
+                return index
+        return QtCore.QModelIndex()
+
     def restore_state(self):
-        """把上次的焦点、展开、滚动位置放回去（无效 id 直接跳过）。"""
+        """New project opens start with folders closed, regardless of disk history."""
         model = self.model()
         if model is None or not self._project_id():
             return
         settings = self._settings_store()
-        raw = settings.value(self._state_key('expanded'), '', type=str) or ''
-        for node_id in [part for part in raw.split(',') if part]:
-            index = model.index_for_id(node_id)
-            if index.isValid():
-                self.expand(index)
-        anchor = settings.value(self._state_key('anchor'), '', type=str) or ''
-        if '|' in anchor:
-            anchor_id, _, offset = anchor.partition('|')
-            index = model.index_for_id(anchor_id) if anchor_id else \
-                QtCore.QModelIndex()
-            if index.isValid():
-                self.scrollTo(index, QtWidgets.QAbstractItemView.
-                              ScrollHint.PositionAtTop)
-            try:
-                self.verticalScrollBar().setValue(int(offset or 0))
-            except ValueError:
-                pass
+        self.collapseAll()
         active = settings.value(self._state_key('active'), '', type=str) or ''
         index = model.index_for_id(active) if active else \
             QtCore.QModelIndex()
         if index.isValid():
+            # Focus the containing top-level folder without reopening the old
+            # chain to a deeply nested active page.
+            while index.parent().data(NODE_TYPE_ROLE) == 'folder':
+                index = index.parent()
             self.setCurrentIndex(index)
             self.scrollTo(index)
         # 无效的 active 就保持默认（不猜用户想看哪个分区）。

@@ -164,6 +164,49 @@ def test_late_decode_does_not_overwrite_or_access_removed_item(view, qtbot,
         release.set()
 
 
+def test_the_decode_keeps_the_action_that_requested_it(view, qapp, tmp_path):
+    """A worker thread does not inherit the context of the thread that asked
+    for the decode, so the action id has to travel with the request.
+
+    Without it the log says nothing about who caused the background decoding
+    work, and every decode span ends up unattributed.
+    """
+    from prism import performance_trace as trace_module
+    trace = trace_module.install(qapp, None, tmp_path)
+    try:
+        item = fileio._load_image_item(str(source(tmp_path)))
+        view.scene.addItem(item)
+        # A user action mints the authoritative id.
+        trace.record('input', target='AssetCanvas', operation='MouseButtonPress')
+        action_id = trace_module.current_context().origin_action_id
+        assert action_id is not None, 'an input must mint an origin action id'
+
+        image_decode.request_display(item)
+        token = getattr(item, '_display_decode_request', None)
+        assert token is not None, 'the decode request was not offered'
+        task = token[-1]
+        assert task.origin_action_id == action_id
+
+        # The worker restores the captured action -- and only the action: a
+        # cross-thread parent span would be a chain the log cannot prove.
+        context = trace_module.origin_action_context(task.origin_action_id)
+        assert context.origin_action_id == action_id
+        assert context.span_id is None and context.parent_span_id is None
+
+        seen = []
+
+        def worker():
+            with trace_module.restore_context(context):
+                seen.append(trace_module.current_context().origin_action_id)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join()
+        assert seen == [action_id]
+    finally:
+        trace.close()
+
+
 def test_concurrent_header_and_blob_reads_finish(qapp, tmp_path):
     # Use a child so a native lock regression fails with a timeout rather
     # than hanging the entire test runner.

@@ -149,15 +149,15 @@ class ArrangeDefaultWidget(RadioGroup):
 
 
 class ImageStorageFormatWidget(RadioGroup):
-    TITLE = _('Image Storage Format:')
-    HELPTEXT = _('How images are stored inside bee files. Changes will only take effect on newly saved images.')
+    TITLE = _('Rendered image format:')
+    HELPTEXT = _('Only affects explicitly rendered exports. Imported originals are preserved byte for byte.')
     KEY = 'Items/image_storage_format'
     OPTIONS = (
         ('best', _('Best Guess'),
          _('Small images and images with alpha channel are stored as png, everything else as jpg')),
-        ('png', _('Always PNG'), _('Lossless, but large bee file')),
+        ('png', _('Always PNG'), _('Lossless rendered image')),
         ('jpg', _('Always JPG'),
-         _('Small bee file, but lossy and no transparency support')))
+         _('JPEG rendering is lossy and does not preserve transparency')))
 
 
 class ArrangeGapWidget(IntegerGroup):
@@ -206,12 +206,21 @@ class ClipboardMaxItemsWidget(IntegerGroup):
     MAX = 500
 
 
+class PagedOpenWidget(SingleCheckboxGroup):
+    TITLE = _('On-demand opening:')
+    HELPTEXT = _('Open only the page you need when a project is opened, '
+                 'instead of loading the whole file at once. Takes effect '
+                 'the next time a project is opened.')
+    LABEL = _('Open projects on demand')
+    KEY = 'Project/paged_open'
+
+
 class LanguageWidget(RadioGroup):
     TITLE = _('Language:')
     HELPTEXT = _('Changes will take effect after restarting Prism.')
     KEY = 'Interface/language'
     OPTIONS = tuple(
-        (code, label, '') for code, label in LANGUAGES
+        (code, _(label), '') for code, label in LANGUAGES
     )
 
 
@@ -227,6 +236,7 @@ class SettingsDialog(QtWidgets.QDialog):
         misc.setLayout(misc_layout)
         misc_layout.addWidget(ConfirmCloseUnsavedWidget(), 0, 0)
         misc_layout.addWidget(LanguageWidget(), 0, 1)
+        misc_layout.addWidget(PagedOpenWidget(), 1, 0)
         tabs.addTab(misc, _('&Miscellaneous'))
 
         # Images & Items
@@ -251,7 +261,7 @@ class SettingsDialog(QtWidgets.QDialog):
         ai_layout = QtWidgets.QVBoxLayout(ai_tab)
         
         # API Key
-        ai_layout.addWidget(QtWidgets.QLabel("DeepSeek API Key:"))
+        ai_layout.addWidget(QtWidgets.QLabel(_('Service key:')))
         self.api_key_input = QtWidgets.QLineEdit()
         self.api_key_input.setPlaceholderText("sk-...")
         ai_layout.addWidget(self.api_key_input)

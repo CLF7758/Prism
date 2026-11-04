@@ -28,6 +28,13 @@ def photo(view, name='a.png', canvas=None, tags=(), rating=0):
     image = QtGui.QImage(8, 8, QtGui.QImage.Format.Format_RGB32)
     image.fill(QtGui.QColor('#336699'))
     item = PrismPixmapItem(image, filename=name)
+    # Named imported fixtures must retain real source bytes, like production imports.
+    encoded = QtCore.QByteArray()
+    buffer = QtCore.QBuffer(encoded)
+    buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
+    assert image.save(buffer, 'PNG')
+    buffer.close()
+    item.set_source_blob(bytes(encoded), 'png')
     item.init_metadata()
     if canvas:
         item._canvas_id = canvas
@@ -258,13 +265,14 @@ def test_trash_panel_lists_and_restores_asset(view, qtbot):
 
     panel = TrashPanel(view)
     qtbot.addWidget(panel)
-    assert panel.asset_list.count() == 1
+    assert panel.asset_model.rowCount() == 1
 
-    panel.asset_list.item(0).setSelected(True)
+    panel.asset_list.selectionModel().select(
+        panel.asset_model.index(0, 0), QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect)
     panel.restore_selected_assets()
     assert item._deleted_at is None
     assert item.isVisible() is True
-    assert panel.asset_list.count() == 0
+    assert panel.asset_model.rowCount() == 0
 
 
 def test_trash_panel_purge_emits_assets_purged(view, qtbot):
@@ -276,7 +284,8 @@ def test_trash_panel_purge_emits_assets_purged(view, qtbot):
 
     panel = TrashPanel(view)
     qtbot.addWidget(panel)
-    panel.asset_list.item(0).setSelected(True)
+    panel.asset_list.selectionModel().select(
+        panel.asset_model.index(0, 0), QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect)
     received = []
     panel.assets_purged.connect(lambda items: received.append(list(items)))
     # 接上主窗口真正的永久删除处理器，模拟实机接线：面板发信号 → 主窗口
@@ -287,7 +296,7 @@ def test_trash_panel_purge_emits_assets_purged(view, qtbot):
     panel.purge_selected_assets()
     assert received and received[0][0] is item
     assert item not in view.scene.items()
-    assert panel.asset_list.count() == 0
+    assert panel.asset_model.rowCount() == 0
 
 
 def test_trash_panel_has_two_tabs(view, qtbot):

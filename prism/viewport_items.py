@@ -1,6 +1,7 @@
 """Recycle editable Qt images, while passive records keep their exact stacking."""
 import bisect
 import time
+import weakref
 from PyQt6 import QtCore, QtGui, QtWidgets, sip
 from prism.asset_spatial_index import AssetSpatialIndex
 from prism.item_lifecycle import logical_item
@@ -11,6 +12,15 @@ MIN_EDIT_PIXELS = 16
 
 
 class MaterializedImageItem(PrismPixmapItem):
+    # Keep a detached editor's logical owner alive without putting the owner
+    # in the shared record dictionary. Passive records have no editor/cycle.
+    __slots__ = ('_record_owner',)
+
+    @property
+    def _asset_record(self):
+        reference = self.__dict__.get('_asset_record_ref')
+        return reference() if reference is not None else None
+
     def paint(self, painter, option, widget=None):
         scene = self.scene()
         if scene is not None and getattr(scene, '_exporting_records', False):
@@ -42,6 +52,8 @@ def materialize_image(record):
     position, scale, rotation, flip = record.pos(), record.scale(), record.rotation(), record.flip()
     z, opacity, visible, selected = record.zValue(), record.opacity(), record.isVisible(), record.isSelected()
     item.__dict__ = record.__dict__
+    item._record_owner = record
+    item._asset_record_ref = weakref.ref(record)
     record._graphics = item
     item.setFlags(record._flags)
     item.setAcceptHoverEvents(True)
@@ -142,6 +154,7 @@ class ViewportItems(QtCore.QObject):
         self.layout_revision = 0
         self._sync_key = None
         self._visibility = {}
+        self._stack_keys = {}
         self._visible_cache = None
         self._layer_signature = None
         self.timer = QtCore.QTimer(self)
@@ -171,6 +184,7 @@ class ViewportItems(QtCore.QObject):
         self.index.remove(record)
         self.selected.discard(record)
         self._visibility.pop(record, None)
+        self._stack_keys.pop(record, None)
         self.layout_revision += 1
         record._scene_ref = None
         self.generation += 1
@@ -198,6 +212,7 @@ class ViewportItems(QtCore.QObject):
         self.layers.clear()
         self.index = AssetSpatialIndex()
         self._visibility.clear()
+        self._stack_keys.clear()
         self._sync_key = None
         self.layout_revision += 1
         self.extent = QtCore.QRectF()
@@ -218,10 +233,14 @@ class ViewportItems(QtCore.QObject):
         old = self.index.rects.get(record)
         changed = self.index.update(record) if geometry else False
         visibility = record.isVisible()
-        if changed or self._visibility.get(record) != visibility:
+        visibility_changed = self._visibility.get(record) != visibility
+        stack_key = self.stack_key(record)
+        if (changed or visibility_changed
+                or self._stack_keys.get(record) != stack_key):
             self.layout_revision += 1
         self._visibility[record] = visibility
-        if changed:
+        self._stack_keys[record] = stack_key
+        if changed or visibility_changed:
             self.scene._invalidate_view_bounds()
         if self.extent != self.index.extent:
             for layer in self.layers:
@@ -235,8 +254,19 @@ class ViewportItems(QtCore.QObject):
         self.schedule()
 
     def visible(self, rect):
-        key = (rect.x(), rect.y(), rect.width(), rect.height(), self.generation)
+        # Decode completions repaint pixels but do not change which records
+        # intersect this camera or their stacking order. Keying this cache by
+        # the repaint generation rescanned/sorted every visible record after
+        # each arriving image, multiplying work on dense views.
+        key = (rect.x(), rect.y(), rect.width(), rect.height(), self.layout_revision)
         if self._visible_cache is None or self._visible_cache[0] != key:
+            # The stacking key is recomputed here, not taken from the cache.
+            # The cache in `_stack_keys` is refreshed by `changed()`, and this
+            # method is the one place that decides what is *visible* and in
+            # what order -- using a possibly stale cached key changed the
+            # order (and with it the tile staleness bookkeeping), which the
+            # integration tests caught. `items()` sorts by the cached key
+            # because the order it needs is the stored one; this one may not.
             records = sorted(self.index.query(rect), key=self.stack_key)
             self._visible_cache = key, records, [self.stack_key(r) for r in records]
         return self._visible_cache[1:]
@@ -271,6 +301,31 @@ class ViewportItems(QtCore.QObject):
     def stack_key(item):
         item = logical_item(item)
         return item.zValue(), getattr(item, '_sequence', 0)
+
+    def sort_by_stack(self, records, reverse=False):
+        """Sort records by their stacking order, using the cached keys.
+
+        ``stack_key`` is ``(zValue, _sequence)`` and it is already cached in
+        ``_stack_keys``, refreshed by :meth:`changed`. Recomputing it for
+        every record on every sort is what made a canvas switch expensive:
+        the trace showed ``viewport_items.stack_key`` taking 3.8 s of one
+        stall, because a 100 000 item scene sorts on every call.
+
+        The cached value and the recomputed one were measured to be equal
+        for every record, and the resulting order is identical, so this
+        changes the cost, not the answer. A record the cache has not seen
+        yet falls back to the computed key.
+        """
+        cached = self._stack_keys
+        missing = object()
+
+        def key(record):
+            value = cached.get(record, missing)
+            if value is missing:
+                return self.stack_key(record)
+            return value
+
+        return sorted(records, key=key, reverse=reverse)
 
     def materialize(self, record):
         if record._graphics is not None:

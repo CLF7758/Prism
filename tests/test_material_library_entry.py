@@ -13,7 +13,8 @@ def test_entry_order_and_click_and_keyboard(main_window, qtbot):
     window = main_window
     tree = window.view.category_panel.resource_tree
     model = tree.model()
-    assert UI_SECTIONS == ('canvas', 'mindmap', 'document', 'material', 'tag')
+    assert UI_SECTIONS == ('canvas', 'mindmap', 'document', 'material', 'model', 'tag')
+    assert model.index(4,0).data()=='模型库'
     root = model.index(3, 0)
     assert root.data() == '材质库'
     pages = list(window.view.scene.workspace_pages)

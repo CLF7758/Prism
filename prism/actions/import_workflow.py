@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 def import_document(view):
     """Choose a DOCX file and load it into a document page."""
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        return
+    from prism.navigation import defer_navigation
+    if defer_navigation(view.window(), lambda: import_document(view), owner=view):
+        return
     from prism.fileio.importers import ImportFileError, ImportReport, docx_to_html
 
     filename, _selected = QtWidgets.QFileDialog.getOpenFileName(
@@ -23,6 +28,8 @@ def import_document(view):
         directory=view._import_directory(),
         filter=_('Word Document (*.docx)'))
     if not filename:
+        return
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
         return
     panel = view._import_target_panel('DocumentPanel', 'document')
     if panel is None:
@@ -124,9 +131,10 @@ def import_resource_subtree(view, section, node_id=None):
     里的图片视频归到该目录的画布页；文件夹节点撑住目录的层级。重名自动
     加序号，不认识的文件跳过。``node_id`` 为 None 表示整个分区。
     """
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        return
     from prism.fileio.resource_import import (
-        SECTION_TITLES, ResourceImportError, ResourceTreeScanner,
-        extract_archive)
+        SECTION_TITLES, ResourceImportError, extract_archive)
 
     panel = getattr(view, 'category_panel', None)
     service = getattr(panel, 'resource_service', None)
@@ -143,6 +151,8 @@ def import_resource_subtree(view, section, node_id=None):
     shape = ask_import_source(view, title)
     if shape is None:
         return
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        return
     base = os.path.dirname(view.filename) if view.filename else ''
 
     if shape == 'files':
@@ -153,6 +163,8 @@ def import_resource_subtree(view, section, node_id=None):
         archive, _chosen = QtWidgets.QFileDialog.getOpenFileName(
             view, _('Import a .zip archive'), base, 'Zip (*.zip)')
         if not archive:
+            return
+        if not getattr(view, '_allow_import_during_open', lambda: True)():
             return
         # 临时目录用 mkdtemp 显式管理：`TemporaryDirectory` 一没人引用就
         # 把目录删掉，而素材是另一条线程在读的 —— 会删得比读完早。
@@ -177,12 +189,17 @@ def import_resource_subtree(view, section, node_id=None):
         view, _('Choose a folder to import'), base)
     if not directory:
         return
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        return
     _scan_and_apply(view, service, section, node_id, directory)
 
 
 def _scan_and_apply(view, service, section, node_id, directory,
                     root_title=None, staging=None):
     """扫一遍 → 给用户看一眼 → 落地。"""
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        _drop_staging(staging)
+        return
     from prism.fileio.resource_import import (
         ResourceImportError, ResourceTreeScanner)
 
@@ -199,6 +216,9 @@ def _scan_and_apply(view, service, section, node_id, directory,
         _section_title(section)
     dialog = ImportPreviewDialog(plan, target, parent=view)
     if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        _drop_staging(staging)
+        return
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
         _drop_staging(staging)
         return
 
@@ -237,10 +257,14 @@ def _drop_staging(staging, view=None):
 
 def _import_loose_files(view, service, section, node_id, base):
     """选一批散装文件：文档/脑图各建一页；画布素材归当前画布。"""
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        return
     if section == 'canvas':
         filenames, _chosen = QtWidgets.QFileDialog.getOpenFileNames(
             view, _('Import files'), base,
             _('Images, videos and models'))
+        if not getattr(view, '_allow_import_during_open', lambda: True)():
+            return
         if filenames:
             # 和拖单个文件进来是同一条路：不建画布，素材归当前画布。
             view.do_insert_images(filenames)
@@ -255,6 +279,8 @@ def _import_loose_files(view, service, section, node_id, base):
         view, _('Import files'), base, pattern)
     if not filenames:
         return
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        return
     try:
         plan = scan_files(section, filenames)
     except ResourceImportError as exc:
@@ -268,15 +294,20 @@ def _import_loose_files(view, service, section, node_id, base):
     dialog = ImportPreviewDialog(plan, target, parent=view)
     if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
         return
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        return
     outcome = _apply_plan(view, service, plan, node_id)
     _import_assets(view, plan, outcome, None)
 
 
 def _apply_plan(view, service, plan, parent_id):
     """建节点、灌内容。取消时保留已经建好的部分。"""
-    workspace_service = getattr(getattr(view, 'parent', None),
-                               'workspace_service', None)
     outcome = ImportOutcome(plan.section)
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        outcome.canceled = True
+        return outcome
+    workspace_service = getattr(getattr(view, 'parent', None),
+                                'workspace_service', None)
     progress = None
     if len(plan.nodes) > PROGRESS_AFTER:
         progress = QtWidgets.QProgressDialog(
@@ -288,6 +319,9 @@ def _apply_plan(view, service, plan, parent_id):
     try:
         for index, entry in enumerate(plan.nodes):
             if progress is not None and progress.wasCanceled():
+                outcome.canceled = True
+                break
+            if not getattr(view, '_allow_import_during_open', lambda: True)():
                 outcome.canceled = True
                 break
             _create_node(view, service, workspace_service, plan, entry,
@@ -368,10 +402,12 @@ def _fill_page_content(view, plan, entry, workspace_service, name, page_id,
 
             page['content'] = docx_to_html(
                 path, attachment_saver=view._store_imported_attachment)
+            view.mark_page_modified(page)
         else:
             from prism.fileio.importers import xmind_to_tree
 
             page['content'] = xmind_to_tree(path)
+            view.mark_page_modified(page)
     except ImportFileError as exc:
         outcome.errors.append(_read_failure(name, kind, exc))
     except Exception as exc:                        # noqa: BLE001
@@ -393,46 +429,71 @@ def _read_failure(name, kind, exc):
     return _('Could not read {name}.').format(name=name)
 
 
-def _import_assets(view, plan, outcome, staging):
+def _import_assets(view, plan, outcome, staging, *, item_metadata=None, on_loaded=None):
     """素材走现有那条加载链路；读完再收尾。"""
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        _drop_staging(staging)
+        return
     files = list(plan.asset_files)
     if not files:
         _finish_import(view, plan, outcome)
         _drop_staging(staging, view)
+        if on_loaded:
+            on_loaded()
         return
     before = {id(item) for item in view.scene.items_for_save()}
     pos = view.get_view_center()
     view.undo_stack.beginMacro(_('Import assets'))
     view._import_in_progress = True
+    options = {} if item_metadata is None else dict(force_video_embed=True, item_metadata=item_metadata)
     view.worker = fileio.ThreadedIO(fileio.load_media, files,
-                                    view.mapToScene(pos), view.scene)
+                                    view.mapToScene(pos), view.scene, **options)
     view.worker.progress.connect(view.on_items_loaded)
+    completed = on_loaded
+    if on_loaded is not None:
+        imported_worker = view.worker
+        ready = {'scene':False, 'thread':False, 'delivered':False}
+        def joined(part):
+            ready[part] = True
+            if ready['scene'] and ready['thread'] and not ready['delivered']:
+                ready['delivered'] = True
+                if not imported_worker.canceled:
+                    on_loaded()
+        completed = lambda: joined('scene')
+        QtCore.QThread.finished.__get__(view.worker).connect(lambda: joined('thread'))
     view.worker.finished.connect(
         lambda _name, errors: _on_assets_loaded(
-            view, plan, outcome, before, list(errors), staging))
+            view, plan, outcome, before, list(errors), staging, item_metadata, completed))
     view.progress = widgets.PrismProgressDialog(
         _('Importing assets'), worker=view.worker, parent=view)
     view.worker.start()
 
 
-def _on_assets_loaded(view, plan, outcome, before_ids, errors, staging):
+def _on_assets_loaded(view, plan, outcome, before_ids, errors, staging, item_metadata=None, on_loaded=None):
     outcome.errors.extend(errors)
     view._load_scheduler.finish(
-        lambda: _finish_assets_loaded(view, plan, outcome, before_ids, staging))
+        lambda: _finish_assets_loaded(view, plan, outcome, before_ids, staging, item_metadata, on_loaded))
 
 
-def _finish_assets_loaded(view, plan, outcome, before_ids, staging):
+def _finish_assets_loaded(view, plan, outcome, before_ids, staging, item_metadata=None, on_loaded=None):
     try:
-        _assign_new_assets(view, before_ids, outcome.asset_targets)
+        if item_metadata is None:
+            _assign_new_assets(view, before_ids, outcome.asset_targets)
         inserted = [item for item in view.scene.items_for_save()
                     if id(item) not in before_ids]
-        view._arrange_imported_items(inserted)
+        if item_metadata is None:
+            view._arrange_imported_items(inserted)
+        else:
+            view._arrange_imported_items([item for item in inserted
+                                         if getattr(item,'_deleted_at',None) is None], optimal=True)
     finally:
         view.undo_stack.endMacro()
         view._import_in_progress = False
         view.viewport().update()
     _finish_import(view, plan, outcome)
     _drop_staging(staging, view)
+    if on_loaded:
+        on_loaded()
 
 
 def _assign_new_assets(view, before_ids, asset_targets):

@@ -219,7 +219,3 @@ class VideoDownloadService(QtCore.QObject):
         self.closed = True
         for identifier in list(self.queue)+list(self.running):
             self.cancel(identifier)
-        for job in list(self.jobs.values()):
-            process = job.get('process')
-            if process is not None:
-                process.waitForFinished(500)

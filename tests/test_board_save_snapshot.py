@@ -151,11 +151,12 @@ def test_project_replacement_waits_for_active_save(main_window, qtbot, tmp_path,
 
 
 def test_reentrant_save_during_editor_readback_starts_only_one_writer(main_window, tmp_path, qtbot, monkeypatch):
+    from prism.fileio import save_preparation
     view = main_window.view
     panel = main_window.tabs.currentWidget()
     target, nested = tmp_path/'first.prism', tmp_path/'nested.prism'
-    factory = Mock(wraps=fileio.ThreadedIO)
-    monkeypatch.setattr(fileio, 'ThreadedIO', factory)
+    factory = Mock(wraps=save_preparation.SaveWorker)
+    monkeypatch.setattr(save_preparation, 'SaveWorker', factory)
     def flush():
         view.do_save(str(nested), create_new=True, silent=True)
         return True
@@ -176,7 +177,7 @@ def test_attachment_deleted_mid_transaction_cannot_orphan_saved_document(view, q
     original_ex = SQLiteIO.ex
     def pause_after_note(io, statement, *args):
         result = original_ex(io, statement, *args)
-        if statement.startswith('INSERT OR REPLACE INTO board_notes '):
+        if statement.startswith(('INSERT INTO board_notes ', 'UPDATE board_notes SET ')):
             entered.set()
             assert release.wait(5), 'save test was not released'
         return result

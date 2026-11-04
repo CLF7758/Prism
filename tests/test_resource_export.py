@@ -6,7 +6,7 @@
 * 文件夹 → 子目录，页面 → 文件，形状和左侧树一致
 * 文档出 ``.docx``、脑图出 ``.xmind``
 * 画布里的图片 / 视频按**原来那份字节**写出去（"无损导出"）
-* 没有原始字节的素材照实说明，不假装无损
+* 没有原始字节的素材会让导出停下来，不拿预览图顶替
 * 文件夹和 .zip 两条出口写出的是同一份东西
 """
 import json
@@ -289,18 +289,20 @@ def test_canvas_assets_are_written_byte_for_byte(tmpdir):
         assert handle.read() == source
 
 
-def test_asset_without_original_bytes_is_reported_not_pretended():
+def test_asset_without_original_bytes_stops_the_export():
+    """没有原件的图片不能拿预览图顶替 —— 导出必须停下来。
+
+    （产品后来把这条收严了：以前只是记一条警告然后用重编码顶上，
+    现在是当场报错，谁也别想拿预览图冒充原件。）
+    """
     service = ResourceTreeService('p1')
     service.createPage('canvas', '素材画布', 'canvas-1')
     exporter = exporter_for(
         service, [canvas_page('canvas-1')],
         assets={'canvas-1': [FakeItem('画出来的.png', payload=None)]})
 
-    plan = exporter.build_plan('canvas')
-
-    assert plan.reencoded_assets == 1
-    assert plan.lossless_assets == 0
-    assert any('no original bytes' in warning for warning in plan.warnings)
+    with pytest.raises(ResourceExportError, match='原件无法取得'):
+        exporter.build_plan('canvas')
 
 
 def test_referenced_video_is_copied_untouched(tmpdir):

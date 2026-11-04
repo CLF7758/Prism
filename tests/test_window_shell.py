@@ -12,12 +12,28 @@
 * 无边框外壳在离屏平台安全跳过 Win32 调用，不报错。
 """
 from unittest.mock import patch, MagicMock
+import ctypes
+from ctypes import wintypes
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt
 
 from prism.widgets.window_shell import (
     FramelessShellMixin, TitleBarControls, TitleBarDragArea)
+
+
+def test_native_lifecycle_uses_ctypes_msg_handle(monkeypatch):
+    from types import SimpleNamespace
+    from prism.widgets import window_shell
+    recorded = []
+    monkeypatch.setattr(window_shell, 'IS_WINDOWS', True)
+    monkeypatch.setattr('prism.performance_trace.record', lambda name, **fields:recorded.append((name,fields)))
+    message = wintypes.MSG()
+    message.hWnd = 1234
+    message.message = 0x0018
+    owner = SimpleNamespace(view=None)
+    assert FramelessShellMixin.nativeEvent(owner, b'windows_generic_MSG', ctypes.addressof(message)) == (False, 0)
+    assert recorded[0][1]['hwnd'] == 1234
 
 
 def _mouse_event(etype, pos=QtCore.QPointF(5, 5),

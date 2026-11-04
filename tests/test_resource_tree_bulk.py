@@ -198,6 +198,17 @@ def collect_labels(tree):
     return labels
 
 
+def test_model_folders_reuse_move_destination_picker(main_window, qtbot):
+    service = main_window.view.category_panel.resource_service
+    service.enable_model_section()
+    source = service.createFolder('model', 'Source')
+    target = service.createFolder('model', 'Destination')
+    dialog = make_dialog(qtbot, main_window.view, [source['id']])
+    assert 'Destination' in collect_labels(dialog.tree)
+    assert 'Source' not in collect_labels(dialog.tree)
+    assert dialog.target() == ('model', target['id'])
+
+
 def test_the_dialog_lists_folders_but_not_pages(main_window, qtbot):
     window = main_window
     panel = window.view.category_panel

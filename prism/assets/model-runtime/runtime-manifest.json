@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "assimp": {
+    "version": "5.4.3",
+    "commit": "c35200e38ea8f058812b83de2ef32c6093b0ece2",
+    "file": "assimp-vc145-mt.dll",
+    "sha256": "b3a51a45b5921c889d5a4b3239c8e336524831462c88afff6369eed530d88347",
+    "license": "ASSIMP-LICENSE.txt"
+  },
+  "renderer": {
+    "name": "Babylon.js",
+    "version": "8.26.0",
+    "runtime": "../materials/babylon/babylon.js",
+    "profile": "../materials/preview-profile.json"
+  },
+  "isolation": "Model preview and covers use the shared Babylon renderer in application-owned QtWebEngine worker processes",
+  "packaged_clean_machine_verified": false
+}

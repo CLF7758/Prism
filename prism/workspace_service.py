@@ -32,6 +32,16 @@ KINDS = ('canvas', 'document', 'mindmap')
 PAGE_SECTIONS = KINDS
 TREE_SECTIONS = ('canvas', 'mindmap', 'document', 'material')
 
+#: The model section holds model folders only. It is deliberately NOT part of
+#: ``TREE_SECTIONS``: a section that is not stored must not be written.
+#: ``ResourceTreeService.model_section_enabled`` opens it once the model
+#: domain's full and partial saves, snapshots, unknown fields and
+#: delete/restore have been integrated and accepted.
+MODEL_SECTION = 'model'
+#: Sections whose nodes may only be folders. A model is an asset, never a
+#: workspace page.
+FOLDER_ONLY_SECTIONS = ('material', MODEL_SECTION)
+
 
 def legacy_page_nodes(pages, project_id):
     """Preview a lossless *index* for old pages; never alter page content.
@@ -141,14 +151,38 @@ class ResourceTreeService(QtCore.QObject):
 
     changed = QtCore.pyqtSignal(object)
 
-    def __init__(self, project_id, nodes=None, parent=None):
+    def __init__(self, project_id, nodes=None, parent=None, *, model_section_enabled=False):
         super().__init__(parent)
         self.project_id = project_id
         self.nodes = copy.deepcopy(list(nodes or []))
+        self._node_index = {node.get('id'): node for node in self.nodes}
+        self.revision = 0
+        # The model section stays closed until the model domain can save it.
+        # The composition root opens it once storage has been accepted.
+        self.model_section_enabled = bool(model_section_enabled)
+        self.changed.connect(self._advance_revision)
         self._validate_all()
 
+    def enable_model_section(self, enabled=True):
+        """Open the model section for folders only.
+
+        The model section must never become a source of canvas pages: a
+        model is an asset with its own files, not a workspace page.
+        """
+        self.model_section_enabled = bool(enabled)
+        self._validate_all()
+        return self.model_section_enabled
+
+    def _section_allowed(self, section):
+        if section in TREE_SECTIONS:
+            return True
+        return section == MODEL_SECTION and self.model_section_enabled
+
+    def _advance_revision(self, _change):
+        self.revision += 1
+
     def _by_id(self, node_id):
-        return next((n for n in self.nodes if n['id'] == node_id), None)
+        return self._node_index.get(node_id)
 
     @staticmethod
     def _title(value):
@@ -173,10 +207,10 @@ class ResourceTreeService(QtCore.QObject):
             raise ValueError('资源树节点 ID 重复')
         for node in self.nodes:
             if (node.get('projectId') != self.project_id or
-                    node.get('section') not in TREE_SECTIONS or
+                    not self._section_allowed(node.get('section')) or
                     node.get('nodeType') not in ('folder', 'page')):
                 raise ValueError('资源树节点类型或归属无效')
-            if node['section'] == 'material' and node['nodeType'] != 'folder':
+            if node['section'] in FOLDER_ONLY_SECTIONS and node['nodeType'] != 'folder':
                 raise ValueError('Material library entries are not workspace pages')
             self._title(node.get('title', ''))
             parent_id = node.get('parentId')
@@ -193,7 +227,7 @@ class ResourceTreeService(QtCore.QObject):
                 parent_id = self._by_id(parent_id).get('parentId')
 
     def listChildren(self, section, parent_id=None, *, include_deleted=False):
-        if section not in TREE_SECTIONS:
+        if not self._section_allowed(section):
             raise ValueError('未知分区')
         return sorted((copy.deepcopy(n) for n in self.nodes
                        if n['section'] == section and
@@ -229,28 +263,44 @@ class ResourceTreeService(QtCore.QObject):
             index += 1
         return f'{title} {index}'
 
-    def _create(self, section, parent_id, node_type, title, page_id=None):
-        if section not in TREE_SECTIONS:
+    def _create(self, section, parent_id, node_type, title, page_id=None, *, after_id=None):
+        if not self._section_allowed(section):
             raise ValueError('未知分区')
-        if section == 'material' and node_type != 'folder':
+        if section in FOLDER_ONLY_SECTIONS and node_type != 'folder':
             raise ValueError('Material library entries are not workspace pages')
         self._validate_parent(section, parent_id)
         title = self._title(title)
         self._unique_title(section, parent_id, node_type, title)
         siblings = self._siblings(section, parent_id)
+        order = max((n['order'] for n in siblings), default=0) + 1000
+        if after_id is not None:
+            ordered = sorted(siblings, key=lambda n: (n['order'], n['id']))
+            position = next((i for i, n in enumerate(ordered) if n['id'] == after_id), None)
+            if position is None:
+                raise ValueError('新建位置已变化，请重新选择位置')
+            # Keep integral persisted ordering. Only compact a sibling group
+            # when repeated insertions have exhausted its existing gaps.
+            if position + 1 < len(ordered):
+                if ordered[position + 1]['order'] - ordered[position]['order'] <= 1:
+                    for i, sibling in enumerate(ordered, 1):
+                        sibling['order'] = i * 1000
+                order = (ordered[position]['order'] + ordered[position + 1]['order']) // 2
+            else:
+                order = ordered[position]['order'] + 1000
         node = {'id': uuid.uuid4().hex, 'projectId': self.project_id,
                 'section': section, 'nodeType': node_type,
                 'parentId': parent_id, 'title': title,
-                'order': max((n['order'] for n in siblings), default=0) + 1000,
+                'order': order,
                 'pageId': page_id if node_type == 'page' else None,
                 'color': None, 'deletedAt': None}
         self.nodes.append(node)
+        self._node_index[node['id']] = node
         self.changed.emit({'ids': [node['id']], 'old': None,
                            'new': copy.deepcopy(node), 'undo': '删除新建项目'})
         return copy.deepcopy(node)
 
-    def createFolder(self, section, title, parent_id=None):
-        return self._create(section, parent_id, 'folder', title)
+    def createFolder(self, section, title, parent_id=None, *, after_id=None):
+        return self._create(section, parent_id, 'folder', title, after_id=after_id)
 
     def createPage(self, section, title, page_id, parent_id=None):
         if not page_id:
@@ -258,6 +308,53 @@ class ResourceTreeService(QtCore.QObject):
         if any(n.get('pageId') == page_id for n in self.nodes):
             raise ValueError('页面 ID 重复')
         return self._create(section, parent_id, 'page', title, page_id)
+
+    def ensurePages(self, pages):
+        """Add missing legacy root pages in O(nodes + pages), with one signal.
+
+        Validate the entire batch before mutation. Existing pages (including
+        trashed/nested pages) retain their identities, hierarchy and order.
+        """
+        known = {n.get('pageId') for n in self.nodes}
+        titles = set()
+        orders = {}
+        for node in self.nodes:
+            if node.get('parentId') is None and node.get('deletedAt') is None:
+                section = node['section']
+                orders[section] = max(orders.get(section, 0), node['order'])
+                if node['nodeType'] == 'page':
+                    titles.add((section, node['title']))
+        additions = []
+        input_ids = set()
+        for page in pages:
+            page_id = page['id']
+            if not page_id or page_id in input_ids:
+                raise ValueError('Invalid or duplicate workspace page identity')
+            input_ids.add(page_id)
+            if page_id in known:
+                continue
+            section = page['kind']
+            if not page_id or section not in PAGE_SECTIONS:
+                raise ValueError('Invalid workspace page identity or section')
+            title = self._title(page['title'])
+            if (section, title) in titles:
+                raise ValueError('Duplicate page title in root section')
+            titles.add((section, title))
+            known.add(page_id)
+            orders[section] = orders.get(section, 0) + 1000
+            additions.append({
+                'id': uuid.uuid4().hex, 'projectId': self.project_id,
+                'section': section, 'nodeType': 'page', 'parentId': None,
+                'title': title, 'order': orders[section], 'pageId': page_id,
+                'color': None, 'deletedAt': None})
+        if not additions:
+            return []
+        self.nodes.extend(additions)
+        self._node_index.update((n['id'], n) for n in additions)
+        ids = [n['id'] for n in additions]
+        self.changed.emit({'ids': ids, 'old': None,
+                           'new': copy.deepcopy(additions), 'undo': None})
+        return ids
 
     def rename(self, node_id, title):
         node = self._by_id(node_id)
@@ -273,20 +370,23 @@ class ResourceTreeService(QtCore.QObject):
         return copy.deepcopy(node)
 
     def _descendants(self, node_id):
+        children = {}
+        for node in self.nodes:
+            children.setdefault(node.get('parentId'), []).append(node['id'])
         result = set()
         pending = [node_id]
         while pending:
             parent_id = pending.pop()
-            children = [n['id'] for n in self.nodes
-                        if n.get('parentId') == parent_id]
-            result.update(children)
-            pending.extend(children)
+            for child in children.get(parent_id, ()):
+                if child != node_id and child not in result:
+                    result.add(child)
+                    pending.append(child)
         return result
 
     def moveBatch(self, node_ids, parent_id, section):
         """Move only highest selected ancestors; validate before writing."""
         selected = set(node_ids)
-        if not selected or section not in TREE_SECTIONS:
+        if not selected or not self._section_allowed(section):
             return []
         roots = []
         for node_id in node_ids:
@@ -320,6 +420,8 @@ class ResourceTreeService(QtCore.QObject):
             node['parentId'] = parent_id
             node['order'] = next_order
         self.changed.emit({'ids': roots, 'old': old, 'new': parent_id,
+                           'kind': 'move',
+                           'nodes': [dict(self._by_id(i)) for i in roots],
                            'undo': '移回原文件夹'})
         return roots
 
@@ -393,7 +495,7 @@ class ResourceTreeService(QtCore.QObject):
         return ids
 
     def search(self, query, section=None, *, include_deleted=False):
-        if section is not None and section not in TREE_SECTIONS:
+        if section is not None and not self._section_allowed(section):
             raise ValueError('未知分区')
         needle = str(query).strip().casefold()
         if not needle:
@@ -432,6 +534,8 @@ class ResourceTreeService(QtCore.QObject):
         old = {i: self._by_id(i).get('deletedAt') for i in affected}
         # 原地改列表：scene.workspace_nodes 和别人拿到的引用都指着它。
         self.nodes[:] = [n for n in self.nodes if n['id'] not in affected]
+        for node_id in affected:
+            self._node_index.pop(node_id, None)
         ids = sorted(affected)
         self.changed.emit({'ids': ids, 'old': old, 'new': None,
                            'undo': '永久删除'})

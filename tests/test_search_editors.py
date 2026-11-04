@@ -27,6 +27,10 @@ def test_import_into_loaded_mindmap_survives_immediate_flush(main_window, qtbot,
                         lambda **kwargs: ('import.xmind', ''))
     monkeypatch.setattr('prism.fileio.importers.xmind_to_tree', lambda filename: imported)
     main_window.view.on_action_import_mindmap()
+    # The menu action first asynchronously commits the outgoing editor. Wait
+    # for the actual import, then keep the original immediate-flush contract.
+    qtbot.waitUntil(lambda: not getattr(main_window, '_page_store_in_progress', False)
+                   and panel._scene_tree()['data']['uid'] == 'new-root', timeout=8000)
     assert panel.store_to_scene() is True
     assert panel._scene_tree()['data']['uid'] == 'new-root'
     qtbot.waitUntil(lambda: not panel._tree_loading, timeout=8000)

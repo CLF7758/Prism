@@ -5,6 +5,7 @@ from prism.widgets.canvas_toolbar import CanvasToolbar
 from prism.actions.drawing_workflow import CanvasDrawingMixin
 from prism.scene import PrismGraphicsScene
 from prism.ui_tokens import COLOURS_DARK
+from prism.i18n import _
 
 
 class ReferenceTools(QtCore.QObject):
@@ -86,6 +87,16 @@ class ReferenceCanvas(AssetCanvas):
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.window_drag = None
+
+    def paintEvent(self, event):
+        # A reference is a real scene pixmap plus annotations, not an asset
+        # model. Do not run material-card painting/selection/decode scheduling.
+        QtWidgets.QGraphicsView.paintEvent(self, event)
+
+    def queue_visible_details(self):
+        # Inherited refresh timers may call this; the reference already owns
+        # its source pixmap and has no QItemSelectionModel to query.
+        return True
 
     def get_scale(self):
         return abs(self.transform().m11())
@@ -211,7 +222,8 @@ class DesktopReference(QtWidgets.QWidget):
         self.toolbar.refresh()
 
     def choose_colour(self):
-        colour = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.view._pen_color), self, '画笔颜色')
+        from prism.widgets.compact_color import choose_color
+        colour = choose_color(QtGui.QColor(self.view._pen_color), self, _('Pen color'))
         if colour.isValid():
             self.view._pen_color = colour.name()
             self.view.drawing_state_changed.emit()

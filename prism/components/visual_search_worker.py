@@ -24,6 +24,12 @@ def emit(event, **values):
 
 def source_identity(source):
     """Conservative versioning also invalidates aliases after archive saves."""
+    archive = source.get('archive')
+    if archive and not source.get('path'):
+        from prism.storage.managed import binding
+        identity = binding(archive[0], 'sqlar', archive[1], item_id=True)
+        if identity is not None:
+            return hashlib.sha256(repr(('original-sha256', *identity)).encode('utf-8')).hexdigest()
     path = source.get('path') or (source.get('archive') or [None])[0]
     if not path:
         return None
@@ -42,9 +48,8 @@ def source_bytes(source, reader=None):
         if reader is not None:
             content = reader.read((path, identifier))
         else:
-            with sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro', uri=True) as connection:
-                row = connection.execute('SELECT data FROM sqlar WHERE item_id=?', (identifier,)).fetchone()
-            content = row[0] if row else None
+            from prism.source_store import read_archive
+            content = read_archive((path, identifier))
         if content:
             return content
         if len(archive) > 2:

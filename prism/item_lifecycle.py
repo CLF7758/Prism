@@ -3,7 +3,13 @@ from PyQt6 import sip
 
 
 def logical_item(item):
-    return getattr(item, '__dict__', {}).get('_asset_record') or item
+    state = getattr(item, '__dict__', {})
+    reference = state.get('_asset_record_ref')
+    if reference is not None:
+        record = reference()
+        if record is not None:
+            return record
+    return state.get('_asset_record') or item
 
 
 def is_record(item):

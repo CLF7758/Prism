@@ -52,10 +52,11 @@ def test_a_text_item_keeps_its_style_without_the_controls(view, qapp):
     assert style['bold'] is True
 
 
-def test_channel_switch_for_hdr_keeps_display_option_out_of_decoder(view, tmp_path, monkeypatch):
+def test_channel_switch_for_hdr_keeps_display_option_out_of_decoder(view, tmp_path, monkeypatch, qtbot):
     from PyQt6 import QtGui
     from prism.fileio import image as image_io
     from tests.test_material_features import image_item
+    from tests.test_inspection_preview import wait_preview
 
     path = tmp_path / 'scene.hdr'
     path.touch()
@@ -73,14 +74,17 @@ def test_channel_switch_for_hdr_keeps_display_option_out_of_decoder(view, tmp_pa
     panel._on_selection_changed()
     for index in range(panel._channel_combo.count()):
         panel._channel_combo.setCurrentIndex(index)
+        wait_preview(qtbot, panel)
     panel._false_color_box.setChecked(True)
+    wait_preview(qtbot, panel)
     assert set(received) >= {'r', 'g', 'b', 'alpha', 'luminance'}
     assert not item.pixmap().isNull()
 
 
-def test_decode_error_preserves_previous_preview(view, tmp_path, monkeypatch):
+def test_decode_error_preserves_previous_preview(view, tmp_path, monkeypatch, qtbot):
     from prism.widgets import detail_panel
     from tests.test_material_features import image_item
+    from tests.test_inspection_preview import wait_preview
 
     path = tmp_path / 'broken.exr'
     path.touch()
@@ -94,5 +98,6 @@ def test_decode_error_preserves_previous_preview(view, tmp_path, monkeypatch):
         raise RuntimeError('bad image data')
     monkeypatch.setattr(detail_panel, 'load_image', fail)
     panel._channel_combo.setCurrentIndex(1)
+    wait_preview(qtbot, panel)
     assert item.pixmap().toImage() == before
     assert '保留原图' in panel._hdr_hint.text()

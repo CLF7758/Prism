@@ -21,6 +21,12 @@ def main():
     directory.mkdir(parents=True, exist_ok=True)
     output = sys.stdout
     sys.stdout = sys.stderr  # Upstream prints must never corrupt the protocol.
+
+    def send(event, **fields):
+        output.write(json.dumps(dict(event=event, **fields), ensure_ascii=False)+'\n')
+        output.flush()
+
+    send('startup', phase='imports')
     sys.path.insert(0, str(source))
     from PyQt5 import QtCore, QtGui, QtWidgets
     from manager.pin_window_manager import PinWindowManager
@@ -28,6 +34,7 @@ def main():
     from plugin import pluginMgr, GlobalEventEnum
     from common import cfg
 
+    send('startup', phase='application')
     app = QtWidgets.QApplication([])
     app.setQuitOnLastWindowClosed(False)
     cache_directory = directory/'upstream-cache'
@@ -37,10 +44,7 @@ def main():
     # Avoid a second full-screen capture + OpenCV contour scan before showing.
     cfg.isAutoFindWindow.value = False
 
-    def send(event, **fields):
-        output.write(json.dumps(dict(event=event, **fields), ensure_ascii=False)+'\n')
-        output.flush()
-
+    send('startup', phase='bridge')
     class ManualCapture(ScreenShotWindow):
         def initFindRectManager(self):
             self.findRectMgr = None

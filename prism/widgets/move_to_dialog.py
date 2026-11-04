@@ -102,7 +102,8 @@ class MoveToDialog(QtWidgets.QDialog):
         query = self.search.text().strip().casefold()
         blocked = self._forbidden()
         self.tree.clear()
-        for section in TREE_SECTIONS:
+        sections = TREE_SECTIONS + (('model',) if self.service.model_section_enabled else ())
+        for section in sections:
             if section not in self.sections:
                 continue
             item = QtWidgets.QTreeWidgetItem([SECTION_TITLES[section]])

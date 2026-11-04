@@ -48,6 +48,16 @@ class PrismLogger(logging.Logger):
 logging.setLoggerClass(PrismLogger)
 
 
+#: Rotation failures are counted rather than swallowed.  A bounded log that
+#: cannot rotate is still usable, but the bundle has to be able to say so.
+_ROTATION = {'failures': 0, 'last_error': '', 'truncations': 0}
+
+
+def rotation_failures():
+    """How many rotations failed, and what the last error looked like."""
+    return dict(_ROTATION)
+
+
 class PrismRotatingFileHandler(logging.handlers.RotatingFileHandler):
     """RotatingFileHandler that survives more than one process at once.
 
@@ -67,17 +77,20 @@ class PrismRotatingFileHandler(logging.handlers.RotatingFileHandler):
     def doRollover(self):
         try:
             super().doRollover()
-        except OSError:
+        except OSError as error:
             # A second process/native crash descriptor can lock the filename.
             # Retain a hard cap rather than letting failed rotation grow forever.
+            _ROTATION['failures'] += 1
+            _ROTATION['last_error'] = type(error).__name__
             try:
                 with open(self.baseFilename, 'r+b') as bounded:
                     bounded.seek(0, 2)
                     if self.maxBytes > 0 and bounded.tell() >= self.maxBytes*2:
                         bounded.seek(0)
                         bounded.truncate()
-            except OSError:
-                pass
+                        _ROTATION['truncations'] += 1
+            except OSError as truncation_error:
+                _ROTATION['last_error'] = type(truncation_error).__name__
             if self.stream is None:
                 try:
                     self.stream = self._open()
@@ -86,6 +99,37 @@ class PrismRotatingFileHandler(logging.handlers.RotatingFileHandler):
 
 
 qtlogger = logging.getLogger('Qt')
+_lifecycle_diagnostics = {}
+
+
+def _main_thread_stack():
+    """The stack of the GUI thread, as text.
+
+    A Qt warning that arrives on a worker thread has no Python frames of
+    its own: the destructor runs inside C++.  The GUI thread is the one
+    that dies from it, though -- it is the thread that owns the timer whose
+    id stays registered in its dispatcher -- so its stack is the useful one.
+    """
+    import sys
+    import threading
+    try:
+        frames = sys._current_frames()
+        frame = frames.get(threading.main_thread().ident)
+        if frame is None:
+            return '<no main thread frame>'
+        import traceback
+        return ''.join(traceback.format_stack(frame))
+    except Exception:                                  # pragma: no cover
+        return '<no main thread stack>'
+
+
+def _qt_thread_identity():
+    """The Qt thread that produced the message, as ``(name, id)``."""
+    try:
+        thread = QtCore.QThread.currentThread()
+        return thread.objectName(), int(thread.currentThreadId())
+    except Exception:                                  # pragma: no cover
+        return '?', 0
 
 
 def qt_message_handler(mode, context, message):
@@ -101,3 +145,30 @@ def qt_message_handler(mode, context, message):
                    f'in {context.function}')
 
     logfuncs[mode](message)
+    # Rare native lifecycle failures need the Python entry/thread, not just
+    # Qt's warning. Bound diagnostics by category to avoid warning storms.
+    category = next((key for key in ('Failed to create platform window',
+                                    'QEventDispatcherWin32::wakeUp',
+                                    'Timers cannot be stopped from another thread')
+                     if key in message), None)
+    if not category:
+        return
+    import threading
+    import traceback
+    seen = _lifecycle_diagnostics.get(category, 0) + 1
+    _lifecycle_diagnostics[category] = seen
+    if seen > 3:
+        # The details are bounded, but the count must not be: a warning that
+        # keeps coming is a different story than one that happened once,
+        # and a silent cap hides exactly that difference.
+        if seen == 4 or seen % 25 == 0:
+            qtlogger.error('Qt lifecycle repeats: %s; category=%s; seen=%d',
+                           message.split(': File ')[0], category, seen)
+        return
+    qt_name, qt_id = _qt_thread_identity()
+    qtlogger.error(
+        'Qt lifecycle context: thread=%s; qt_thread=%s/%s; category=%s; seen=%d\n'
+        'offending thread stack:\n%s'
+        'GUI thread stack:\n%s',
+        threading.current_thread().name, qt_name, qt_id, category, seen,
+        ''.join(traceback.format_stack(limit=18)), _main_thread_stack())

@@ -30,10 +30,13 @@ def target(view):
 
 
 def capture(view):
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        return
     center = view.mapToScene(view.get_view_center())
-    selected_target = dict(project_id=view.scene.project_id,
-        canvas_id=view.current_canvas_id, x=center.x(), y=center.y(),
-        choose_canvas=view._material_canvas() is not None or not view.current_canvas_id)
+    selected_target = dict(
+        project_id=view.scene.project_id, canvas_id=view.current_canvas_id,
+        x=center.x(), y=center.y(), choose_canvas=(
+            view._material_canvas() is not None or not view.current_canvas_id))
     try:
         service(view).capture(selected_target)
     except (OSError, ValueError, RuntimeError) as error:
@@ -42,8 +45,11 @@ def capture(view):
 
 def pin(view):
     canvas = view._material_canvas()
-    selected = [canvas.model().items[index.row()] for index in canvas.selectedIndexes()] if canvas else view.scene.selectedItems(user_only=True)
-    images = [logical_item(item) for item in selected if getattr(item, 'TYPE', None) == 'pixmap']
+    selected = ([canvas.model().items[index.row()]
+                 for index in canvas.selectedIndexes()]
+                if canvas else view.scene.selectedItems(user_only=True))
+    images = [logical_item(item) for item in selected
+              if getattr(item, 'TYPE', None) == 'pixmap']
     if not images:
         QtWidgets.QMessageBox.information(view, '钉在桌面', '请先选中图片')
         return
@@ -58,26 +64,63 @@ def pin(view):
 
 
 def inbox(view):
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        return
+    from prism.navigation import defer_navigation
+    if defer_navigation(view.window(), lambda: inbox(view), owner=view):
+        return
     from prism.capture_service import inbox_directory
     directory = inbox_directory()
     directory.mkdir(parents=True, exist_ok=True)
-    paths, _ = QtWidgets.QFileDialog.getOpenFileNames(view, '截图收件箱', str(directory), '截图 (*.png)')
+    paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
+        view, '截图收件箱', str(directory), '截图 (*.png)')
     if not paths:
+        return
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
         return
     selected_target = target(view)
     if selected_target is None:
+        return
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
         return
     worker = getattr(view, 'worker', None)
     if worker is not None and hasattr(worker, 'isRunning') and worker.isRunning():
         QtWidgets.QMessageBox.information(view, '截图收件箱', '正在导入素材，请稍后再试')
         return
     view.window().open_workspace_page('canvas', selected_target['canvas_id'])
-    view.do_insert_images(paths)
+    _insert_capture_images(view, paths)
+
+
+def _insert_capture_images(view, paths, **options):
+    from prism.capture_service import protect_capture_paths, release_capture_paths
+    paths = list(paths)
+    protect_capture_paths(paths)
+    view.do_insert_images(paths, **options)
+    worker = getattr(view, 'worker', None)
+    if worker is not None:
+        # The loader retains its own original bytes before completing. Keep
+        # inbox inputs protected until that asynchronous copy has finished.
+        worker.finished.connect(lambda: release_capture_paths(paths))
+        if not worker.isRunning():
+            release_capture_paths(paths)
+    else:
+        release_capture_paths(paths)
 
 
 def import_capture(view, requested_target, path):
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        return
+    from prism.navigation import defer_navigation
+
+    def callback():
+        import_capture(view, requested_target, path)
+
+    if defer_navigation(view.window(), callback, owner=view):
+        return
     selected_target = requested_target or target(view)
     if selected_target is None:
+        return
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
         return
     if selected_target['project_id'] != view.scene.project_id:
         QtWidgets.QMessageBox.information(view, '截图已保留', '截图期间已切换工程，图片没有自动导入。文件保留在：\n'+path)
@@ -86,9 +129,13 @@ def import_capture(view, requested_target, path):
         selected_target = target(view)
         if selected_target is None:
             return
+    if not getattr(view, '_allow_import_during_open', lambda: True)():
+        return
     canvas_id = selected_target['canvas_id']
-    if canvas_id != 'default-canvas' and not any(page.get('id') == canvas_id for page in view.scene.workspace_pages):
-        QtWidgets.QMessageBox.information(view, '截图已保留', '目标画布已不存在。图片保留在：\n'+path)
+    if canvas_id != 'default-canvas' and not any(
+            page.get('id') == canvas_id for page in view.scene.workspace_pages):
+        QtWidgets.QMessageBox.information(
+            view, '截图已保留', '目标画布已不存在。图片保留在：\n' + path)
         return
     worker = getattr(view, 'worker', None)
     if worker is not None and hasattr(worker, 'isRunning') and worker.isRunning():
@@ -96,4 +143,4 @@ def import_capture(view, requested_target, path):
         return
     view.window().open_workspace_page('canvas', canvas_id)
     position = view.mapFromScene(QtCore.QPointF(selected_target['x'], selected_target['y']))
-    view.do_insert_images([path], pos=position)
+    _insert_capture_images(view, [path], pos=position)

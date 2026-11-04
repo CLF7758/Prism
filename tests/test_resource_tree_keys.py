@@ -107,7 +107,7 @@ def test_shift_f10_opens_the_menu_for_the_current_row(qtbot):
 
 # ── 记忆焦点 / 展开 / 滚动 ────────────────────────────────────────────
 
-def test_expanded_folders_and_focus_come_back(qtbot):
+def test_reopening_keeps_folders_closed_and_focuses_the_containing_folder(qtbot):
     project = 'remember-me'
     service, model, view = make_tree(qtbot, project)
     folder = service.createFolder('document', '文件夹')
@@ -125,10 +125,10 @@ def test_expanded_folders_and_focus_come_back(qtbot):
     qtbot.addWidget(fresh_view)
     fresh_view.setModel(fresh_model)
 
-    assert fresh_view.isExpanded(fresh_model.index_for_id(folder['id']))
-    assert fresh_view.isExpanded(fresh_model.index_for_id(inner['id']))
+    assert not fresh_view.isExpanded(fresh_model.index_for_id(folder['id']))
+    assert not fresh_view.isExpanded(fresh_model.index_for_id(inner['id']))
     assert fresh_view.currentIndex().data(Qt.ItemDataRole.UserRole + 1) == \
-        page['id']
+        folder['id']
 
 
 def test_tree_reuses_the_window_settings_without_reopening_it(view, monkeypatch):
@@ -251,14 +251,17 @@ def test_deleting_the_last_page_opens_the_previous_one(main_window):
     assert window.current_page_id == first['pageId'], '没有后继就找前驱'
 
 
-def test_deleting_the_only_page_falls_back_to_the_canvas(main_window):
+def test_deleting_the_only_document_page_falls_back_to_the_canvas(main_window):
     window = main_window
+    canvas = create_page(window, 'canvas', '画布')
     only = create_page(window, 'document', '独苗')
     assert window.current_page_id == only['pageId']
 
     window._delete_resource_item(only['id'])
 
-    assert window.current_page_id == 'default-canvas'
+    # No page is left, so the window falls back to a canvas -- the first
+    # legal one, which is the canvas the project really stores.
+    assert window.current_page_id == canvas['pageId']
     assert window.current_page_kind == 'canvas'
 
 

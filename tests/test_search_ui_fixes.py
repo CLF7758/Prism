@@ -1,6 +1,6 @@
 from PyQt6 import QtCore, QtWidgets
 from unittest.mock import patch
-from tests.test_asset_browser import photo
+from tests.test_asset_browser import assets_only, photo
 from tests.test_unified_project_search import page
 from tests.test_search_controller import submit
 from prism.widgets.resource_tree_model import ASSET_COUNT_ROLE
@@ -29,7 +29,7 @@ def test_unclassified_and_untagged_override_previous_mindmap_type(main_window):
         controller.scope = ('page', ('mindmap', 'old-page'))
         library._navigate(target)
         assert library.search_kind == 'asset'
-        assert main_window.asset_browser.model.items == [item]
+        assert assets_only(main_window.asset_browser.model.items) == [item]
         assert controller.scope == ('project', None)
 
 

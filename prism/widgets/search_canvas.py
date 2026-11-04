@@ -6,7 +6,7 @@ from prism.i18n import _
 from prism import ui_tokens
 
 TYPE_LABELS = {'asset': 'Assets', 'document': 'Documents',
-               'mindmap': 'Mind maps', 'canvas': 'Canvases', 'material': '材质球'}
+               'mindmap': 'Mind maps', 'canvas': 'Canvases', 'material': '材质球', 'model': '模型'}
 
 
 def result_kind(result):
@@ -61,15 +61,22 @@ class SearchCard(QtWidgets.QGraphicsObject):
         elif item is not None and lod.draw_image(painter, item, preview, self.host):
             pass
         else:
-            document = QtGui.QTextDocument()
-            document.setDefaultFont(self.host.font())
-            document.setDefaultStyleSheet('body { color: '+colors['text-secondary']+'; } b { color: '+colors['accent']+'; }')
-            document.setHtml('<body>'+highlighted_text(self.result, self.result.get('snippet') or _(TYPE_LABELS.get(kind, 'Assets')))+'</body>')
-            document.setTextWidth(preview.width())
-            painter.save()
-            painter.translate(preview.topLeft())
-            document.drawContents(painter, QtCore.QRectF(0, 0, preview.width(), preview.height()))
-            painter.restore()
+            snippet = self.result.get('snippet')
+            if snippet:
+                # 搜索命中：显示命中片段，命中词高亮。
+                document = QtGui.QTextDocument()
+                document.setDefaultFont(self.host.font())
+                document.setDefaultStyleSheet('body { color: '+colors['text-secondary']+'; } b { color: '+colors['accent']+'; }')
+                document.setHtml('<body>'+highlighted_text(self.result, snippet)+'</body>')
+                document.setTextWidth(preview.width())
+                painter.save()
+                painter.translate(preview.topLeft())
+                document.drawContents(painter, QtCore.QRectF(0, 0, preview.width(), preview.height()))
+                painter.restore()
+            else:
+                # 浏览列表里没有命中片段：拿标题当封面。文档叫「虚幻五引擎」，
+                # 封面就写着「虚幻五引擎」—— 不用去渲染正文，也不用起浏览器。
+                self._paint_title_cover(painter, preview, colors)
         painter.setPen(QtGui.QColor(colors['text-primary']))
         font = painter.font()
         font.setBold(True)
@@ -84,6 +91,31 @@ class SearchCard(QtWidgets.QGraphicsObject):
                          _(TYPE_LABELS.get(kind, 'Assets')) + ' · ' + _('{count} matches').format(count=count))
         path = QtGui.QFontMetrics(font).elidedText(self.result.get('path', ''), QtCore.Qt.TextElideMode.ElideMiddle, self.WIDTH-20)
         painter.drawText(QtCore.QRectF(10, 177, self.WIDTH-20, 23), path)
+
+    def _paint_title_cover(self, painter, preview, colors):
+        """封面区画标题文字。
+
+        没有真实缩略图的东西（画布、脑图、文档）就拿标题顶上：一张大号字
+        写在封面中间，比「这是一个文档」有用得多 —— 一眼能认出是哪一页。
+        """
+        font = QtGui.QFont(self.host.font())
+        font.setPointSize(17)
+        font.setBold(True)
+        document = QtGui.QTextDocument()
+        document.setDefaultFont(font)
+        document.setDefaultStyleSheet(
+            'body { color: '+colors['text-primary']+'; }')
+        document.setTextWidth(preview.width())
+        document.setHtml('<body><div align="center">'
+                         + html.escape(self.result.get('title', ''))
+                         + '</div></body>')
+        height = document.size().height()
+        offset = max(0.0, (preview.height() - height) / 2)
+        painter.save()
+        painter.translate(preview.topLeft() + QtCore.QPointF(0, offset))
+        document.drawContents(painter, QtCore.QRectF(
+            0, 0, preview.width(), preview.height()))
+        painter.restore()
 
     def mouseDoubleClickEvent(self, event):
         self.host.open_result.emit(self.result)

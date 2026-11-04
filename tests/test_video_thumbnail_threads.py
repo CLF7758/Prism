@@ -2,7 +2,7 @@
 import builtins
 import threading
 
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtWidgets, sip
 
 from prism import video_thumbnails
 
@@ -33,4 +33,27 @@ def test_cold_or_missing_codec_never_loads_on_gui_thread(qapp, qtbot, tmp_path, 
     assert fallbacks == [gui_thread]
     assert not service.running
     service.pool.waitForDone(5000)
+    service.deleteLater()
+
+
+def test_worker_does_not_emit_to_deleted_signals(qapp, monkeypatch):
+    task = video_thumbnails.Decode(('fixture', 0, 0))
+    monkeypatch.setattr(video_thumbnails, 'opening_frame', lambda _path: (None, {}))
+    sip.delete(task.signals)
+    task.run()  # Used to escape QRunnable.run and abort Windows process exit.
+
+
+def test_shutdown_blocks_new_decode_and_late_fallback(qapp, monkeypatch):
+    from unittest.mock import Mock
+    service = video_thumbnails.Thumbnails(qapp)
+    decode = Mock(side_effect=AssertionError('shutdown must not decode'))
+    monkeypatch.setattr(video_thumbnails, 'opening_frame', decode)
+    task = video_thumbnails.Decode(('fixture', 0, 0), service.closed)
+    service.waiting[('waiting', 0, 0)] = None
+    service.close()
+    service.close()
+    task.run()
+    assert service.closed.is_set() and not service.waiting and not service.clients
+    service.done(('fixture', 0, 0), None, {'error': 'late'})
+    decode.assert_not_called()
     service.deleteLater()

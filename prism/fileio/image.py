@@ -370,17 +370,20 @@ def exif_rotated_image(path=None, hdr_options=None):
     return img
 
 
-def load_image(path, hdr_options=None):
+def load_image(path, hdr_options=None, *, with_source=False):
+    def result(image, name, blob=None):
+        return (image, name, blob) if with_source else (image, name)
     if isinstance(path, str):
         path = os.path.normpath(path)
-        return (exif_rotated_image(path, hdr_options), path)
+        return result(exif_rotated_image(path, hdr_options), path)
     if path.isLocalFile():
         path = os.path.normpath(path.toLocalFile())
-        return (exif_rotated_image(path, hdr_options), path)
+        return result(exif_rotated_image(path, hdr_options), path)
 
     url = bytes(path.toEncoded()).decode()
     domain = '.'.join(parse.urlparse(url).netloc.split(".")[-2:])
     img = exif_rotated_image(None, hdr_options)
+    imgdata = None
     if domain == 'pinterest.com':
         try:
             with request.urlopen(url, timeout=20) as response:
@@ -396,7 +399,7 @@ def load_image(path, hdr_options=None):
             imgdata = response.read(50 * 1024 * 1024 + 1)
         if len(imgdata) > 50 * 1024 * 1024:
             logger.warning('Image download exceeds 50 MiB: %s', url)
-            return (img, url)
+            return result(img, url)
     except (URLError, OSError) as e:
         logger.debug('Downloading image failed: %s', e)
     else:
@@ -406,4 +409,4 @@ def load_image(path, hdr_options=None):
                 f.write(imgdata)
                 logger.debug(f'Temporarily saved in: {fname}')
             img = exif_rotated_image(fname, hdr_options)
-    return (img, url)
+    return result(img, url, imgdata)

@@ -252,7 +252,12 @@ class SelectableMixin(BaseItemMixin):
         painter.setBrush(QtGui.QBrush())
 
         # Draw rounded selection rectangle
-        painter.drawRoundedRect(rect, 3, 3)
+        if isinstance(self, QtWidgets.QGraphicsTextItem):
+            # 文字框是直角：框的视觉边界、命中边界、导出边界必须是
+            # 同一个矩形。
+            painter.drawRect(rect)
+        else:
+            painter.drawRoundedRect(rect, 3, 3)
 
         # If it's a single selection, draw circular handles:
         if self.has_selection_handles():

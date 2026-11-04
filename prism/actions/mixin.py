@@ -24,6 +24,32 @@ from .menu_structure import menu_structure, MENU_SEPARATOR
 from prism.i18n import _
 
 
+#: 这些动作动的是**画布上的东西**：选区、图元、画布视图、画布自己的撤销栈。
+#: 它们的快捷键必须跟着画布走。
+#:
+#: 做成窗口级会有两个后果：网页面板（脑图、文档编辑器）拿到焦点时这些按键
+#: 照样会响 —— 脑图里 Ctrl+Z 撤的是画布、Ctrl+C 复制的是画布、Del 删的是
+#: 画布上的图元，而且在节点名里打一个 "v" 会把画布上的图元上下翻转；
+#: 更糟的是 Qt 先匹配快捷键，**焦点控件根本收不到那个按键**，面板自己的
+#: 快捷键（脑图的 Del / Ctrl+Z / Ctrl+C）就永远不触发。
+#:
+#: 故意**不在**名单里的：select_all / deselect_all / fit_scene /
+#: fit_selection / arrange_optimal —— 这几个动作在素材浏览器页是**同一个
+#: 动作**（``view._material_canvas()`` 会把它们转给浏览器的画布），收窄了
+#: 浏览器就没有 Ctrl+A 了。脑图因此还拿不到 Ctrl+A，这是已知缺口，
+#: 要补得让素材浏览器自己拥有一个 Ctrl+A 快捷键，不在这次范围里。
+CANVAS_SCOPED_ACTIONS = frozenset((
+    'undo', 'redo',
+    'copy', 'cut', 'paste', 'delete',
+    'insert_text', 'insert_images',
+    'grayscale', 'crop',
+    'flip_horizontally', 'flip_vertically', 'reset_transforms',
+    'group_selection', 'ungroup_selection', 'edit_notes',
+    'actual_size',
+    'export_scene',
+))
+
+
 class ActionsMixin:
 
     def actiongroup_set_enabled(self, group, value):
@@ -51,6 +77,16 @@ class ActionsMixin:
             }
             for definition in actions.values():
                 action = definition.qaction
+                if (definition.id=='fit_scene' and action is not None
+                        and action.parent() is self):
+                    # Reset delegates to the displayed aggregate canvas; it
+                    # is safe even while scene-editing shortcuts are blocked.
+                    # The keyboard shortcut itself now belongs to the canvas
+                    # (see CANVAS_SCOPED_ACTIONS), but the menu entry stays
+                    # usable from here.
+                    blocked[action]=action.isEnabled()
+                    action.setEnabled(True)
+                    continue
                 if action is not None and action.parent() is self and (
                         definition.group in canvas_groups
                         or definition.id in canvas_ids):
@@ -112,7 +148,9 @@ class ActionsMixin:
             else:
                 qaction.triggered.connect(getattr(self, action.callback))
             self.addAction(qaction)
-            if action.id in ('group_selection', 'ungroup_selection'):
+            if action.id in CANVAS_SCOPED_ACTIONS:
+                # 画布的动作，画布自己扛：别的面板拿到焦点时，这些按键
+                # 得留给那个面板（脑图的 Ctrl+Z、文档编辑器的 Ctrl+V）。
                 qaction.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
             qaction.setEnabled(action.enabled)
             if action.group:
@@ -163,7 +201,9 @@ class ActionsMixin:
 
             if i < len(files):
                 filename = files[i]
-                qaction = QtGui.QAction(os.path.basename(filename), self)
+                from prism.storage.entrypoint import display_project_name
+                qaction = QtGui.QAction(display_project_name(filename), self)
+                qaction.setToolTip(filename)
                 qaction.setShortcuts(action.get_shortcuts())
                 qaction.triggered.connect(
                     partial(self.on_action_open_recent_file, filename))

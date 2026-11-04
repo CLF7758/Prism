@@ -9,8 +9,12 @@ def test_reference_reuses_native_tools_and_renders_annotation(qapp, qtbot):
     window = DesktopReference(image)
     window.show()
     assert isinstance(window.toolbar, CanvasToolbar)
+    assert window.toolbar.zoom_slider.isHidden()
+    assert window.toolbar.zoom_in_button.isHidden()
+    assert window.toolbar.zoom_out_button.isHidden()
     assert window.canvas.reference.pixmap().toImage().pixelColor(0, 0).blue() == 255
     window.show_tools()
+    assert window.toolbar.zoom_slider.isHidden()
     assert window.canvas.tool == 'pen'
     path = QtGui.QPainterPath(QtCore.QPointF(30, 30))
     path.lineTo(150, 100)

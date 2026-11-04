@@ -94,3 +94,43 @@ def test_failed_mindmap_readback_does_not_overwrite_scene(main_window, monkeypat
     assert panel._scene_tree() == original
     panel._ready = False
     panel.web_view = None
+
+
+def test_same_page_document_replacement_during_sync_flush_is_preserved(main_window, monkeypatch):
+    panel = main_window.document_panel
+    panel._content_loaded = True
+    panel._html = '<p>old document</p>'
+
+    def flush():
+        panel._snapshot_epoch = getattr(panel, '_snapshot_epoch', 0) + 1
+        panel._set_scene_html('<p>new imported document</p>')
+        return '<p>old document</p>'
+
+    monkeypatch.setattr(panel, '_flush_from_page', flush)
+    assert panel.store_to_scene() is False
+    assert panel._scene_html() == '<p>new imported document</p>'
+
+
+def test_same_page_mindmap_replacement_during_sync_flush_is_preserved(main_window, monkeypatch):
+    import json
+    panel = main_window.mindmap_panel
+    old = {'data': {'text': 'old map', 'uid': 'old-root'}, 'children': []}
+    new = {'data': {'text': 'new map', 'uid': 'new-root'}, 'children': []}
+    panel._set_scene_tree(old)
+    panel._tree = old
+    panel._ready = True
+    panel._pending_tree = None
+    panel._tree_loading = False
+    panel.web_view = SimpleNamespace(page=lambda: None)
+
+    def read(*args, **kwargs):
+        panel._snapshot_epoch = getattr(panel, '_snapshot_epoch', 0) + 1
+        panel._tree = new
+        panel._set_scene_tree(new)
+        return json.dumps({'tree': old})
+
+    monkeypatch.setattr('prism.widgets.editor_snapshot.read_editor_snapshot', read)
+    assert panel.store_to_scene() is False
+    assert panel._scene_tree() == new
+    panel._ready = False
+    panel.web_view = None

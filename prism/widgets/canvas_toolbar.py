@@ -1,7 +1,10 @@
 """Native implementation of the approved web prototype's canvas toolbar."""
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt
-from prism import ui_tokens
+from prism import camera_policy, ui_tokens
+from prism.actions.actions import actions
+from prism.config import settings_events
+from prism.i18n import _
 from prism.items import COLOR_GROUPS, ARROW_END, ARROW_NONE
 from prism.widgets.components.icons import icon
 
@@ -41,7 +44,9 @@ class CanvasToolbar(QtWidgets.QWidget):
     def __init__(self, view, colour_host, parent=None, *, canvas=None, annotation_only=False):
         super().__init__(parent)
         self.view, self.colour_host = view, colour_host
+        self._annotation_only = annotation_only
         self._canvas_override = canvas
+        self.text_style = None
         self.setObjectName('canvasToolbar')
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(56)
@@ -121,12 +126,30 @@ class CanvasToolbar(QtWidgets.QWidget):
         self.style_combo.activated.connect(lambda: view.set_line_style(self.style_combo.currentData()))
         row.addWidget(self.style_combo)
         if not annotation_only:
+            from prism.widgets.canvas_text_style import CanvasTextStyle
+            self.text_style = CanvasTextStyle(view, self._selected_text_items, view.viewport())
+            view.scene.selectionChanged.connect(self._refresh_text_style)
+            view.undo_stack.indexChanged.connect(self._refresh_text_style)
+        if not annotation_only:
             self.separator(row)
-            self.button(row, '适应全部 (Ctrl+0)', self.fit_all, image=icon('fit-all'))
-            self.button(row, '回到中心（保持缩放）', self.centre, image=icon('center'))
+            self.camera_button = self.button(
+                row, self.camera_label(), self.fit_all, image=icon('fit-all'))
+            self.centre_button = self.button(row, '回到中心（保持缩放）', self.centre, image=icon('center'))
             row.addStretch()
         self.scroll.setWidget(content)
         outer.addWidget(self.scroll, 1)
+        self.zoom_slider=QtWidgets.QSlider(Qt.Orientation.Horizontal)
+        self.zoom_slider.setObjectName('canvasZoomSlider')
+        self.zoom_slider.setRange(-600,600);self.zoom_slider.setValue(0)
+        self.zoom_slider.setFixedWidth(110)
+        self.zoom_slider.setToolTip('缩放；Ctrl + 滚轮也可调整')
+        self.zoom_out_button=self.button(outer,'缩小',lambda:self.zoom_slider.setValue(self.zoom_slider.value()-12),text='−')
+        outer.addWidget(self.zoom_slider)
+        self.zoom_in_button=self.button(outer,'放大',lambda:self.zoom_slider.setValue(self.zoom_slider.value()+12),text='+')
+        self.zoom_slider.valueChanged.connect(self._zoom_to)
+        if not annotation_only:
+            self.view.zoom_changed.connect(self._sync_zoom)
+
         self.separator(outer)
         self.filter_button = self.button(outer, '筛选：标签 / 评分 / 颜色 / 未标记', self.filter_requested.emit, image=icon('filter'), text='筛选')
         self.filter_button.setFixedWidth(68)
@@ -144,7 +167,47 @@ class CanvasToolbar(QtWidgets.QWidget):
             content.layout().activate()
             self.setFixedWidth(content.sizeHint().width()+12)
         view.drawing_state_changed.connect(self.refresh)
+        settings_events.restore_keyboard_defaults.connect(self._refresh_camera_label)
+        if not annotation_only:
+            tabs = getattr(view.parent, 'tabs', None)
+            if tabs is not None:
+                tabs.currentChanged.connect(lambda _index: self.refresh())
         self.refresh()
+
+    def _selected_text_items(self):
+        if self.material_canvas() is not None:
+            return []
+        return [item for item in self.view.scene.selectedItems(user_only=True)
+                if getattr(item, 'TYPE', None) == 'text' and hasattr(item, 'style')]
+
+    def _refresh_text_style(self, *_args):
+        if self.text_style is None:
+            return
+        self.text_style.refresh()
+
+    def camera_label(self):
+        """The name of the camera button plus the shortcuts that really work.
+
+        The shortcut is read from the action instead of being written down,
+        so the hint cannot drift away from what the user can actually
+        press -- a user who changed the shortcut in the settings sees their
+        own shortcut here.
+        """
+        action = actions.get('fit_scene')
+        shortcuts = action.get_shortcuts() if action is not None else []
+        label = _('Reset Camera')
+        if shortcuts:
+            return f'{label} ({", ".join(shortcuts)})'
+        return label
+
+    def _refresh_camera_label(self):
+        """Keep the camera button's hint in step with the action."""
+        button = getattr(self, 'camera_button', None)
+        if button is None:
+            return
+        label = self.camera_label()
+        button.setToolTip(label)
+        button.setAccessibleName(label)
 
     @staticmethod
     def colour_icon(colour, rainbow=False, grayscale=False):
@@ -199,6 +262,8 @@ class CanvasToolbar(QtWidgets.QWidget):
     def activate(self, tool):
         canvas = self.material_canvas()
         if canvas is not None:
+            if getattr(canvas, 'is_asset_grid', False):
+                return  # The library has selection, not drawing/annotation tools.
             canvas.activate(tool)
             self.refresh()
             return
@@ -225,20 +290,38 @@ class CanvasToolbar(QtWidgets.QWidget):
         self.view.set_pen_width(width)
 
     def centre(self):
+        """Centre the camera on the content, keeping the current zoom.
+
+        The bounds come from the same provider the camera reset uses, so
+        "back to centre" and "reset camera" agree on where the content is.
+        """
         canvas = self.material_canvas()
         if canvas is not None:
-            bounds = canvas.scene().itemsBoundingRect()
-            canvas.centerOn(bounds.center())
+            if getattr(canvas, 'is_asset_grid', False):
+                canvas.scrollTo(canvas.currentIndex())
+                return
+            bounds = camera_policy.aggregate_content_bounds(canvas)
+            if bounds is not None:
+                canvas.centerOn(bounds.center())
             return
-        items = [item for item in self.view.scene.items_for_save() if item.isVisible()]
-        if items:
-            bounds = items[0].sceneBoundingRect()
-            for item in items[1:]:
-                bounds = bounds.united(item.sceneBoundingRect())
+        bounds = camera_policy.visible_asset_bounds(self.view)
+        if bounds is not None:
             self.view.centerOn(bounds.center())
-
     def refresh(self):
+        self._refresh_text_style()
         canvas = self.material_canvas()
+        grid = bool(getattr(canvas, 'is_asset_grid', False))
+        if hasattr(self,'thumbnail_zoom_bar'):self.thumbnail_zoom_bar.setVisible(grid)
+        for control in (self.zoom_slider,self.zoom_out_button,self.zoom_in_button):
+            control.setVisible(not grid and not self._annotation_only)
+        self._sync_zoom()
+        for key, button in self.tools.items():
+            button.setVisible(not grid)
+        for control in (self.swatch, self.width_combo, self.style_combo,
+                        getattr(self, 'camera_button', None), getattr(self, 'centre_button', None)):
+            if control is not None:
+                control.setVisible(not grid)
+        self._refresh_camera_label()
         for group, button in self.colours.items():
             active_group = canvas.colour_group if canvas is not None else self.colour_host._active_group
             button.setChecked(group == (active_group or 'all'))
@@ -265,6 +348,25 @@ class CanvasToolbar(QtWidgets.QWidget):
         self.width_combo.blockSignals(False)
         self.style_combo.setCurrentIndex(self.style_combo.findData(self.view._line_style))
 
+    def _zoom_to(self,value):
+        canvas=self.material_canvas()
+        if canvas is not None and getattr(canvas,'is_asset_grid',False):
+            browser=getattr(self.view.parent,'asset_browser',None)
+            if browser is not None:browser.zoom_slider.setValue(96+round((value+600)*184/1200))
+            return
+        target=canvas if canvas is not None else self.view
+        current=target.transform().m11()
+        scale=2**(value/100)
+        if current>0:target.scale(scale/current,scale/current)
+        self.view.parent._update_status({},interaction=True)
+
+    def _sync_zoom(self,*args):
+        import math
+        target=self.material_canvas() or self.view
+        if getattr(target,'is_asset_grid',False):return
+        value=round(100*math.log2(max(1e-6,target.transform().m11())))
+        with QtCore.QSignalBlocker(self.zoom_slider):self.zoom_slider.setValue(value)
+
     def material_canvas(self):
         if self._canvas_override is not None:
             return self._canvas_override
@@ -286,13 +388,26 @@ class CanvasToolbar(QtWidgets.QWidget):
         self.refresh()
 
     def fit_all(self):
+        """Reset the camera of the canvas that is on screen.
+
+        The aggregate canvas is fitted here through the shared policy, and
+        the reset is bound to the content generation so that a layout that
+        lands afterwards is fitted as well.
+
+        The main canvas is still fitted by the view.  Its own
+        ``on_action_fit_scene`` switches to the shared policy in the same
+        step where the view is handed over, so the toolbar, the menu, the
+        shortcut and the right-click entry cannot drift apart in between.
+        """
         canvas = self.material_canvas()
         if canvas is not None:
-            bounds = canvas.scene().itemsBoundingRect()
-            if not bounds.isEmpty():
-                canvas.fitInView(bounds.adjusted(-20, -20, 20, 20), Qt.AspectRatioMode.KeepAspectRatio)
-                callback = getattr(self.view.window(), '_update_status', None)
-                if callback is not None:
-                    callback({})
+            if getattr(canvas, 'is_asset_grid', False):
+                canvas.reset_position()
+                return
+            camera_policy.request_reset(
+                canvas, camera_policy.aggregate_content_bounds)
+            callback = getattr(self.view.window(), '_update_status', None)
+            if callback is not None:
+                callback({})
         else:
             self.view.on_action_fit_scene()

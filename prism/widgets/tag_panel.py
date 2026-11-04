@@ -63,7 +63,7 @@ def notify_tag_change(view):
 
 # ── The tree of one project ───────────────────────────────────────────
 
-def project_tag_nodes(scene):
+def project_tag_nodes(scene, catalog=None):
     """The project's tags as one tree: catalogue, assets and pages.
 
     The sidebar and the tag manager show the same tree, so this is the
@@ -71,6 +71,8 @@ def project_tag_nodes(scene):
     many things carry the tag - while ``asset`` keeps the part of it that
     is assets, which is what tells a pure page tag apart.
     """
+    if catalog is not None:
+        return _catalog_tag_nodes(scene, catalog)
     asset_counts = tags.tag_names_of_items(scene)
     totals = dict(asset_counts)
     for page in getattr(scene, 'workspace_pages', []) or []:
@@ -78,6 +80,102 @@ def project_tag_nodes(scene):
             totals[name] = totals.get(name, 0) + 1
     return tags.build_tree(tags.scene_tag_names(scene), totals,
                            tags.tag_system(scene), asset_counts=asset_counts)
+
+
+def _catalog_tag_nodes(scene, catalog):
+    """Shared sidebar/manager view; legacy resident APIs retain their contract.
+
+    **The three carriers are counted separately.**  An asset, a material
+    record and a page can all wear the same tag, but they are different
+    things: filtering assets must not match a material, and a page tag is
+    not an asset count.
+
+    The tree rows keep the rule they always had - ``node.count`` is
+    everything that wears the tag and ``node.asset`` is the part that is
+    not a page - because the node type has fixed slots and the rows are
+    read by other modules.  The **split** (asset / material / page) lives
+    next to the tree in ``scene._catalog_tag_typed_counts`` and is what the
+    count contract publishes.
+
+    Aliases and implied parents are folded by **carrier**: one asset is
+    counted once per name it can be found by, never once per row.
+    """
+    from collections import Counter
+    from prism.material_service import iter_visible_materials
+    distribution = catalog.tag_distribution()
+    unknown = distribution is None
+    assets = Counter(distribution or {})
+    materials = Counter()
+    for record in iter_visible_materials(scene):
+        names = tuple(sorted(set(str(n).strip() for n in record.get('tags', []) if str(n).strip())))
+        if names:
+            materials[names] += 1
+    pages = Counter()
+    deleted_pages = catalog._deleted_page_ids()
+    for page in getattr(scene, 'workspace_pages', []) or []:
+        if page.get('deletedAt') is None and page.get('id') not in deleted_pages:
+            names = tuple(sorted(set(str(n).strip() for n in page.get('tags', []) if str(n).strip())))
+            if names:
+                pages[names] += 1
+    total = assets + materials + pages
+    raw, raw_assets = Counter(), Counter()
+    for names, amount in total.items():
+        for name in names:
+            raw[name] += amount
+    for names, amount in assets.items():
+        for name in names:
+            raw_assets[name] += amount
+    names = set(getattr(scene, 'tag_names', []) or []) | set(raw)
+    if unknown:
+        # Preserve known resident names while withholding their partial counts.
+        # With a ready directory never enumerate the scene merely for names.
+        for item in catalog.asset_items():
+            names.update(str(n).strip() for n in getattr(item, '_tags', []) or [] if str(n).strip())
+    system = tags.tag_system(scene)
+    # Content-key the assembled distribution. Counts/aliases/page edits must
+    # invalidate it even if the scene or directory object itself is unchanged.
+    cache_key = (getattr(scene, 'project_id', None), unknown, tuple(sorted(names)),
+                 tuple(sorted(assets.items())), tuple(sorted(materials.items())),
+                 tuple(sorted(pages.items())),
+                 getattr(system, '_token', None), getattr(system, '_revision', None))
+    cached = getattr(scene, '_catalog_tag_tree_cache', None)
+    if cached is not None and cached[0] == cache_key:
+        scene._catalog_tag_typed_counts = cached[2]
+        return cached[1]
+    nodes = tags.build_tree(names, raw, system, asset_counts=raw_assets)
+    # Count matches once per carrier, including overlapping aliases/paths.
+    matches, asset_matches = Counter(), Counter()
+    typed = {'asset': Counter(), 'material': Counter(), 'page': Counter()}
+    direct = Counter()
+    for names, amount in total.items():
+        for name in tags.name_index(names, system):
+            matches[name] += amount
+            asset_matches[name] += assets.get(names, 0)
+            typed['asset'][name] += assets.get(names, 0)
+            typed['material'][name] += materials.get(names, 0)
+            typed['page'][name] += pages.get(names, 0)
+        for name in {system.canonical(n) for n in names}:
+            direct[name] += amount
+    for node in nodes:
+        node.count = None if unknown else matches[node.name.casefold()]
+        node.direct = None if unknown else direct[node.name]
+        node.asset = None if unknown else asset_matches[node.name.casefold()]
+    typed_counts = {basis: {name: (value if not unknown else None)
+                            for name, value in counter.items()}
+                    for basis, counter in typed.items()}
+    scene._catalog_tag_tree_cache = (cache_key, nodes, typed_counts)
+    scene._catalog_tag_typed_counts = typed_counts
+    return nodes
+
+
+def project_tag_typed_counts(scene, catalog=None):
+    """The tag counts split by what carries the tag.
+
+    ``{'asset': {name: count}, 'material': {...}, 'page': {...}}``.
+    The counters are whole project numbers; ``None`` means unknown.
+    """
+    project_tag_nodes(scene, catalog)
+    return getattr(scene, '_catalog_tag_typed_counts', None) or {}
 
 
 # ── Rows ──────────────────────────────────────────────────────────────
@@ -101,6 +199,10 @@ def page_only(node):
     Such a row is worth showing - the pages are organised with it - but
     no asset will ever match it, and the sidebar says so instead of
     leaving the user with an empty board and no explanation.
+
+    ``node.asset`` is the part of the tag that is **not** a page: assets
+    and material records.  A material-only tag is therefore not a page
+    tag, and it keeps its own rows in the material library.
     """
     return bool(node.direct) and not getattr(node, 'asset', 0)
 
@@ -168,7 +270,8 @@ def tag_row_text(node):
         label += ' (' + '、'.join(node.aliases) + ')'
     if page_only(node):
         label += _(' (page only)')
-    return f'{label}   ({node.count})'
+    count = _('Preparing…') if node.count is None else node.count
+    return f'{label}   ({count})'
 
 
 class TagDropList(QtWidgets.QListWidget):
@@ -732,7 +835,8 @@ class TagPanel(QtWidgets.QDialog):
             self._building = False
 
     def _tree_nodes(self):
-        return project_tag_nodes(self.scene)
+        catalog = getattr(getattr(self.view, 'category_panel', None), 'catalog', None)
+        return project_tag_nodes(self.scene, catalog)
 
     def _rebuild_rows(self):
         selected = self._current

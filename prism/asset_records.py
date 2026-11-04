@@ -8,6 +8,23 @@ from prism.selection import with_anchor
 
 MIN_VIRTUAL_IMAGES = 2000
 
+#: Cached `PrismPixmapItem`, used by the fallback attribute lookup.
+#:
+#: `prism.items` imports this module, so the import cannot run at module
+#: level -- but doing it inside `__getattr__` means **every** miss pays for
+#: an import lookup. The trace put this on the hot path: the asset browser
+#: probes 100 000 records for a marker attribute, and for the ones that do
+#: not carry it each probe arrived here and raised.
+_PIXMAP_ITEM = None
+
+
+def _pixmap_item_class():
+    global _PIXMAP_ITEM
+    if _PIXMAP_ITEM is None:
+        from prism.items import PrismPixmapItem
+        _PIXMAP_ITEM = PrismPixmapItem
+    return _PIXMAP_ITEM
+
 
 class ImageRecord(ImageSourceMixin, ItemMetadataMixin):
     _is_asset_record = True
@@ -16,12 +33,13 @@ class ImageRecord(ImageSourceMixin, ItemMetadataMixin):
     is_editable = False
     GraphicsItemFlag = QtWidgets.QGraphicsItem.GraphicsItemFlag
 
-    def __init__(self, data, source):
+    def __init__(self, data, source, *, _owned_extra=False, _defer_geometry=False):
         extra = data.get('data', {})
         self.save_id = data.get('save_id')
         self.filename = extra.get('filename')
-        self._extra_data = copy.deepcopy(extra)
-        self._position = QtCore.QPointF(data.get('x', 0), data.get('y', 0))
+        self._extra_data = extra if _owned_extra else copy.deepcopy(extra)
+        if not _defer_geometry:
+            self._position = QtCore.QPointF(data.get('x', 0), data.get('y', 0))
         self._scale = data.get('scale', 1)
         self._rotation = data.get('rotation', 0)
         self._flip = data.get('flip', 1)
@@ -33,14 +51,14 @@ class ImageRecord(ImageSourceMixin, ItemMetadataMixin):
         self._scene_ref = None
         self._disposed = False
         self._sequence = 0
-        self._asset_record = self
         self._source_blob = None
         self._source_pinned = False
         self._source_path = None
         self._prism_source = source
         self._source_format = self._normalise_format(extra.get('sourceFormat')) or self._format_from_filename(self.filename)
-        self._image_size = QtCore.QSize(extra['imageWidth'], extra['imageHeight'])
-        self._crop = QtCore.QRectF(*extra['crop']) if 'crop' in extra else QtCore.QRectF(QtCore.QPointF(), QtCore.QSizeF(self._image_size))
+        if not _defer_geometry:
+            self._image_size = QtCore.QSize(extra['imageWidth'], extra['imageHeight'])
+            self._crop = QtCore.QRectF(*extra['crop']) if 'crop' in extra else QtCore.QRectF(QtCore.QPointF(), QtCore.QSizeF(self._image_size))
         self._grayscale = bool(extra.get('grayscale', False))
         self._grayscale_cache = None
         self._preview_pixmap = None
@@ -61,9 +79,17 @@ class ImageRecord(ImageSourceMixin, ItemMetadataMixin):
         self.viewport_scale = 1
         self._flags = (self.GraphicsItemFlag.ItemIsMovable | self.GraphicsItemFlag.ItemIsSelectable |
                        self.GraphicsItemFlag.ItemSendsGeometryChanges)
-        self.init_metadata()
+        # The complete loader initializes every metadata field directly; do
+        # not allocate empty tags/categories only to replace both immediately.
         self.load_metadata_from_data(extra)
         self.apply_deleted_state()
+
+    @property
+    def _asset_record(self):
+        # Compatibility for callers asking a logical record for its owner.
+        # Never store self in __dict__: passive catalog rows must be released
+        # by reference counting, rather than accumulating until generation 2.
+        return self
 
     def scene(self):
         return self._scene_ref() if self._scene_ref is not None else None
@@ -88,10 +114,10 @@ class ImageRecord(ImageSourceMixin, ItemMetadataMixin):
         # Metadata probes must never allocate a graphics object.
         if name.startswith('_'):
             raise AttributeError(name)
-        from prism.items import PrismPixmapItem
-        if not hasattr(PrismPixmapItem, name):
+        pixmap_item = _pixmap_item_class()
+        if not hasattr(pixmap_item, name):
             raise AttributeError(name)
-        value = getattr(PrismPixmapItem, name)
+        value = getattr(pixmap_item, name)
         if callable(value):
             return lambda *args, **kwargs: getattr(self.graphics_item(), name)(*args, **kwargs)
         return getattr(self.graphics_item(), name)
@@ -252,7 +278,20 @@ class ImageRecord(ImageSourceMixin, ItemMetadataMixin):
     def center_scene_coords(self): return self.mapToScene(self.center)
     @property
     def corners_scene_coords(self):
-        return [self.mapToScene(p) for p in (self._crop.topLeft(), self._crop.topRight(), self._crop.bottomRight(), self._crop.bottomLeft())]
+        # Build the scene transform ONCE and map the four corners with it.
+        #
+        # `mapToScene` rebuilds the transform on every call (translate, scale,
+        # rotate, scale -- four matrix multiplies), so computing the corners
+        # through it did that work four times per item. The scene's bounding
+        # rect asks for the corners of every record, and with 100 000 records
+        # that was 1.6 million matrix multiplies per query -- the trace put
+        # it at 25.3 s of paint events and 10.6 s of canvas switches.
+        #
+        # The result is the same points; only the transform is built once.
+        transform = self.sceneTransform()
+        crop = self._crop
+        return [transform.map(point) for point in
+                (crop.topLeft(), crop.topRight(), crop.bottomRight(), crop.bottomLeft())]
 
     def sceneTransform(self):
         if self._graphics is not None:

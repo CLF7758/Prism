@@ -4,7 +4,7 @@ from PyQt6.QtCore import Qt
 
 from prism.widgets.material_cards import material_source_label, material_version_label, ASSETS
 from prism.material_textures import SLOTS
-from prism.widgets.material_slots import MaterialSlot
+from prism.widgets.material_slots import MaterialSlot, configure_material_slot_column
 
 
 CHANNEL_NAMES = {
@@ -24,6 +24,176 @@ def plain_label(text=''):
     return label
 
 
+class _StatusLine(QtWidgets.QLabel):
+    """A reserved, elided line whose QLabel text remains the complete status."""
+
+    def __init__(self, text=''):
+        super().__init__(text)
+        self._updating_height = False
+        self._window = None
+        self._screen = None
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setWordWrap(False)
+        policy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                                      QtWidgets.QSizePolicy.Policy.Fixed)
+        policy.setRetainSizeWhenHidden(True)
+        self.setSizePolicy(policy)
+        self.setToolTip(text)
+        self._refresh_row_height()
+
+    def setText(self, text):
+        super().setText(text)
+        self.setToolTip(text)
+        self.update()
+
+    def clear(self):
+        self.setText('')
+
+    def setMargin(self, margin):
+        super().setMargin(margin)
+        self._refresh_row_height()
+
+    def sizeHint(self):
+        return QtCore.QSize(0, self.minimumHeight())
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
+
+    def _refresh_row_height(self, *_args):
+        if getattr(self, '_updating_height', True):
+            return
+        self._updating_height = True
+        try:
+            margins = self.contentsMargins()
+            height = max(1, self.fontMetrics().height() + margins.top() + margins.bottom()
+                         + 2 * self.margin())
+            if self.minimumHeight() != height or self.maximumHeight() != height:
+                self.setFixedHeight(height)
+        finally:
+            self._updating_height = False
+        self.update()
+
+    def changeEvent(self, event):
+        # Let Qt resolve the inherited font first; never setFont from FontChange.
+        super().changeEvent(event)
+        if event.type() in (QtCore.QEvent.Type.FontChange, QtCore.QEvent.Type.StyleChange):
+            self._refresh_row_height()
+
+    def event(self, event):
+        result = super().event(event)
+        if event.type() in (QtCore.QEvent.Type.ContentsRectChange,
+                            QtCore.QEvent.Type.Polish,
+                            QtCore.QEvent.Type.DevicePixelRatioChange):
+            self._refresh_row_height()
+        return result
+
+    def _bind_screen(self, screen):
+        if self._screen is not screen:
+            if self._screen is not None:
+                try:
+                    self._screen.logicalDotsPerInchChanged.disconnect(self._refresh_row_height)
+                except (TypeError, RuntimeError):
+                    pass
+            self._screen = screen
+            if screen is not None:
+                screen.logicalDotsPerInchChanged.connect(self._refresh_row_height)
+        self._refresh_row_height()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        window = self.window().windowHandle()
+        if self._window is not window:
+            if self._window is not None:
+                try:
+                    self._window.screenChanged.disconnect(self._bind_screen)
+                except (TypeError, RuntimeError):
+                    pass
+            self._window = window
+            if window is not None:
+                window.screenChanged.connect(self._bind_screen)
+        self._bind_screen(window.screen() if window is not None else self.screen())
+
+    def _text_rect(self):
+        margin = self.margin()
+        rect = self.contentsRect().adjusted(margin, margin, -margin, -margin)
+        indent = self.indent()
+        if indent < 0:
+            indent = self.fontMetrics().horizontalAdvance('x') // 2 if self.frameWidth() else 0
+        if self.alignment() & Qt.AlignmentFlag.AlignRight:
+            rect.adjust(0, 0, -indent, 0)
+        else:
+            rect.adjust(indent, 0, 0, 0)
+        return rect
+
+    def _elided_text(self):
+        return self.fontMetrics().elidedText(
+            ' '.join(self.text().split()), Qt.TextElideMode.ElideRight,
+            max(0, self._text_rect().width()))
+
+    def paintEvent(self, event):
+        # Paint the normal frame/background, but not QLabel's unbounded text.
+        QtWidgets.QFrame.paintEvent(self, event)
+        painter = QtGui.QPainter(self)
+        painter.setClipRect(self._text_rect())
+        self.style().drawItemText(
+            painter, self._text_rect(), int(self.alignment()) | int(Qt.TextFlag.TextSingleLine),
+            self.palette(), self.isEnabled(), self._elided_text(), QtGui.QPalette.ColorRole.WindowText)
+
+
+class _PreviewCanvas(QtWidgets.QLabel):
+    """A preview surface whose size is decided by the layout, not by the image.
+
+    A QLabel that carries a pixmap reports a size hint taken from that
+    pixmap, so a wide thumbnail pushes the panel's minimum width and
+    reallocates the header.  This surface keeps the image out of the size
+    negotiation and paints it itself, scaled into the visible content area
+    so the picture stays proportional and nothing is cropped.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._source = None
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.setWordWrap(False)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def set_source(self, pixmap):
+        """Show an image without letting it take part in the layout."""
+        self._source = pixmap
+        self.update()
+
+    def source_size(self):
+        if self._source is None or self._source.isNull():
+            return None
+        return (self._source.width(), self._source.height(),
+                self._source.devicePixelRatio())
+
+    def clear(self):
+        self._source = None
+        super().clear()
+
+    def sizeHint(self):
+        # The layout gives this surface its size; the image never does.
+        return QtCore.QSize(0, 0)
+
+    def minimumSizeHint(self):
+        return QtCore.QSize(0, 0)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._source is None or self._source.isNull():
+            return
+        target = self.contentsRect()
+        if target.width() <= 0 or target.height() <= 0:
+            return
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.drawPixmap(target.topLeft(), self._source.scaled(
+            target.size(), Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))
+
+
 class MaterialDetails(QtWidgets.QWidget):
     edited = QtCore.pyqtSignal()
     tag_requested = QtCore.pyqtSignal(str)
@@ -37,8 +207,13 @@ class MaterialDetails(QtWidgets.QWidget):
     settings_requested = QtCore.pyqtSignal()
     slot_options_requested = QtCore.pyqtSignal(str, object)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        from .widget_construction import finish_construction
+        finish_construction(self._construct(parent))
+
+    def _construct(self, parent=None):
+        from .widget_construction import widget_steps
+        super().__init__(parent)
         self._record_id = None
         self._thumbnail = None
         self._pixmap = None
@@ -49,33 +224,52 @@ class MaterialDetails(QtWidgets.QWidget):
         self.empty = plain_label('选择一张材质卡片，查看效果和资料。')
         self.empty.setContentsMargins(16, 20, 16, 16)
         layout.addWidget(self.empty)
+        self.sections = QtWidgets.QTabWidget(self)
+        layout.addWidget(self.sections, 1)
         self.scroll = QtWidgets.QScrollArea()
+        self.sections.addTab(self.scroll, '贴图槽位')
+        self.metadata_scroll = QtWidgets.QScrollArea()
+        self.metadata_scroll.setWidgetResizable(True)
+        self.metadata_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.sections.addTab(self.metadata_scroll, '版本与文件')
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Reserve the same gutter through every fold; no width/preview reflow.
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.form = QtWidgets.QWidget()
+        self.scroll.setWidget(self.form)
+        yield
         form = QtWidgets.QVBoxLayout(self.form)
         form.setContentsMargins(16, 18, 16, 20)
-        form.setSpacing(12)
+        configure_material_slot_column(form)
         form.addWidget(plain_label('材质效果'))
-        self.preview = plain_label()
+        self.preview = _PreviewCanvas()
         self.preview.setObjectName('materialPreview')
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setFixedHeight(190)
         self.preview.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
                                    QtWidgets.QSizePolicy.Policy.Fixed)
         self.preview.setStyleSheet('background: #202023; border: 1px solid #35353b; border-radius: 8px; color: #929ba8;')
-        form.addWidget(self.preview)
         from prism.widgets.material_render import MaterialRender
-        self.inline_render = MaterialRender()
+        self.inline_render = yield from widget_steps(MaterialRender)
         self.inline_render.setFixedHeight(190)
-        self.inline_render.hide()
-        form.addWidget(self.inline_render)
-        self.preview_status = plain_label()
+        self.preview_stack = QtWidgets.QStackedWidget()
+        self.preview_stack.setFixedHeight(190)
+        self.preview_stack.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                                         QtWidgets.QSizePolicy.Policy.Fixed)
+        self.preview_stack.addWidget(self.preview)
+        self.preview_stack.addWidget(self.inline_render)
+        self.set_live_preview(False)
+        form.addWidget(self.preview_stack)
+        self.preview_status = _StatusLine()
         self.preview_status.setProperty('uiRole', 'secondary')
         form.addWidget(self.preview_status)
         buttons = QtWidgets.QHBoxLayout()
         self.render_button = QtWidgets.QPushButton('重试预览')
+        retry_policy = self.render_button.sizePolicy()
+        retry_policy.setRetainSizeWhenHidden(True)
+        self.render_button.setSizePolicy(retry_policy)
         self.render_button.hide()
         self.open_button = QtWidgets.QPushButton('打开大预览')
         buttons.addWidget(self.render_button)
@@ -83,7 +277,7 @@ class MaterialDetails(QtWidgets.QWidget):
         form.addLayout(buttons)
         self.render_button.clicked.connect(self.render_requested.emit)
         self.open_button.clicked.connect(self.open_requested.emit)
-        self.operation_status = plain_label()
+        self.operation_status = _StatusLine()
         form.addWidget(self.operation_status)
         settings = QtWidgets.QFormLayout()
         self.blend_mode = QtWidgets.QComboBox()
@@ -92,7 +286,7 @@ class MaterialDetails(QtWidgets.QWidget):
         self.normal_convention = QtWidgets.QComboBox()
         for value in ('DirectX', 'OpenGL'):
             self.normal_convention.addItem(value, value)
-        self.auto_mode = plain_label('自动：分析贴图后确定')
+        self.auto_mode = _StatusLine('自动：分析贴图后确定')
         form.addWidget(self.auto_mode)
         global_uv = QtWidgets.QHBoxLayout()
         self.flip_x = QtWidgets.QCheckBox('整体水平翻转')
@@ -123,12 +317,13 @@ class MaterialDetails(QtWidgets.QWidget):
         self.ignore_base_alpha.toggled.connect(self.settings_requested.emit)
         settings.addRow(self.ignore_base_alpha)
         settings.addRow('法线格式', self.normal_convention)
+        yield
         form.addWidget(advanced)
         self.blend_mode.currentIndexChanged.connect(self.settings_requested.emit)
         self.normal_convention.currentIndexChanged.connect(self.settings_requested.emit)
         self.slots = {}
         for key, title in SLOTS.items():
-            slot = MaterialSlot(key, title)
+            slot = yield from widget_steps(MaterialSlot, key, title, self.form)
             self.slots[key] = slot
             slot.file_requested.connect(self.slot_file_requested.emit)
             slot.channel_requested.connect(self.slot_channel_requested.emit)
@@ -136,6 +331,10 @@ class MaterialDetails(QtWidgets.QWidget):
             slot.reuse_requested.connect(self.slot_reuse_requested.emit)
             slot.options_requested.connect(self.slot_options_requested.emit)
             form.addWidget(slot)
+            # MaterialSlot's visibility handler is connected first. Complete
+            # the parent layout and scroll geometry before its queued paint.
+            slot.fold.toggled.connect(self._reflow_slots)
+            yield
         self.name = QtWidgets.QLineEdit()
         self.name.setMaxLength(160)
         self.name.setPlaceholderText('材质名称')
@@ -185,19 +384,20 @@ class MaterialDetails(QtWidgets.QWidget):
         self.notes.setPlaceholderText('来源、适用场景或使用备注')
         self.notes.setFixedHeight(100)
         form.addWidget(self.notes)
+        yield
         form.removeWidget(self.name)
         form.insertWidget(0, self.name)
         self.status = plain_label()
         self.status.setProperty('uiRole', 'secondary')
         form.addWidget(self.status)
         form.addStretch(1)
-        self.scroll.setWidget(self.form)
         # Keep the preview visible while scrolling through lower slots.
-        self.header = QtWidgets.QWidget()
+        self.header = QtWidgets.QWidget(self)
+        layout.insertWidget(layout.indexOf(self.sections), self.header)
         header = QtWidgets.QVBoxLayout(self.header)
         header.setContentsMargins(16, 10, 16, 4)
         header.setSpacing(5)
-        for widget in (self.name, self.preview, self.inline_render, self.preview_status):
+        for widget in (self.name, self.preview_stack, self.preview_status):
             form.removeWidget(widget)
             header.addWidget(widget)
         def detach_layout(child):
@@ -220,6 +420,7 @@ class MaterialDetails(QtWidgets.QWidget):
                 form.takeAt(index)
                 widget.deleteLater()
         metadata = QtWidgets.QWidget()
+        self.metadata_scroll.setWidget(metadata)
         metadata_layout = QtWidgets.QVBoxLayout(metadata)
         metadata_layout.setContentsMargins(16, 10, 16, 12)
         start = form.indexOf(self.location)
@@ -232,16 +433,8 @@ class MaterialDetails(QtWidgets.QWidget):
                 metadata_layout.addLayout(item.layout())
             else:
                 metadata_layout.addItem(item)
+            yield
         form.addStretch(1)
-        self.metadata_scroll = QtWidgets.QScrollArea()
-        self.metadata_scroll.setWidgetResizable(True)
-        self.metadata_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        self.metadata_scroll.setWidget(metadata)
-        self.sections = QtWidgets.QTabWidget()
-        self.sections.addTab(self.scroll, '贴图槽位')
-        self.sections.addTab(self.metadata_scroll, '版本与文件')
-        layout.addWidget(self.header)
-        layout.addWidget(self.sections, 1)
         footer = QtWidgets.QWidget()
         footer_layout = QtWidgets.QFormLayout(footer)
         footer_layout.setContentsMargins(16,4,16,8)
@@ -254,6 +447,11 @@ class MaterialDetails(QtWidgets.QWidget):
         self.export_button.setParent(self.header)
         self.export_button.setText('导出原始贴图…')
         buttons.addWidget(self.export_button)
+        for button in (self.render_button, self.open_button, self.export_button):
+            policy = button.sizePolicy()
+            policy.setHorizontalPolicy(QtWidgets.QSizePolicy.Policy.Ignored)
+            button.setSizePolicy(policy)
+            button.setToolTip(button.text())
         self.shape = QtWidgets.QComboBox()
         for text, key in [('平面','plane'),('球体','sphere'),('圆柱体','cylinder'),('立方体','box')]:
             self.shape.addItem(text,key)
@@ -263,15 +461,41 @@ class MaterialDetails(QtWidgets.QWidget):
         self.notes.textChanged.connect(self.edited.emit)
         self.show_record(None)
 
+    def set_live_preview(self, enabled: bool):
+        """Select live render or thumbnail in one fixed-height preview slot.
+
+        QStackedWidget drives the actual visibility events, allowing the live
+        renderer to resume/pause work normally when its page changes.
+        """
+        self.preview_stack.setCurrentWidget(self.inline_render if enabled else self.preview)
+
+    def _reflow_slots(self, _expanded=False):
+        """Commit a fold's content geometry and scroll range in one turn."""
+        layout = self.form.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
+        self.form.updateGeometry()
+        # QScrollArea handles this viewport event by resizing its content and
+        # updating/clamping the range. Sending just that notification avoids
+        # pumping unrelated events or painting an intermediate empty gap.
+        QtWidgets.QApplication.sendEvent(
+            self.scroll.viewport(), QtCore.QEvent(QtCore.QEvent.Type.LayoutRequest))
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._fit_preview()
 
     def _fit_preview(self):
-        if self._pixmap is not None:
-            self.preview.setPixmap(self._pixmap.scaled(
-                max(1, self.width() - 36), 186, Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation))
+        """Show the current image inside the preview's real content area.
+
+        The surface paints the image itself, scaled into its visible
+        contents rect, so the picture is always proportional and never
+        cropped.  The panel width is no longer used as a guess for the
+        image size: that guess was wider than the visible area and cut the
+        picture off on the right.
+        """
+        self.preview.set_source(self._pixmap)
 
     def _set_tags(self, tags):
         if self._tag_values == tags:
@@ -295,8 +519,8 @@ class MaterialDetails(QtWidgets.QWidget):
         record_id = record['id'] if record else None
         changed_record = record_id != self._record_id
         if changed_record:
-            self.inline_render.hide()
-            self.preview.show()
+            self.set_live_preview(False)
+            self.operation_status.clear()
         self._record_id = record_id
         self.empty.setVisible(record is None)
         self.header.setVisible(record is not None)
@@ -330,8 +554,6 @@ class MaterialDetails(QtWidgets.QWidget):
             self.ignore_base_alpha.setChecked(props.get('ignoreBaseAlpha', False))
         if changed_record or not self.tag_edit.hasFocus():
             self.tag_edit.setText(', '.join(record.get('tags', [])))
-        if changed_record:
-            self.operation_status.clear()
         self.export_button.setEnabled(bool(record.get('files')))
         self.info['engine'].setVisible(bool(record.get('nativePackages')))
         self.info_labels['engine'].setVisible(bool(record.get('nativePackages')))
@@ -385,7 +607,7 @@ class MaterialDetails(QtWidgets.QWidget):
                 if pixmap.loadFromData(raw):
                     self._pixmap = pixmap
             if self._pixmap is None:
-                self.preview.setPixmap(QtGui.QPixmap())
+                self.preview.set_source(None)
                 self.preview.setText('尚未生成材质球' if textures else '待添加材质贴图')
                 self.preview_status.setText('尚无球体展示。' if textures else '这条记录还没有贴图资料。')
                 default = QtGui.QPixmap(str(ASSETS / 'default-sphere.png'))

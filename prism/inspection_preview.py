@@ -5,6 +5,37 @@ from prism import lod
 from prism.item_lifecycle import is_deleted, is_record, logical_item, native_pixmap
 
 
+def render_inspection(snapshot, options, *, hdr=False, filename='', source=None,
+                      image_loader=None):
+    """Worker-only pixel processing. QPixmap and live items stay on the GUI."""
+    from pathlib import Path
+    from prism.fileio.image import load_image, adjust_display_image, false_color_preview
+    from prism.image_decode import decode
+    from prism.performance_trace import operation
+    with operation('inspector.preview_adjust_background'):
+        if hdr:
+            blob, path, archive = snapshot
+            if blob is None and archive:
+                from prism.source_store import read_archive
+                blob = read_archive(archive[:2])
+            if blob is not None:
+                from prism.source_store import retain_bytes
+                path = retain_bytes(blob, Path(filename).suffix or '.hdr')
+            image, _ = (image_loader or load_image)(path or filename, options)
+        else:
+            if source is None:
+                decoded = decode(*snapshot)
+                if decoded is None:
+                    raise ValueError('无法解码这张图片')
+                source, _ = decoded
+            image = adjust_display_image(source, options['exposure'], options['channel'])
+        if image.isNull():
+            raise ValueError('无法解码这张图片')
+        if options.get('false_color'):
+            image = false_color_preview(image)
+        return image, None if hdr else source
+
+
 class InspectionPreview:
     # These are display caches only. Source bytes, metadata and geometry are
     # never replaced by an inspection session. Pixmaps share their Qt storage.

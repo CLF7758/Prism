@@ -203,6 +203,7 @@ def test_clearing_also_drops_the_colour_filter(main_window):
 def test_popup_reset_button_synchronises_rating_and_keeps_page(main_window):
     window = main_window
     popup = popover_of(window)
+    popup.refresh()  # The popup is now constructed on its first use.
     popup.rating_combo.setCurrentIndex(4)
     popup.untagged_box.setChecked(True)
     page_before = window.current_page_id

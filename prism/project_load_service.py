@@ -46,16 +46,29 @@
    已经销毁的界面对象（任务书 T5 明确要求）。
 
 真正的「把所有页面都建出来」这种重活不在这里 —— 那正是不该做的事。
+
+**关于计数。** 以前 `read_project_index()` 直接 `SELECT COUNT(*) FROM items`。
+十万图工程实测这一条约 **56 秒**，而它换来的只是界面上的一个数字。所以现在：
+
+* 优先用**外部注入的、已经维护好的**统计（`counts=` / `counts_provider=`）。
+  注入的统计必须成套且可信（非负整数、不是 bool、不是数字字符串），
+  不可信就退回扫描，绝不硬用；
+* 只有拿不到可信统计时才退回全库扫描，并且**每次回退都记一条 trace**
+  （`project.index.count_fallback`），免得以后又有人把全库扫描当成便宜的；
+* 任何情况下都不把「没有统计」静默变成 0 —— 那会让界面显示错误的数量。
+  `ProjectIndex.counts_source` 说明这次的数字来自注入还是来自扫描。
 """
 import dataclasses
 import logging
 import os
 import sqlite3
 import time
+from collections.abc import Mapping
 
 from PyQt6 import QtCore
 
 from prism.fileio.errors import PrismFileIOError
+from prism.performance_trace import record as trace_record
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +78,21 @@ METADATA_TABLE = 'prism_metadata'
 PAGES_TABLE = 'workspace_pages'
 ITEMS_TABLE = 'items'
 ATTACHMENTS_TABLE = 'attachments'
+
+#: 回退到全库扫描时记的 trace 事件名。
+#:
+#: 这条 trace 是给以后的人看的：`SELECT COUNT(*) FROM items` 在十万图工程上
+#: 约 56 秒。它出现在日志里，就说明"又有人在打开工程时数全库了"。
+COUNT_FALLBACK_EVENT = 'project.index.count_fallback'
+
+#: `ProjectIndex.counts_source`：数字来自外部注入的、校验过的统计。
+COUNTS_SOURCE_PROVIDED = 'provided'
+#: `ProjectIndex.counts_source`：退回了 `COUNT(*)` 扫描。
+COUNTS_SOURCE_FALLBACK = 'fallback'
+
+#: 注入的统计必须成套给出的键。用表名当键名，免得再维护一套映射 —— 那种
+#: 映射迟早会和 SQL 里的表名对不上。
+COUNT_KEYS = (ITEMS_TABLE, ATTACHMENTS_TABLE)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -86,6 +114,8 @@ class ProjectIndex:
     attachment_count: int
     #: 读这份索引花了多久。
     seconds: float = 0.0
+    #: 这两个数字怎么来的：注入的统计（``provided``）还是全库扫描（``fallback``）。
+    counts_source: str = COUNTS_SOURCE_FALLBACK
 
     @property
     def title(self):
@@ -208,10 +238,13 @@ class ProjectLoadService(QtCore.QObject):
 
     # ── 索引 ────────────────────────────────────────────────────
 
-    def read_index(self, path):
+    def read_index(self, path, *, counts=None, counts_provider=None):
         """只读工程索引。不建素材、不碰界面、不需要 QApplication。
 
         读之前先看取消标志 —— 用户在等索引的时候点了取消，就别白读一遍。
+
+        ``counts`` / ``counts_provider`` 原样转给 `read_project_index`：
+        调用方手上有维护好的统计就注入进来，没有才让索引去数全库。
 
         出错时发 `failed` 并返回 None，不抛。因为这个函数会在「打开
         工程」的第一步被调，那一步的失败是要变成一句提示的。
@@ -219,7 +252,8 @@ class ProjectLoadService(QtCore.QObject):
         if self._cancelled:
             return None
         try:
-            index = read_project_index(path)
+            index = read_project_index(path, counts=counts,
+                                       counts_provider=counts_provider)
         except FileNotFoundError:
             self.failed.emit(f'找不到文件：{path}')
             return None
@@ -260,11 +294,51 @@ class _Stage:
         return False
 
 
-def read_project_index(path):
+def _trusted_counts(value):
+    """Inject counts only when they are complete and obviously sane.
+
+    Returns ``(items, attachments)`` or ``None``. Deliberately strict: a
+    half-trusted number would show a wrong count in the window, which is worse
+    than one extra scan of a small table. ``bool`` is rejected on purpose --
+    ``True`` is an ``int`` in Python and would silently read as "1 item".
+    """
+    if not isinstance(value, Mapping):
+        return None
+    if any(key not in value for key in COUNT_KEYS):
+        return None
+    counts = []
+    for key in COUNT_KEYS:
+        count = value[key]
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            return None
+        counts.append(count)
+    return tuple(counts)
+
+
+def _provided_counts(counts, counts_provider):
+    """Pick whichever injection the caller supplied, and say why it failed."""
+    if callable(counts_provider):
+        try:
+            counts = counts_provider()
+        except Exception:
+            logger.info('工程索引的统计提供者失败，退回扫描', exc_info=True)
+            return None, 'provider_error'
+    if counts is None:
+        return None, 'absent'
+    trusted = _trusted_counts(counts)
+    return (trusted, None) if trusted is not None else (None, 'untrusted')
+
+
+def read_project_index(path, *, counts=None, counts_provider=None):
     """读一个 .prism 的索引。纯函数，不依赖 Qt，可以随便测。
 
     只碰元数据和目录表，**不建任何素材对象** —— 所以 1562 个素材的工程
     也只要毫秒级。实测 0.001 秒。
+
+    ``counts`` / ``counts_provider`` 让调用方把**已经维护好的**统计注入
+    进来，避免每次打开都 `COUNT(*)` 全库（十万图实测约 56 秒）。注入的
+    统计要成套、可信，否则退回扫描并记一条 `project.index.count_fallback`
+    —— 不是静默换成 0，也不是悄悄变慢。
 
     表名用常量，是因为读写两边都用到。它们已经拿真实工程核对过
     （`秋雨参考.prism`：items 1563 行、attachments 406 行、
@@ -289,6 +363,7 @@ def read_project_index(path):
             f'回滚掉，然后就能正常读取了。'
             f'工程本身没坏：同目录下还留着一份 .bak 备份。',
             path)
+    provided, rejected = _provided_counts(counts, counts_provider)
     connection = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
     try:
         tables = {row[0] for row in connection.execute(
@@ -307,15 +382,24 @@ def read_project_index(path):
             pages = tuple({'id': row[0], 'kind': row[1], 'title': row[2]}
                           for row in rows)
 
-        item_count = 0
-        if ITEMS_TABLE in tables:
-            item_count = connection.execute(
-                f'SELECT COUNT(*) FROM {ITEMS_TABLE}').fetchone()[0]
+        if provided is not None:
+            item_count, attachment_count = provided
+            counts_source = COUNTS_SOURCE_PROVIDED
+        else:
+            item_count = 0
+            if ITEMS_TABLE in tables:
+                item_count = connection.execute(
+                    f'SELECT COUNT(*) FROM {ITEMS_TABLE}').fetchone()[0]
 
-        attachment_count = 0
-        if ATTACHMENTS_TABLE in tables:
-            attachment_count = connection.execute(
-                f'SELECT COUNT(*) FROM {ATTACHMENTS_TABLE}').fetchone()[0]
+            attachment_count = 0
+            if ATTACHMENTS_TABLE in tables:
+                attachment_count = connection.execute(
+                    f'SELECT COUNT(*) FROM {ATTACHMENTS_TABLE}').fetchone()[0]
+            counts_source = COUNTS_SOURCE_FALLBACK
+            trace_record(COUNT_FALLBACK_EVENT, path=os.path.basename(str(path)),
+                         items=item_count, reason=rejected or 'absent')
+            logger.info('工程索引退回全库计数（%s）：%s 个素材',
+                        rejected or 'absent', item_count)
     finally:
         connection.close()
 
@@ -327,6 +411,8 @@ def read_project_index(path):
         item_count=item_count,
         attachment_count=attachment_count,
         seconds=round(elapsed, 4),
+        counts_source=counts_source,
     )
-    logger.debug('读了工程索引：%s（%.4f 秒）', index.summary(), elapsed)
+    logger.debug('读了工程索引：%s（%.4f 秒，计数来源 %s）',
+                 index.summary(), elapsed, index.counts_source)
     return index

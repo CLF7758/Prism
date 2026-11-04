@@ -2,3 +2,4 @@
 
 pyinstaller==6.22.3
 pillow==12.3.0
+OpenImageIO==3.0.3.1

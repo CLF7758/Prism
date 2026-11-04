@@ -15,6 +15,7 @@
 
 from importlib.resources import files as rsc_files
 import logging
+import time
 
 from PyQt6 import QtCore, QtWidgets, QtGui
 from PyQt6.QtCore import Qt
@@ -34,10 +35,41 @@ logger = logging.getLogger(__name__)
 
 class PrismProgressDialog(QtWidgets.QProgressDialog):
 
-    def __init__(self, label, worker, maximum=0, parent=None):
+    #: How often the bar is repainted while a project loads.
+    #:
+    #: The loader emits one progress signal per record, so a 100 000 item
+    #: project produced 100 000 `setValue` calls -- each one a repaint of a
+    #: modal dialog, and the trace showed 226 of 331 stall samples inside
+    #: `notify <- on_progress`, i.e. 11.8 s of the GUI thread spent drawing
+    #: a progress bar.
+    #:
+    #: A repaint of the dialog also forces the window *underneath* it to
+    #: repaint the covered strip. In this project that strip holds 10 000
+    #: asset cards, so one bar update cost ~433 ms of card painting
+    #: (measured: 52 such repaints, 22.5 s). Fewer, further apart updates
+    #: is the only lever that does not touch the card painting itself.
+    PROGRESS_MIN_INTERVAL = .4
+    PROGRESS_MIN_STEP = 1
+
+    #: How long a **project open** may run before its bar is allowed on screen.
+    #:
+    #: The bar is a modal dialog that covers a strip of the window, and
+    #: repainting that strip is expensive -- the asset grid alone measured
+    #: ~433 ms per repaint.  A bar that appears for a moment and disappears
+    #: again therefore reads as the whole interface blinking, which is worse
+    #: than no bar at all: the operation was over before the user could read
+    #: it.  Only an operation that really takes long gets one.
+    #:
+    #: Operations the user has to be able to **cancel** keep the old
+    #: behaviour and show their bar immediately -- a bar that never appears
+    #: cannot be cancelled.
+    QUIET_MIN_DURATION_MS = 800
+
+    def __init__(self, label, worker, maximum=0, parent=None,
+                 min_duration_ms=0):
         super().__init__(label, _('Cancel'), 0, maximum, parent=parent)
         logger.debug('Initialised progress bar')
-        self.setMinimumDuration(0)
+        self.setMinimumDuration(int(min_duration_ms))
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setAutoReset(False)
         self.setAutoClose(False)
@@ -46,11 +78,37 @@ class PrismProgressDialog(QtWidgets.QProgressDialog):
         worker.finished.connect(self.on_finished)
         worker.user_input_required.connect(self.on_finished)
         self.canceled.connect(worker.on_canceled)
+        self._last_progress_value = -1
+        self._last_progress_time = 0.0
+        #: The result of a save. Loading and exporting keep the old behaviour
+        #: and never set it.
+        self.save_outcome = None
+        #: True when this dialog belongs to a save. A save that ends without a
+        #: result must not end on a bar that reads "100%" either.
+        self.is_save = False
 
     def on_progress(self, value):
+        # Repaint at most every PROGRESS_MIN_INTERVAL, and only when the
+        # value moved by a visible step. The last value always gets through
+        # so the bar does not stop short of the end.
+        #
+        # The throttle has to come *before* the log line. Building the
+        # message eagerly costs one string format per record -- 100 000 of
+        # them for a big project -- and that alone was measured at 0.87 s.
+        now = time.monotonic()
+        maximum = self.maximum()
+        final = maximum > 0 and value >= maximum
+        moved = (self._last_progress_value < 0
+                 or value - self._last_progress_value >= self.PROGRESS_MIN_STEP
+                 or final)
+        if not (moved and (final or now - self._last_progress_time
+                           >= self.PROGRESS_MIN_INTERVAL)):
+            return
+        self._last_progress_value = value
+        self._last_progress_time = now
         # trace 而不是 debug：打开大工程时这里会被调上千次，实测光日志
         # 格式化就占 0.87 秒。进度值本身不值得进常规日志。
-        logger.trace(f'Progress dialog: {value}')
+        logger.trace('Progress dialog: %s', value)
         self.setValue(value)
 
     def on_begin_processing(self, value):
@@ -59,8 +117,24 @@ class PrismProgressDialog(QtWidgets.QProgressDialog):
 
     def on_finished(self, *args, **kwargs):
         logger.debug('Finished progress dialog')
-        self.setValue(self.maximum())
+        outcome = self.save_outcome
+        is_save = bool(getattr(self, 'is_save', False))
+        confirmed = outcome is None and not is_save
+        if outcome is not None:
+            confirmed = bool(getattr(outcome, 'confirmed', False))
+        if confirmed:
+            self.setValue(self.maximum())
+        else:
+            # A save that failed, was cancelled, or ended without a result
+            # must not end on a bar that reads "100%". The bar shows what
+            # actually happened; the label was set by the save layer to the
+            # real reason.
+            self.setValue(0)
         self.reset()
+        if not confirmed:
+            reason = (getattr(outcome, 'reason', '') or getattr(outcome, 'error', ''))
+            if reason:
+                self.setLabelText(reason)
         self.hide()
         QtCore.QTimer.singleShot(100, self.deleteLater)
 
@@ -96,37 +170,7 @@ class HelpDialog(QtWidgets.QDialog):
         self.show()
 
 
-class DebugLogDialog(QtWidgets.QDialog):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.setWindowTitle(f'{constants.APPNAME} {_("Debug Log")}')
-        with open(logfile_name()) as f:
-            self.log_txt = f.read()
-
-        self.log = QtWidgets.QPlainTextEdit(self.log_txt)
-        self.log.setReadOnly(True)
-
-        buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        self.copy_button = QtWidgets.QPushButton(_('Co&py To Clipboard'))
-        self.copy_button.released.connect(self.copy_to_clipboard)
-        buttons.addButton(
-            self.copy_button, QtWidgets.QDialogButtonBox.ButtonRole.ActionRole)
-
-        layout = QtWidgets.QVBoxLayout()
-        self.setLayout(layout)
-        name_widget = QtWidgets.QLabel(logfile_name())
-        name_widget.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(name_widget)
-        layout.addWidget(self.log)
-        layout.addWidget(buttons)
-        self.show()
-
-    def copy_to_clipboard(self):
-        clipboard = QtWidgets.QApplication.clipboard()
-        clipboard.setText(self.log_txt)
+from prism.widgets.diagnostics_dialog import DebugLogDialog  # noqa: E402,F401
 
 
 class SceneToPixmapExporterDialog(QtWidgets.QDialog):

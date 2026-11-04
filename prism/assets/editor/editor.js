@@ -179,6 +179,7 @@
   }
 
   function loadDocument(payload) {
+    window.__setPrismPreviewReadonly(!!(payload && payload.readonly));
     var html = (payload && payload.html) || '';
     quill.setContents([{ insert: '\n' }], 'silent');
     if (html) {
@@ -188,6 +189,21 @@
     workspace.scrollTop = 0;
     updateRibbonState();
   }
+
+  window.__setPrismPreviewReadonly = function (readonly) {
+    window.__prismPreviewReadonly = !!readonly;
+    quill.enable(!window.__prismPreviewReadonly);
+  };
+
+  // Quill's disabled document alone does not disable ribbon/API commands.
+  ['click', 'change', 'keydown', 'paste', 'drop', 'beforeinput'].forEach(function (type) {
+    document.addEventListener(type, function (event) {
+      if (!window.__prismPreviewReadonly) return;
+      if (type === 'click' && event.target.closest('#editor, #workspace')) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
+  });
 
   // ── Ribbon ───────────────────────────────────────────────────
 

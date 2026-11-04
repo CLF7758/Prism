@@ -10,6 +10,8 @@
   2. 页面还没就绪时推送不能丢，要排队等它 ready
 """
 import json
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -87,6 +89,22 @@ def test_broken_images_field_does_not_poison_the_tree():
 def test_assets_are_shipped():
     """页面和它那一份 vendor 包必须都在，否则脑图会静默不可用。"""
     assert mm.mindmap_available() is True
+
+
+@pytest.mark.parametrize('target,trusted', [('editor', True), ('other-file', False), ('remote', False)])
+def test_clipboard_permission_is_limited_to_our_bundled_page(panel, target, trusted):
+    from PyQt6.QtCore import QUrl
+    import os
+    location = (QUrl('https://example.invalid') if target == 'remote' else
+                QUrl.fromLocalFile(os.path.join(mm.MINDMAP_DIR, 'index.html' if target == 'editor' else 'other.html')))
+    settings = Mock()
+    panel._page = SimpleNamespace(settings=lambda: settings)
+    panel._configure_clipboard(location)
+    attributes = mm.QtWebEngineCore.QWebEngineSettings.WebAttribute
+    assert [call.args for call in settings.setAttribute.call_args_list] == [
+        (attributes.JavascriptCanAccessClipboard, trusted),
+        (attributes.JavascriptCanPaste, trusted),
+    ]
 
 
 # ── 面板：页面还没就绪时 ───────────────────────────────────────────────

@@ -115,21 +115,34 @@ class Action:
 
 
 actions = ActionList([
+    Action(id='import_eagle', text='导入 Eagle 资料库…', callback='on_action_import_eagle'),
+    Action(id='open_directory_project',text='打开项目文件夹…',callback='on_action_open_directory_project'),
+    Action(id='convert_project',text=_('Convert current project…'),callback='on_action_convert_project'),
+    Action(id='export_legacy_project',text='导出兼容单文件项目…',callback='on_action_export_legacy_project'),
+    Action(id='export_project_bundle',text='导出便携项目包…',callback='on_action_export_project_bundle'),
+    Action(id='open_project_bundle',text='导入项目包…',callback='on_action_open_project_bundle'),
+    Action(id='compact_project',text=_('Reclaim unused project space…'),callback='on_action_compact_project'),
+    Action(id='recover_directory_project',text=_('Resume or recover conversion…'),callback='on_action_recover_directory_project'),
     Action(
         id='open',
-        text=_('&Open'),
+        text='打开项目(&O)…',
         shortcuts=['Ctrl+O'],
         callback='on_action_open',
     ),
     Action(
+        id='open_readonly',
+        text='以只读方式打开项目…',
+        callback='on_action_open_readonly',
+    ),
+    Action(
         id='save',
-        text=_('&Save'),
+        text='保存项目(&S)',
         shortcuts=['Ctrl+S'],
         callback='on_action_save',
     ),
     Action(
         id='save_as',
-        text=_('Save &As...'),
+        text='项目另存为(&A)…',
         shortcuts=['Ctrl+Shift+S'],
         callback='on_action_save_as',
     ),
@@ -250,23 +263,6 @@ actions = ActionList([
         group='active_when_selection',
     ),
     Action(
-        id='raise_to_top',
-        text=_('&Raise to Top'),
-        shortcuts=['PgUp'],
-        callback='on_action_raise_to_top',
-        group='active_when_selection',
-    ),
-    Action(
-        id='lower_to_bottom',
-        text=_('Lower to Bottom'),
-        shortcuts=['PgDown'],
-        callback='on_action_lower_to_bottom',
-        group='active_when_selection',
-    ),
-
-
-
-    Action(
         id='arrange_optimal',
         text=_('&Optimal'),
         shortcuts=['Shift+O'],
@@ -347,14 +343,19 @@ actions = ActionList([
     ),
     Action(
         id='new_scene',
-        text=_('&New Scene'),
+        text='新建项目(&N)',
         shortcuts=['Ctrl+N'],
         callback='on_action_new_scene',
     ),
     Action(
         id='fit_scene',
-        text=_('&Fit Scene'),
-        shortcuts=['1'],
+        # The action id stays 'fit_scene': it is the key the keyboard
+        # settings file is keyed by, so renaming it would silently drop the
+        # shortcut a user configured.  Only the displayed name changed.
+        text=_('Reset Camera'),
+        # Ctrl+0 is what the toolbar advertises, and it has to work on the
+        # main canvas too -- the aggregate canvas has always had it.
+        shortcuts=['Ctrl+0', '1'],
         callback='on_action_fit_scene',
     ),
     Action(
@@ -426,7 +427,7 @@ actions = ActionList([
     ),
     Action(
         id='debuglog',
-        text=_('Show &Debug Log'),
+        text=_('Logs and &Diagnostics…'),
         callback='on_action_debuglog',
     ),
     Action(

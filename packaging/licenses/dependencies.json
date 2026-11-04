@@ -176,6 +176,21 @@
     ]
   },
   {
+    "name": "OpenImageIO",
+    "version": "3.0.3.1",
+    "license": "Apache-2.0",
+    "project_urls": [
+      "Homepage, https://openimageio.org/",
+      "Source, https://github.com/AcademySoftwareFoundation/OpenImageIO",
+      "Documentation, https://docs.openimageio.org",
+      "Issues, https://github.com/AcademySoftwareFoundation/OpenImageIO/issues"
+    ],
+    "notices": [
+      "openimageio-3.0.3.1.dist-info__licenses__LICENSE.md",
+      "openimageio-3.0.3.1.dist-info__licenses__THIRD-PARTY.md"
+    ]
+  },
+  {
     "name": "onnxruntime",
     "version": "1.19.2",
     "license": "MIT License",

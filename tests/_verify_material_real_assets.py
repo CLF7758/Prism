@@ -17,7 +17,7 @@ SOURCE = Path(r'C:\Users\admin\Desktop\ceshi\Game\Assets\Level\YingZhuFuGuanYaGC
 OUT = ROOT / 'artifacts/material-tests'
 
 
-def test_real_assets_original_roundtrip_and_engine(main_window, qtbot):
+def test_real_assets_original_roundtrip_and_engine(main_window, qtbot, tmp_path):
     if not SOURCE.exists():
         pytest.skip('User-owned source textures are intentionally not distributed')
     from PyQt6.QtWidgets import QApplication
@@ -72,11 +72,14 @@ def test_real_assets_original_roundtrip_and_engine(main_window, qtbot):
         viewer.load_material(payload, str(index))
         qtbot.waitUntil(lambda: len(results)>before or bool(errors),timeout=60000)
         assert not errors, errors
+        from tests.test_material_view_controls import js
+        assert js(viewer,'material.transparencyMode',qtbot)==js(viewer,
+            'BABYLON.PBRMaterial.PBRMATERIAL_'+('ALPHATEST' if mode=='masked' else 'OPAQUE'),qtbot)
         signature, blob = results[-1]
         assert service.save_preview(record['id'],signature,blob)
         (OUT/f'material-{index+1}.png').write_bytes(blob)
         record = service.get(record['id'])
-        exported=export_originals(record,scene.attachments,OUT/f'export-{index+1}')
+        exported=export_originals(record,scene.attachments,tmp_path/f'export-{index+1}')
         expected_hashes={info['sha256'] for info,_ in originals.values()}
         assert {hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in exported}==expected_hashes
         report.append(dict(name=name, originalFiles=len(originals),

@@ -1,7 +1,5 @@
 /* ── Global ─────────────────────────────────────────────── */
 * {
-    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
-    font-size: 13px;
     color: {text-primary};
 }
 

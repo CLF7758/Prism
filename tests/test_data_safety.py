@@ -173,7 +173,7 @@ def test_a_non_prism_file_is_refused_clearly(qapp, tmp_path):
 def test_a_readonly_project_does_not_get_quietly_upgraded(qapp, tmp_path):
     """只读打开旧工程：**不该无声地就地升级**。
 
-    `_migrate()` 的本意是"发现文件不可写就复制到临时文件再升级"，判据是
+    `_migrate()` 曾经是"发现文件不可写就复制到临时文件再升级"，判据是
     试着写一下（`PRAGMA application_id`）。
 
     **但 Windows 管理员权限下那个试写会成功** —— 于是它以为文件可写，
@@ -182,15 +182,25 @@ def test_a_readonly_project_does_not_get_quietly_upgraded(qapp, tmp_path):
 
     实测（跑这条时看到的）：原文件里 `user_version` 从 2 变成 4。
 
-    **这一轮没改实现**：改判据要动 SQLite 的只读语义，而当前环境根本
-    造不出真正的只读文件来验证"改对了" —— 改了也是没验过的改法。
-    所以这条测的是**能测的部分**：它至少没把原文件弄坏（还能读、表还在）。
+    **2026-10-22 改掉了**：只读连接改成 `mode=ro`（`prism/fileio/sql.py`
+    的 `_establish_connection`），SQLite 自己就写不了，迁移一律落在
+    临时副本上。所以这条现在断言的是**新契约**：只读打开之后原文件
+    一个字节都不变，版本号也留在 2 —— 迁移要等 somebody 用可写方式
+    打开一次。
+
+    这也正是 14:31 那起事故的根：只读打开居然能改写源工程。
     """
+    import hashlib
+    import os
     import sqlite3
 
     from prism.fileio.sql import SQLiteIO
 
     path = make_project(str(tmp_path / 'readonly.prism'), version=2)
+    with open(path, 'rb') as handle:
+        before = hashlib.sha256(handle.read()).hexdigest()
+    before_stat = os.stat(path)
+
     io_ = SQLiteIO(path, make_scene(), readonly=True)
     try:
         io_.connection
@@ -206,8 +216,21 @@ def test_a_readonly_project_does_not_get_quietly_upgraded(qapp, tmp_path):
     finally:
         connection.close()
     assert 'prism_metadata' in tables, f'表没了：{tables}'
-    assert version == USER_VERSION, (
-        f'只读打开之后版本应该是 {USER_VERSION}（它就地迁了），实得 {version}')
+    assert version == 2, (
+        f'只读打开不该把工程就地升级（2 -> {USER_VERSION}），实得 {version}')
+
+    # 一个字节都不许变：size / mtime / 内容 hash
+    with open(path, 'rb') as handle:
+        after = hashlib.sha256(handle.read()).hexdigest()
+    after_stat = os.stat(path)
+    assert after == before, '只读打开改动了源工程的内容'
+    assert after_stat.st_size == before_stat.st_size
+    assert after_stat.st_mtime_ns == before_stat.st_mtime_ns
+
+    # 也不许留下写痕迹
+    traces = [name for name in os.listdir(os.path.dirname(path))
+              if name.endswith(('-journal', '-wal', '-shm'))]
+    assert traces == [], f'只读打开留下了写痕迹：{traces}'
 
 
 def test_a_current_project_is_left_alone(qapp, tmp_path):

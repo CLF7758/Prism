@@ -61,7 +61,7 @@ zh_CN = {
     'Flip &Horizontally': '水平翻转(&H)',
     'Flip &Vertically': '垂直翻转(&V)',
     '&New Scene': '新建场景(&N)',
-    '&Fit Scene': '适配场景(&F)',
+    'Reset Camera': '重置相机',
     'Fit &Selection': '适配选择(&S)',
     'Reset &Scale': '重置缩放(&S)',
     'Selected images only': '仅选中的图片',
@@ -81,6 +81,7 @@ zh_CN = {
     '&Help': '帮助(&H)',
     '&About': '关于(&A)',
     'Show &Debug Log': '显示调试日志(&D)',
+    'Logs and &Diagnostics…': '日志与诊断…(&D)',
     'Show &Scrollbars': '显示滚动条(&S)',
     'Show &Menu Bar': '显示菜单栏(&M)',
     'Show &Title Bar': '显示标题栏(&T)',
@@ -279,6 +280,9 @@ zh_CN = {
     # ── 导入对话框（view.py） ──
     'Insert images and videos': '批量导入图片和视频',
     'Images and videos ({formats} *.mp4 *.mov *.mkv *.avi *.webm *.m4v);;All files (*)': '图片和视频 ({formats} *.mp4 *.mov *.mkv *.avi *.webm *.m4v);;所有文件 (*)',
+
+    # ── 打开工程（view.py） ──
+    'This project is already open.': '这个工程已经打开了。',
 
     # ── 颜色筛选（color_filter.py、items.py） ──
     'All': '全部',
@@ -927,3 +931,99 @@ zh_CN = {
     'Saving is already in progress.': '正在保存，请稍候。',
     'Please wait for the current file operation to finish.': '文件正在读写，请完成后再切换或关闭项目。',
 }
+
+
+# User-facing language closeout. Legacy keys remain compatible.
+zh_CN.update({
+    'Move the selected assets here': '将选中素材移到此画布',
+    'Move the selected assets to another canvas': '将选中素材移到其他画布',
+    'On-demand opening:': '按需打开工程：',
+    'Open only the page you need when a project is opened, instead of loading the whole file at once. Takes effect the next time a project is opened.': '打开工程时先加载需要的页面，不一次加载全部内容。下次打开工程时生效。',
+    'Open projects on demand': '按需加载工程页面',
+    'Open Read Only...': '只读打开工程…',
+    'Open Read Only…': '只读打开工程…',
+    'Rendered image format:': '渲染导出格式：',
+    'Only affects explicitly rendered exports. Imported originals are preserved byte for byte.': '仅影响明确选择的渲染图导出。导入原件始终按原始字节保存，不会转换或降质。',
+    'Lossless rendered image': '无损渲染图',
+    'JPEG rendering is lossy and does not preserve transparency': '渲染为 JPG 会有损压缩，不保留透明。原件导出不受影响。',
+    'English': '英语',
+    'Service key:': '服务密钥：',
+    'Project tools': '工程工具',
+    'Download video': '下载视频',
+    'Image originals': '图片原件',
+    'All asset originals': '全部素材原件',
+    'Export scope': '导出范围',
+    'Images only; videos and 3D models are excluded.': '只导出图片原件，不包含视频和三维模型。',
+    'Images, videos and 3D models are included. Original bytes are copied without re-encoding.': '包含图片、视频和三维模型，原件按字节复制，不重新编码。',
+    'PDF (entire mind map, tiled pages) (*.pdf)': 'PDF（完整脑图，分页） (*.pdf)',
+})
+
+zh_CN.update({
+    'Open &Read Only...': '只读打开工程…',
+    'Open project data folder…': '打开工程数据文件夹…',
+    'Convert current project…': '转换当前工程…',
+    'Export compatible project…': '导出旧版兼容工程…',
+    'Export portable project…': '导出便携工程包…',
+    'Import portable project…': '导入便携工程包…',
+    'Reclaim unused project space…': '整理工程空间…',
+    'Resume or recover conversion…': '继续或恢复转换…',
+    'Not accessible or not a proper Prism project': '工程无法访问或格式无效',
+    '<p>Problem loading file %s</p><p>Not accessible or not a proper Prism project</p>': '<p>无法加载工程 %s</p><p>工程无法访问或格式无效</p>',
+})
+
+zh_CN.update({
+    'Export cancelled': '导出已取消',
+    'The mind map contains repeated objects or cyclic references.': '脑图含重复对象或循环引用，无法安全导出。',
+    'Mind map image original is missing: {title}': '脑图节点图片原件缺失，已停止导出：{title}',
+    'Mind map image cannot be read: {title}': '脑图节点图片无法读取：{title}',
+    'Could not create the mind map PDF.': '无法创建脑图 PDF。',
+    'Could not write a mind map PDF page.': '无法写入脑图 PDF 分页。',
+    'Could not render a mind map image; export stopped.': '脑图图片无法渲染，已停止导出。',
+    'The mind map PDF was not completely written.': '脑图 PDF 未完整写入。',
+})
+
+
+zh_CN.update({
+    "Clear search": "清除搜索",
+})
+
+
+zh_CN.update({
+    "Font family": "字体",
+    "Font size": "字号",
+    "Text color": "文字颜色",
+    "Change text style": "修改文字样式",
+})
+
+
+zh_CN.update({
+    "Bold": "加粗",
+    "Color code": "颜色值",
+    "Choose material color": "选择材质颜色",
+})
+
+zh_CN.update({"Copy": "复制", "Apply": "应用"})
+
+zh_CN.update({"Choose color": "选择颜色", "Pen color": "画笔颜色"})
+
+# Scrollable system-library grid.
+zh_CN.update({
+    'assets · Scroll to browse · Double-click to open source': '个素材 · 滚动浏览 · 双击定位原画布',
+    'Move to trash': '移到回收站',
+    'Recycle bin': '回收站',
+    'Select All': '全选',
+    'Export selected images': '导出所选图片原件…',
+})
+
+zh_CN.update({' · Scroll to browse': ' · 滚动浏览'})
+
+# Library index preparation and non-final grid prefixes.
+zh_CN.update({
+    'Preparing the project index in the background…': '正在后台准备素材目录…',
+    'Assets will appear automatically when the index is ready': '目录准备完成后，素材会自动显示，无需重复点击。',
+    'Showing initial thumbnails; preparing the remaining results…': '已显示首批缩略图，正在准备其余结果…',
+    'Project directory unavailable; retry after it is ready': '素材目录暂不可用，请准备完成后重试',
+    'Loading whole-project assets…': '正在加载全库素材…',
+})
+
+zh_CN.update({'The project index could not be prepared; reopen the project to retry': '素材目录准备失败，请重新打开工程重试。'})

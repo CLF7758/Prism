@@ -12,6 +12,7 @@
 """
 import os
 import sqlite3
+from unittest.mock import patch
 
 import pytest
 
@@ -356,3 +357,123 @@ def test_a_project_left_with_a_journal_says_so(tmp_path):
     assert '正常关闭' in message or '回滚' in message, (
         f'该说清是怎么回事，实得：{message!r}')
     assert '.bak' in message, '该提一句备份还在'
+
+
+# ── 计数来源：注入的统计 vs 全库扫描 ──────────────────────────────
+#
+# 十万图工程上 `SELECT COUNT(*) FROM items` 约 56 秒，而它只是界面里的一个
+# 数字。这几条钉住"有可信统计就不许再扫全库"，以及"没统计时明确回退并留下
+# 证据"，而不是把没统计静默当成 0。
+
+def _counting_connection(monkeypatch):
+    """把每个发往工程的 SELECT 记下来，用来断言"根本没有 COUNT"。"""
+    from prism import project_load_service
+    executed = []
+    original = sqlite3.connect
+
+    class RecordingConnection:
+        def __init__(self, connection):
+            self._connection = connection
+
+        def __getattr__(self, name):
+            return getattr(self._connection, name)
+
+        def execute(self, sql, *parameters):
+            executed.append(' '.join(str(sql).split()))
+            return self._connection.execute(sql, *parameters)
+
+    monkeypatch.setattr(project_load_service.sqlite3, 'connect',
+                        lambda *args, **kwargs: RecordingConnection(
+                            original(*args, **kwargs)))
+    return executed
+
+
+TRUSTED = {'items': 12, 'attachments': 3}
+
+
+def test_injected_counts_skip_the_full_scan(sample, monkeypatch):
+    from prism import project_load_service
+    executed = _counting_connection(monkeypatch)
+    with patch.object(project_load_service, 'trace_record') as record:
+        index = read_project_index(sample, counts=TRUSTED)
+    assert (index.item_count, index.attachment_count) == (12, 3)
+    assert index.counts_source == project_load_service.COUNTS_SOURCE_PROVIDED
+    assert not [sql for sql in executed if 'count(' in sql.casefold()], executed
+    record.assert_not_called()
+
+
+def test_provider_is_used_instead_of_a_scan(sample, monkeypatch):
+    from prism import project_load_service
+    executed = _counting_connection(monkeypatch)
+    index = read_project_index(sample, counts_provider=lambda: TRUSTED)
+    assert index.item_count == 12
+    assert index.counts_source == project_load_service.COUNTS_SOURCE_PROVIDED
+    assert not [sql for sql in executed if 'count(' in sql.casefold()], executed
+
+
+def test_missing_counts_fall_back_and_leave_a_trace(sample):
+    from prism import project_load_service
+    with patch.object(project_load_service, 'trace_record') as record:
+        index = read_project_index(sample)
+    assert index.item_count == 12
+    assert index.counts_source == project_load_service.COUNTS_SOURCE_FALLBACK
+    event, = [call.args[0] for call in record.call_args_list]
+    assert event == project_load_service.COUNT_FALLBACK_EVENT
+    assert record.call_args.kwargs['reason'] == 'absent'
+    assert record.call_args.kwargs['items'] == 12
+
+
+@pytest.mark.parametrize('counts', [
+    {'items': 12},                                  # 只给一半
+    {'items': -1, 'attachments': 3},                 # 负数
+    {'items': True, 'attachments': 3},               # bool 是 int 的陷阱
+    {'items': '12', 'attachments': 3},               # 数字字符串
+    {'items': 12.0, 'attachments': 3},               # 浮点
+    {'item_count': 12, 'attachment_count': 3},       # 键名写错
+    [12, 3],                                         # 根本不是 mapping
+])
+def test_untrusted_counts_fall_back_instead_of_being_used(sample, counts):
+    from prism import project_load_service
+    with patch.object(project_load_service, 'trace_record') as record:
+        index = read_project_index(sample, counts=counts)
+    assert index.item_count == 12, '不可信的统计绝不能被采用'
+    assert index.attachment_count == 3
+    assert index.counts_source == project_load_service.COUNTS_SOURCE_FALLBACK
+    assert record.call_args.kwargs['reason'] == 'untrusted'
+
+
+def test_a_failing_provider_falls_back(sample):
+    from prism import project_load_service
+
+    def broken():
+        raise RuntimeError('cache went away')
+
+    with patch.object(project_load_service, 'trace_record') as record:
+        index = read_project_index(sample, counts_provider=broken)
+    assert index.item_count == 12
+    assert index.counts_source == project_load_service.COUNTS_SOURCE_FALLBACK
+    assert record.call_args.kwargs['reason'] == 'provider_error'
+
+
+def test_counts_source_defaults_to_fallback():
+    index = ProjectIndex(path='x', metadata={}, pages=(), item_count=0,
+                         attachment_count=0)
+    assert index.counts_source == 'fallback'
+
+
+def test_service_forwards_the_injected_counts(qapp, qtbot, sample):
+    from prism import project_load_service
+    service = ProjectLoadService()
+    with qtbot.waitSignal(service.index_ready, timeout=5000) as blocker:
+        index = service.read_index(sample, counts=TRUSTED)
+    assert blocker.args[0] is index
+    assert (index.item_count, index.counts_source) == (
+        12, project_load_service.COUNTS_SOURCE_PROVIDED)
+
+
+def test_service_without_counts_records_the_fallback(qapp, sample):
+    from prism import project_load_service
+    with patch.object(project_load_service, 'trace_record') as record:
+        index = ProjectLoadService().read_index(sample)
+    assert index.counts_source == project_load_service.COUNTS_SOURCE_FALLBACK
+    record.assert_called_once()

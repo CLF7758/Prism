@@ -78,6 +78,8 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         self.workspace_pages = []
         self.workspace_nodes = []
         self.material_records = []
+        # 模型库记录：元数据与文件清单，原件字节在附件表里。
+        self.model_records = []
         self.material_library_state = {}
         self.project_id = uuid.uuid4().hex
         from prism.viewport_items import ViewportItems
@@ -654,7 +656,12 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         present = set(native)
         native.extend(r for r in records if r not in present)
         order = kwargs.get('order', args[-1] if args and isinstance(args[-1], Qt.SortOrder) else Qt.SortOrder.DescendingOrder)
-        native.sort(key=self._viewport_items.stack_key, reverse=order == Qt.SortOrder.DescendingOrder)
+        # The stacking key is cached by the viewport manager and refreshed
+        # when a record changes, so the sort does not have to recompute
+        # `zValue()` for every one of the 100 000 records on every call.
+        # The resulting order is the same; only the cost differs.
+        native = self._viewport_items.sort_by_stack(
+            native, reverse=order == Qt.SortOrder.DescendingOrder)
         return native
 
     def itemAt(self, position, transform):
@@ -839,20 +846,34 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
         return bool(self._active_filter_categories
                     or self._active_filter_tags)
 
+    def iter_assets(self):
+        """Enumerate logical assets once without sorting their drawing order.
+
+        Metadata counts do not need z-order. Materialized records also appear
+        in Qt's scene, so merge them by identity before yielding the rest.
+        """
+        present = set()
+        for native in super().items():
+            item = logical_item(native)
+            if (hasattr(item, 'save_id') or getattr(item, '_asset_source', None)) and item not in present:
+                present.add(item)
+                yield item
+        for item in self._viewport_items.records.values():
+            if item not in present:
+                yield item
+
     def get_all_tags(self):
         tag_counts = {}
-        for item in self.items():
-            if hasattr(item, 'save_id'):
-                for tag in getattr(item, '_tags', []):
-                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        for item in self.iter_assets():
+            for tag in getattr(item, '_tags', []):
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
         return tag_counts
 
     def get_all_categories(self):
         cat_counts = {}
-        for item in self.items():
-            if hasattr(item, 'save_id'):
-                for cat in getattr(item, '_categories', []):
-                    cat_counts[cat] = cat_counts.get(cat, 0) + 1
+        for item in self.iter_assets():
+            for cat in getattr(item, '_categories', []):
+                cat_counts[cat] = cat_counts.get(cat, 0) + 1
         return cat_counts
 
     def add_item_later(self, itemdata, selected=False):
@@ -864,16 +885,23 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
 
         self.items_to_add.put((itemdata, selected))
 
-    def add_queued_items(self, max_items=None, time_budget_ms=None):
+    def add_queued_items(self, max_items=None, time_budget_ms=None, on_installed=None):
         """Adds items added via ``add_item_later``
 
+        ``time_budget_ms`` is cooperative, checked between atomic items;
+        it cannot preempt item construction or synchronous signal handlers.
+        Actual item/signal time and overruns are exposed in batch metrics.
         All scene mutations are batched: signals are blocked and
         viewport updates disabled during the loop so that the expensive
         cascades (recalc_scene_rect, selection handlers) fire at most
         once at the end instead of per-item.
         """
+        self._last_install_metrics = {}
         if self.items_to_add.empty():
             return
+
+        batch_started = time.perf_counter()
+        max_item_ms = 0.0
 
         # Suppress per-item signal cascades during batch insertion.
         was_blocked = self.blockSignals(True)
@@ -895,6 +923,7 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
                         or (time_budget_ms is not None and
                             (time.perf_counter()-started)*1000 >= time_budget_ms)):
                     break
+                item_started = time.perf_counter()
                 data, selected = self.items_to_add.get_nowait()
                 typ = data.pop('type')
                 cls = item_registry.get(typ)
@@ -910,6 +939,11 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
                     item.update_from_data(**data)
                 self.addItem(item)
                 created.append((item, selected))
+                if on_installed is not None:
+                    # Record before public signals can delete the live handle.
+                    on_installed(item)
+                max_item_ms = max(max_item_ms,
+                                  (time.perf_counter() - item_started) * 1000)
 
             # Single z-value pass: update max_z/min_z from existing
             # items, then bring selected items to front in order.
@@ -928,8 +962,24 @@ class PrismGraphicsScene(QtWidgets.QGraphicsScene):
             self.blockSignals(was_blocked)
             if vp is not None:
                 vp.setUpdatesEnabled(updates_enabled)
-            if not was_blocked:
-                self.assets_changed.emit()
-                if self.items_to_add.empty() or any(selected for _item, selected in created):
-                    self.selectionChanged.emit()
-                self.changed.emit([QtCore.QRectF()])
+            signals_started = time.perf_counter()
+            try:
+                if not was_blocked:
+                    self.assets_changed.emit()
+                    if self.items_to_add.empty() or any(selected for _item, selected in created):
+                        self.selectionChanged.emit()
+                    self.changed.emit([QtCore.QRectF()])
+            finally:
+                ended = time.perf_counter()
+                total_ms = (ended - batch_started) * 1000
+                self._last_install_metrics = {
+                    'installed_items': len(created),
+                    'budget_kind': 'cooperative_between_items',
+                    'budget_ms': time_budget_ms,
+                    'max_item_ms': max_item_ms,
+                    'mutation_ms': (signals_started - batch_started) * 1000,
+                    'signal_ms': (ended - signals_started) * 1000,
+                    'total_ms': total_ms,
+                    'budget_overrun_ms': (max(0.0, total_ms - time_budget_ms)
+                                          if time_budget_ms is not None else None),
+                }

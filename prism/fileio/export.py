@@ -15,7 +15,9 @@
 
 import base64
 import logging
+import os
 import pathlib
+import tempfile
 from xml.etree import ElementTree as ET
 
 from PyQt6 import QtCore, QtGui
@@ -26,6 +28,11 @@ from prism.items import PrismPixmapItem
 
 
 logger = logging.getLogger(__name__)
+
+#: How much of one original is held in memory while streaming it out. The
+#: whole point of the on-disk path: a 100k export holds one chunk of one
+#: original, never the file and never the project.
+STREAM_CHUNK = 1024 * 1024
 
 
 class ExporterRegistry(dict):
@@ -295,21 +302,40 @@ class ImagesToDirectoryExporter(ExporterBase):
 
     Not registered in the registry as it is accessed via its own menu entry,
     not auto-detected by file extension.
+
+    ``source`` is an optional
+    :class:`prism.export_service.OnDiskExportSource`: the assets of a partly
+    loaded project that the scene never held. They are resolved one bounded
+    batch at a time and streamed out of the project's own archive, so a 100k
+    export never holds more than one chunk of one original in memory.
+
+    ``unique_names`` numbers a colliding file name (``name (2).png``) instead
+    of asking about every single one — a whole-project export must not pop
+    ten thousand dialogs. The interactive single-page export keeps the
+    question, because there the user may really want to overwrite.
     """
 
-    def __init__(self, scene, dirname, adjusted=True):
+    def __init__(self, scene, dirname, adjusted=False, items=None, source=None,
+                 unique_names=False):
         self.scene = scene
         self.dirname = dirname
         self.adjusted = adjusted
-        self.items = [item for item in self.scene.items_by_type(PrismPixmapItem.TYPE)
-                      if not getattr(item, '_deleted_at', None)]
+        self.source = source
+        self.unique_names = bool(unique_names)
+        if items is None:
+            items = [item for item in self.scene.items_by_type(PrismPixmapItem.TYPE)
+                     if not getattr(item, '_deleted_at', None)]
+        self.items = items
         self.max_save_id = 0
         for item in self.items:
             if item.save_id:
                 self.max_save_id = max(self.max_save_id, item.save_id)
-        self.num_total = len(self.items)
+        self.num_total = len(self.items) + len(source or ())
         self.start_from = 0
         self.handle_existing = None
+        #: Assets that could not be written at all (missing originals). They
+        #: are reported once at the end, never silently dropped.
+        self.failures = []
 
     def export(self, worker=None):
         logger.debug(f'Exporting images to {self.dirname}')
@@ -317,6 +343,12 @@ class ImagesToDirectoryExporter(ExporterBase):
 
         self.emit_begin_processing(worker, self.num_total)
         self.emit_progress(worker, self.start_from)
+
+        # 目录驱动的导出一定自动避让：它可能有十万个文件，逐个弹窗既没人
+        # 点得完，也不是用户按这个菜单时的预期。单页交互导出保持原来的
+        # 询问 —— 那里用户可能真的想覆盖。
+        taken = self._taken_names() if (self.unique_names
+                                        or self.source is not None) else None
 
         for i, item in enumerate(
                 self.items[self.start_from:], start=self.start_from):
@@ -327,28 +359,20 @@ class ImagesToDirectoryExporter(ExporterBase):
 
             pixmap = None
             imgformat = None
-            if not self.adjusted and hasattr(item, 'original_bytes'):
+            if not self.adjusted:
                 # Prefer the exact imported payload.  This is important for
                 # PNG alpha, HDR/EXR and any format Qt would otherwise
                 # re-encode on the way out.
-                pixmap = item.original_bytes()
-                imgformat = item.original_format()
-                if not pixmap:
-                    imgformat = None
-            if (not self.adjusted and pixmap is None
-                    and hasattr(item, '_display_source_pixmap')):
-                # Compatibility for items created before source bytes were
-                # introduced: export the unadjusted display snapshot rather
-                # than the currently adjusted preview.
-                original = item._display_source_pixmap
-                barray = QtCore.QByteArray()
-                buffer = QtCore.QBuffer(barray)
-                buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
-                image = original.toImage()
-                imgformat = item.get_imgformat(image)
-                image.save(buffer, imgformat.upper(), quality=90)
-                pixmap = barray.data()
-            if pixmap is None:
+                try:
+                    getter = getattr(item, 'original_bytes', None)
+                    pixmap = getter() if callable(getter) else None
+                    if not pixmap:
+                        raise ValueError('原件不存在，已停止原件导出；不会用预览图替代。')
+                    imgformat = item.original_format()
+                except Exception as error:
+                    self.handle_export_error(getattr(item, 'filename', None) or self.dirname, error, worker)
+                    return
+            else:
                 pixmap, imgformat = item.pixmap_to_bytes()
 
             if item.save_id:
@@ -365,7 +389,7 @@ class ImagesToDirectoryExporter(ExporterBase):
                 self.handle_export_error(self.dirname, e, worker)
                 return
 
-            if path_exists:
+            if path_exists and taken is None:
                 logger.debug(f'File already exists: {path}')
                 if self.handle_existing is None:
                     self.start_from = i
@@ -384,10 +408,25 @@ class ImagesToDirectoryExporter(ExporterBase):
                         logger.debug('Overwrite file')
                     elif self.handle_existing == 'overwrite_all':
                         logger.debug('Overwrite file')
+            elif path_exists:
+                # 自动避让：宁可写成 `name (2).png`，也不覆盖用户已有文件。
+                logger.debug(f'File already exists, using a free name: {path}')
+                path = self._numbered_path(path, taken)
+                filename = path.name
 
             logger.debug(f'Writing file: {path}')
             try:
-                path.write_bytes(pixmap)
+                # Stage each file so a failed write cannot leave a truncated
+                # file bearing the final original's name or destroy an older export.
+                descriptor, temporary = tempfile.mkstemp(prefix='.prism-export-', dir=path.parent)
+                try:
+                    with os.fdopen(descriptor, 'wb') as output:
+                        output.write(pixmap)
+                        output.flush()
+                        os.fsync(output.fileno())
+                    os.replace(temporary, path)
+                finally:
+                    pathlib.Path(temporary).unlink(missing_ok=True)
             except OSError as e:
                 self.handle_export_error(path, e, worker)
                 return
@@ -397,4 +436,116 @@ class ImagesToDirectoryExporter(ExporterBase):
 
             self.emit_progress(worker, i)
 
-        self.emit_finished(worker, self.dirname, [])
+        if self.source is not None:
+            if not self._export_source(worker, taken):
+                logger.debug('Export canceled')
+                worker.finished.emit(self.dirname, [])
+                return
+
+        self.emit_finished(worker, self.dirname, list(self.failures))
+
+    # ── 还没加载的素材 ─────────────────────────────────────────
+
+    def _export_source(self, worker, taken):
+        """Write the assets that were never loaded into the scene.
+
+        One bounded directory batch at a time, one chunk of one original at a
+        time. Returns False when the worker was canceled.
+        """
+        source = self.source
+        source.cancel = (
+            (lambda: bool(worker.canceled)) if worker is not None else None)
+        done = 0
+        try:
+            for batch in source.batches():
+                for candidate in batch:
+                    if worker and worker.canceled:
+                        return False
+                    if self._write_candidate(candidate, taken, worker) is False:
+                        return False
+                    done += 1
+                    self.emit_progress(worker, len(self.items)+done)
+        except Exception as error:                     # noqa: BLE001
+            from prism.project_open_scope import OpenScopeCancelled
+            if isinstance(error, OpenScopeCancelled):
+                logger.debug('Export canceled while reading the directory')
+                return False
+            # 目录中途不可用（工程被换掉、缓存过期）必须报出来，不能当成
+            # 「导出完成」—— 半份结果不能被说成全部。
+            logger.exception('Could not read the project directory')
+            self.failures.append(str(error))
+        if source.unresolved:
+            # 取项时还在、真正去取时已经不在了：也要说，不能当作导全了。
+            self.failures.append(
+                f'{len(source.unresolved)} asset(s) disappeared from the '
+                'project during the export and were not written: '
+                + ', '.join(str(key) for key in source.unresolved[:5]))
+        return True
+
+    def _write_candidate(self, candidate, taken, worker):
+        """Stream one on-disk original to disk, or record why it cannot be.
+
+        :returns: ``False`` only when the worker was canceled.
+        """
+        imgformat = candidate.original_format() or 'png'
+        filename = candidate.get_filename_for_export(imgformat)
+        try:
+            path = pathlib.Path(self.dirname) / filename
+            path_exists = path.exists()
+        except OSError as error:
+            self.failures.append(f'{filename}: {error}')
+            return True
+        if path_exists:
+            # 十万级的导出逐个弹窗没有意义；宁可自动避让，也不覆盖。
+            logger.debug(f'File already exists, using a free name: {path}')
+            path = self._numbered_path(path, taken)
+            filename = path.name
+        written, canceled = 0, False
+        try:
+            with candidate.open_original_stream() as stream:
+                with open(path, 'wb') as output:
+                    while True:
+                        if worker and worker.canceled:
+                            canceled = True
+                            break
+                        chunk = stream.read(STREAM_CHUNK)
+                        if not chunk:
+                            break
+                        output.write(chunk)
+                        written += len(chunk)
+        except Exception as error:                     # noqa: BLE001
+            logger.warning('Could not export %s', candidate, exc_info=True)
+            path.unlink(missing_ok=True)
+            self.failures.append(f'{filename}: {error}')
+            return True
+        if canceled:
+            # 半截文件不是导出结果：删掉再收工。
+            path.unlink(missing_ok=True)
+            return False
+        if not written:
+            # 空文件不是「导出成功」：说清楚这一条没导出去。
+            path.unlink(missing_ok=True)
+            self.failures.append(
+                f'{filename}: {candidate} 没有任何原始字节，未导出')
+            return True
+        logger.debug(f'Wrote {written} original bytes to {path}')
+
+    # ── 文件名避让 ─────────────────────────────────────────────
+
+    def _taken_names(self):
+        """Directory contents plus this run's names, case-folded.
+
+        Seeded from disk so an existing file is numbered, never overwritten.
+        """
+        try:
+            entries = os.listdir(self.dirname)
+        except OSError:
+            entries = ()
+        return {entry.casefold() for entry in entries}
+
+    def _numbered_path(self, path, taken):
+        """``name (2).ext`` — reuse the resource exporter's rule verbatim."""
+        from prism.fileio.resource_export import _unique_name
+        if taken is None:
+            taken = set()
+        return path.with_name(_unique_name(taken, path.name))

@@ -5,7 +5,7 @@ import uuid
 
 from unittest.mock import MagicMock, patch
 
-from PyQt6 import QtGui, QtWidgets
+from PyQt6 import QtGui, QtWidgets, sip
 
 
 def pytest_configure(config):
@@ -33,6 +33,23 @@ def reset_prism_actions():
     for key in list(actions.keys()):
         if key.startswith('recent_files_'):
             actions.pop(key)
+
+
+@pytest.fixture(autouse=True)
+def isolate_recent_usage(tmp_path_factory):
+    """把「最近使用」账本指到临时目录。
+
+    账本落在用户级目录（``%APPDATA%\\Prism``），而任何打开工作台页面的
+    测试都会记一笔 —— 不隔离的话，跑一遍测试就把用户真实机器上的账本
+    塞满随机工程 id 的垃圾条目。
+    """
+    from prism import recent_usage
+    ledger = recent_usage.RecentUsage(
+        tmp_path_factory.mktemp('recent-usage') / 'recent-usage.json')
+    previous = recent_usage._LEDGER
+    recent_usage._LEDGER = ledger
+    yield ledger
+    recent_usage._LEDGER = previous
 
 
 @pytest.fixture(autouse=True)
@@ -129,9 +146,23 @@ def main_window(qtbot):
          patch('prism.clipboard_capture.ClipboardCaptureAdapter.start'):
         main = PrismMainWindow(app)
     qtbot.addWidget(main)
+    # Legacy reader/storage unit tests deliberately exercise the compatibility
+    # backend, without interactive conversion dialogs. Mandatory-upgrade UI
+    # tests explicitly enable the production policy on this fixture.
+    main.view.require_directory_upgrade = False
     yield main
-    main.view.undo_stack.setClean()
-    main.browser_capture.stop()
+    # pytest-qt may already have closed and destroyed a WA_DeleteOnClose
+    # window before fixture finalizers resume. Do not call native methods on
+    # deleted children; assertions and event-loop failures still propagate.
+    # Some tests replace the undo stack with a mock, and sip.isdeleted()
+    # rejects a mock outright - that must not turn into a teardown error.
+    try:
+        if not sip.isdeleted(main.view.undo_stack):
+            main.view.undo_stack.setClean()
+    except TypeError:
+        pass
+    if not sip.isdeleted(main):
+        main.browser_capture.stop()
 
 
 @pytest.fixture(autouse=True)
@@ -145,16 +176,33 @@ def _settle_deferred_deletes():
 
     这个 fixture 不依赖任何东西，所以在 teardown 顺序里排在 `qtbot` 之后
     （fixture 按建立顺序的逆序销毁），正好补上 qtbot 缺的那一步。
+
+    排空事件循环时模态框必须自己挡着：autouse fixture 是**按定义顺序倒序**
+    建立和销毁的，`no_blocking_message_boxes`（定义在前）会在本 fixture
+    之前销毁，它的补丁此刻已经撤掉。此时任何模态框（比���
+    `_report_paged_open_failure` 的"无法按需打开"警告）都会在无人应答的
+    headless 环境里永久阻塞整个测试跑 —— 这正是 test_view.py 挂在
+    `test_init_with_filenames_beefile` 上的原因：命令行工程的打开被
+    `QTimer.singleShot(0, ...)` 推迟到补丁撤掉之后，于是真的去打开一个
+    不存在的文件，失败后弹出模态警告。
     """
-    yield
     from PyQt6 import QtCore, QtWidgets
+    yield
     app = QtWidgets.QApplication.instance()
     if app is None:
         return
-    for _ in range(3):
-        QtCore.QCoreApplication.sendPostedEvents(
-            None, QtCore.QEvent.Type.DeferredDelete)
-        app.processEvents()
+    with patch('PyQt6.QtWidgets.QMessageBox.question',
+               return_value=QtWidgets.QMessageBox.StandardButton.Yes), \
+         patch('PyQt6.QtWidgets.QMessageBox.warning',
+               return_value=QtWidgets.QMessageBox.StandardButton.Ok), \
+         patch('PyQt6.QtWidgets.QMessageBox.critical',
+               return_value=QtWidgets.QMessageBox.StandardButton.Ok), \
+         patch('PyQt6.QtWidgets.QMessageBox.information',
+               return_value=QtWidgets.QMessageBox.StandardButton.Ok):
+        for _ in range(3):
+            QtCore.QCoreApplication.sendPostedEvents(
+                None, QtCore.QEvent.Type.DeferredDelete)
+            app.processEvents()
 
 
 @pytest.fixture

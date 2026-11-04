@@ -18,7 +18,7 @@ class FilterPopover(QtWidgets.QWidget):
 
     filters_changed = QtCore.pyqtSignal()
 
-    def __init__(self, view, parent=None, color_host=None):
+    def __init__(self, view, parent=None, color_host=None, *, defer_ui=False):
         super().__init__(parent)
         self.view = view
         self.panel = view.category_panel
@@ -43,11 +43,18 @@ class FilterPopover(QtWidgets.QWidget):
             'QWidget#filterPopover QScrollArea { background: transparent; border: none; }' % c)
         self.setFixedWidth(POPOVER_WIDTH)
         self._building = False
-        self._setup_ui()
-        self.refresh()
+        self._ui_ready = False
+        if not defer_ui:
+            self.refresh()
 
     def sizeHint(self):
-        return QtCore.QSize(POPOVER_WIDTH, 330 + self.tags_scroll.height())
+        return QtCore.QSize(POPOVER_WIDTH, 330 + (
+            self.tags_scroll.height() if self._ui_ready else 120))
+
+    def showEvent(self, event):
+        if not self._ui_ready:
+            self.refresh()
+        super().showEvent(event)
 
     # ── 界面 ──────────────────────────────────────────────────────
 
@@ -151,6 +158,9 @@ class FilterPopover(QtWidgets.QWidget):
 
     def refresh(self):
         """把界面对齐到当前的筛选状态（左栏/别处改过也能跟上）。"""
+        if not self._ui_ready:
+            self._setup_ui()
+            self._ui_ready = True
         self._building = True
         try:
             self.rating_combo.setCurrentIndex(int(self.panel._min_rating))
@@ -289,8 +299,9 @@ class FilterPopover(QtWidgets.QWidget):
             if selector is not None:
                 with QtCore.QSignalBlocker(selector):
                     selector.setCurrentIndex(0)
-            self.rating_combo.setCurrentIndex(0)
-            self.untagged_box.setChecked(False)
+            if self._ui_ready:
+                self.rating_combo.setCurrentIndex(0)
+                self.untagged_box.setChecked(False)
             self._rebuild_tag_rows()
             for button in self.colour_buttons.values():
                 button.setChecked(False)

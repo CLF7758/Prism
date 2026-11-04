@@ -100,15 +100,17 @@ def test_the_window_routes_export_requests_to_the_workflow(main_window,
     from prism.actions import export_workflow
 
     calls = []
+    policies = []
     monkeypatch.setattr(
         export_workflow, 'export_resource_subtree',
-        lambda view, section, node_id=None: calls.append((view, section,
-                                                          node_id)))
+        lambda view, section, node_id=None, **options:
+            (calls.append((view, section, node_id)), policies.append(options)))
 
     window = main_window
     window.view.category_panel.resource_export_requested.emit('document', None)
 
     assert calls == [(window.view, 'document', None)]
+    assert policies == [{'typed': True}]
 
 
 def add_document_page(window, page_id, title, html='<p>你好</p>'):

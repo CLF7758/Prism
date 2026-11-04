@@ -17,8 +17,8 @@
 
 The tree comes from simple-mind-map as JSON, so everything here works on
 that structure: ``{data: {text, note, tag, hyperlink}, children: [...]}``.
-Node text arrives as HTML (the editor supports rich text), so it is run
-through :func:`node_text` before it lands in a plain-text format.
+Rich-text nodes explicitly mark their HTML with ``data.richText``. Plain
+node titles and notes remain plain text when exported.
 
 XMind files are a ZIP holding ``content.json``; that structure is public and
 is written here directly, without any XMind code.
@@ -33,6 +33,7 @@ import re
 import time
 import uuid
 import zipfile
+from html.parser import HTMLParser
 
 from prism.fileio.attachments import attachment_for, extension_for
 from prism.fileio.import_xmind import XMIND_UNITS_PER_PX
@@ -41,7 +42,7 @@ from prism.i18n import _
 logger = logging.getLogger(__name__)
 
 
-SUPPORTED_FORMATS = ('xmind', 'mm', 'json', 'md', 'png')
+SUPPORTED_FORMATS = ('xmind', 'mm', 'json', 'md', 'png', 'pdf')
 
 #: simple-mind-map layout -> XMind structureClass, so exporting an imported
 #: map keeps the structure it was drawn with.
@@ -60,8 +61,30 @@ LAYOUT_STRUCTURES = {
 #: Keys that describe this editor's own state rather than the map.
 _PRIVATE_KEYS = ('_prism_view',)
 
-_TAG_RE = re.compile(r'<[^>]+>')
-_BLOCK_TAG_RE = re.compile(r'</(p|div|h[1-6]|li)>|<br\s*/?>', re.IGNORECASE)
+class _RichText(HTMLParser):
+    """Plain text from explicitly rich editor content, with block boundaries."""
+    BLOCKS = frozenset(('p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'))
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+
+    def _newline(self):
+        if self.parts and not self.parts[-1].endswith('\n'):
+            self.parts.append('\n')
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'br':
+            self.parts.append('\n')
+        elif tag in self.BLOCKS:
+            self._newline()
+
+    def handle_endtag(self, tag):
+        if tag in self.BLOCKS:
+            self._newline()
+
+    def handle_data(self, data):
+        self.parts.append(data)
 
 
 class MindMapExportError(Exception):
@@ -69,28 +92,29 @@ class MindMapExportError(Exception):
 
 
 def node_text(node):
-    """Plain text of a node, with the HTML stripped and entities resolved."""
+    """Keep plain node text verbatim; decode HTML only for richText nodes."""
     if not isinstance(node, dict):
         return ''
-    raw = node.get('data', {}).get('text', '') or ''
-    # Block boundaries become real line breaks, then tags are removed.
-    text = _BLOCK_TAG_RE.sub('\n', str(raw))
-    text = _TAG_RE.sub('', text)
-    text = (text.replace('&nbsp;', ' ')
-                .replace('&lt;', '<')
-                .replace('&gt;', '>')
-                .replace('&quot;', '"')
-                .replace('&#39;', "'")
-                .replace('&amp;', '&'))
-    return ' '.join(text.split())
+    data = node.get('data', {})
+    if not isinstance(data, dict):
+        return ''
+    raw = str(data.get('text', '') or '')
+    if data.get('richText') is not True:
+        return raw
+    parser = _RichText()
+    parser.feed(raw)
+    parser.close()
+    return ''.join(parser.parts).replace('\xa0', ' ').strip('\n')
 
 
 def node_note(node):
     """Optional note attached to a node."""
     if not isinstance(node, dict):
         return ''
-    raw = node.get('data', {}).get('note', '') or ''
-    return ' '.join(_TAG_RE.sub('', str(raw)).split())
+    data = node.get('data', {})
+    # The editor's editNote uses a plain multiline text area. HTML-looking
+    # examples and line breaks belong to the note and must not be discarded.
+    return str(data.get('note', '') or '') if isinstance(data, dict) else ''
 
 
 def children_of(node):
@@ -106,7 +130,7 @@ def count_nodes(tree):
     return 1 + sum(count_nodes(child) for child in children_of(tree))
 
 
-def export_mindmap(tree, path, fmt=None, attachments=None):
+def export_mindmap(tree, path, fmt=None, attachments=None, *, cancel=None):
     """Write ``tree`` to ``path`` in the format named by ``fmt`` or suffix.
 
     ``attachments`` is the board's picture table; pass it and an XMind
@@ -131,6 +155,9 @@ def export_mindmap(tree, path, fmt=None, attachments=None):
             _write_freemind(tree, path)
         elif fmt == 'xmind':
             _write_xmind(tree, path, attachments)
+        elif fmt == 'pdf':
+            from prism.fileio.mindmap_pdf import write_mindmap_pdf
+            write_mindmap_pdf(tree, path, attachments, cancel=cancel)
         else:
             raise MindMapExportError(
                 _('Rendering {fmt} needs the mind map window.').format(fmt=fmt))
@@ -264,7 +291,16 @@ def _xmind_topic(node, attachments=None, resources=None):
     note = node_note(node)
     if note:
         topic['notes'] = {'plain': {'content': note}}
-    tags = node.get('data', {}).get('tag') if isinstance(node, dict) else None
+    data = node.get('data', {}) if isinstance(node, dict) else {}
+    data = data if isinstance(data, dict) else {}
+    hyperlink = data.get('hyperlink')
+    if isinstance(hyperlink, str) and hyperlink:
+        topic['hyperlink'] = hyperlink
+        if isinstance(data.get('hyperlinkTitle'), str) and data['hyperlinkTitle']:
+            topic['hyperlinkTitle'] = data['hyperlinkTitle']
+    if data.get('expand') is False:
+        topic['collapsed'] = True
+    tags = data.get('tag')
     if isinstance(tags, list) and tags:
         topic['labels'] = [str(tag) for tag in tags]
     image = _xmind_image(node, attachments, resources)
@@ -286,8 +322,8 @@ def _xmind_image(node, attachments, resources):
         return None
     entry = attachment_for(image, attachments)
     if entry is None:
-        logger.debug('Skipping picture %s with no data behind it', image)
-        return None
+        raise MindMapExportError(
+            '节点“{title}”的图片数据缺失，未写出 XMind 文件。'.format(title=node_text(node)))
     if resources is None:
         resources = {}
     _name, mime, blob = entry

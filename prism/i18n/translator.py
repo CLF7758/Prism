@@ -16,6 +16,7 @@
 import logging
 
 from PyQt6 import QtCore
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,9 @@ class Translator:
         return lang
 
     def translate(self, text):
-        return self._translations.get(text, text)
+        translated = self._translations.get(text, text)
+        # Legacy identifiers can remain translation keys, never UI branding.
+        return re.sub(r'\bbee\b', 'Prism', translated, flags=re.IGNORECASE)
 
     def reload(self):
         self._load()

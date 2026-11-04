@@ -10,8 +10,6 @@
  */
 /* ── Global ─────────────────────────────────────────────── */
 * {
-    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
-    font-size: 13px;
     color: #E7E9ED;
 }
 
@@ -518,12 +516,6 @@ QTabWidget::pane {
     border: 1px solid #30333A;
     border-radius: 6px;
     top: -1px;
-}
-
-QTabWidget#workspaceTabs::pane {
-    border: none;
-    border-radius: 0;
-    top: 0;
 }
 
 QTabBar::tab {

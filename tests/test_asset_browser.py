@@ -17,7 +17,7 @@ def test_loading_defers_browser_layout_until_assets_are_complete(main_window, mo
     arranged.assert_not_called()
     main_window.view._project_opening = False
     browser.open('all')
-    assert browser.model.items == [first, second]
+    assert assets_only(browser.model.items) == [first, second]
     arranged.assert_called_once()
 
 
@@ -27,35 +27,50 @@ def test_dense_material_canvas_keeps_frame_until_visible_previews_are_ready(main
     browser = main_window.asset_browser
     first = photo(main_window, 'default-canvas', 'First')
     second = photo(main_window, 'default-canvas', 'Second')
+    # Keep the authoritative query stable across normal scheduled refreshes.
+    # Replacing only model.items is overwritten by the two-item scene query.
+    records = list(browser.catalog.query())*1000
+    monkeypatch.setattr(browser.catalog, 'query', lambda **_: records)
     main_window.show()
     browser.open('all')
-    browser.model.replace([first, second]*1000)
     canvas = browser.list
     canvas.setTransform(QtGui.QTransform.fromScale(.2, .2))
     canvas.centerOn(canvas._content_bounds.center())
     qtbot.wait(50)
     assert len(canvas.visible_cards(canvas.mapToScene(canvas.viewport().rect()).boundingRect())) >= 128
-    rendered = Mock(wraps=canvas.scene().render)
-    monkeypatch.setattr(canvas.scene(), 'render', rendered)
+    def visible_tiles_ready():
+        rect=canvas.mapToScene(canvas.viewport().rect()).boundingRect()
+        return (not canvas._tiles._jobs and
+                not any(canvas._tiles.rect(key).intersects(rect) for key in canvas._tiles.pending))
     canvas.viewport().grab()
-    while canvas._tiles.pending:
-        canvas._tiles._work()
+    qtbot.waitUntil(visible_tiles_ready, timeout=5000)
     frames = {key: value[0].cacheKey() for key, value in canvas._tiles.tiles.items()}
     assert frames
     canvas.viewport().grab()
     assert all(canvas._tiles.tiles[key][0].cacheKey() == value for key, value in frames.items())
     ready = {first: True, second: False}
-    monkeypatch.setattr(lod, 'base_preview_ready', lambda item, *args: ready[item])
+    resolve = lod.display_pixmap
+    monkeypatch.setattr(lod, 'display_pixmap', lambda item, *args: resolve(item, *args) if ready[item] else None)
+    # Injecting a changed source outcome invalidates the cached readiness walk.
+    canvas._details_key = None
     canvas.request_display_refresh()
     canvas._publish_display()
     assert not canvas._tiles.stale
+    builds_before_refresh = canvas._tiles.builds
     ready[second] = True
     canvas._publish_display()
     assert canvas._tiles.stale
     canvas.viewport().grab()
-    while canvas._tiles.pending:
-        canvas._tiles._work()
-    assert rendered.call_count > 0
+    qtbot.waitUntil(visible_tiles_ready, timeout=5000)
+    assert canvas._tiles.builds > builds_before_refresh
+    # The specialized sliced renderer must retain Qt's actual pixels, rather
+    # than requiring a particular private scene.render call during playback.
+    key = next(key for key in canvas._tiles.visible if canvas._tiles._fresh(key))
+    actual = canvas._tiles.tiles[key][0]
+    reference = QtGui.QImage(actual.size(), actual.format())
+    reference.fill(canvas.backgroundBrush().color())
+    canvas._render_tile(reference, QtCore.QRectF(reference.rect()), canvas._tiles.rect(key))
+    assert actual == reference
 
 
 def photo(window, page, title, tags=()):
@@ -69,6 +84,16 @@ def photo(window, page, title, tags=()):
     return item
 
 
+def assets_only(items):
+    """列表里的**图片素材**条目。
+
+    左栏那五个口径是同一张混排列表：画布、脑图、文档、材质、模型的卡片
+    和图片素材平级躺在里面，其余几类是结果字典（``dict``），图片素材是
+    素材对象本身。要断言「图片素材有哪些」就把字典摘出去。
+    """
+    return [item for item in items if not isinstance(item, dict)]
+
+
 def test_browser_queries_whole_project_and_locates_original(main_window):
     w = main_window
     other = w.workspace_service.add('canvas', 'Other')['id']
@@ -76,10 +101,11 @@ def test_browser_queries_whole_project_and_locates_original(main_window):
     b = photo(w, other, 'Second')
     b.setPos(123, 456)
     w.asset_browser.open('all')
-    assert set(w.asset_browser.model.items) == {a, b}
+    assert set(assets_only(w.asset_browser.model.items)) == {a, b}
     w.asset_browser.open('untagged')
-    assert w.asset_browser.model.items == [b]
-    w.asset_browser.locate(w.asset_browser.model.index(0))
+    assert assets_only(w.asset_browser.model.items) == [b]
+    # Mixed resource cards can precede the image; activate that image's row.
+    w.asset_browser.locate(w.asset_browser.model.index(w.asset_browser.model.items.index(b)))
     assert w.view.current_canvas_id == other
     assert b.pos() == QtCore.QPointF(123, 456)
     assert b._canvas_id == other
@@ -93,7 +119,7 @@ def test_unclassified_uses_default_canvas_not_legacy_categories(main_window):
     default._categories = ['legacy category']
     assigned = photo(w, page, 'Classified')
     w.asset_browser.open('unclassified')
-    assert w.asset_browser.model.items == [default]
+    assert assets_only(w.asset_browser.model.items) == [default]
     catalog = w.view.category_panel.catalog
     assert catalog.count_snapshot()['unclassified'] == catalog.unclassified_count() == 1
     assert not catalog.is_unclassified(assigned)
@@ -144,17 +170,17 @@ def test_browser_search_tag_and_trash(main_window):
     assert w.asset_browser.model.items == [a]
     w.asset_browser.search.clear()
     w.asset_browser.set_tag('reference', True)
-    assert w.asset_browser.model.items == [a]
+    assert assets_only(w.asset_browser.model.items) == [a]
     w.asset_browser.set_tag('reference', False)
     index = w.asset_browser.model.index(w.asset_browser.model.items.index(a))
     w.asset_browser.list.selectionModel().select(index, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect)
     w.view.on_action_delete_items()
     w.asset_browser.refresh()
-    assert w.asset_browser.model.items == [b]
+    assert assets_only(w.asset_browser.model.items) == [b]
     assert w.view.category_panel.catalog.trash_asset_count() == 1
     w.view.undo_stack.undo()
     w.asset_browser.refresh()
-    assert set(w.asset_browser.model.items) == {a, b}
+    assert set(assets_only(w.asset_browser.model.items)) == {a, b}
 
 
 def test_history_restores_smart_folder_scope_and_search(main_window):
@@ -167,11 +193,11 @@ def test_history_restores_smart_folder_scope_and_search(main_window):
     browser.saved_rule = None
     browser.search.clear()
     browser.open('all')
-    assert browser.model.rowCount() == 2
+    assert len(assets_only(browser.model.items)) == 2
     browser.travel(-1)
     assert browser.saved_rule['text'] == 'First'
     assert browser.search.text() == 'First'
-    assert browser.model.rowCount() == 1
+    assert len(assets_only(browser.model.items)) == 1
 
 
 def test_smart_folder_rules_persist(main_window, tmp_path):
@@ -211,7 +237,7 @@ def test_damaged_asset_is_counted_trashed_and_preserved_on_save_as(main_window, 
     item = next(i for i in w.view.scene.items() if isinstance(i, PrismErrorItem))
     assert w.view.category_panel.catalog.total_count() == 1
     w.asset_browser.open('all')
-    assert w.asset_browser.model.items == [item]
+    assert assets_only(w.asset_browser.model.items) == [item]
     assert w.asset_browser.storage_bytes([item]) == len(b'not an image')
     item.setSelected(True)
     w.view.on_action_delete_items()

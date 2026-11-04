@@ -45,7 +45,9 @@ Nothing in this module imports Qt, so the model can be tested on its own.
 
 import fnmatch
 import re
+import threading
 import zlib
+from collections import OrderedDict
 
 PATH_SEP = '/'
 NAMESPACE_SEP = ':'
@@ -252,6 +254,50 @@ def _split_or(chunk):
 
 # ── Expanding tags for search ─────────────────────────────────────────
 
+#: How many (mapping table, tag) pairs the name-index cache keeps.
+#:
+#: The cached unit is **one tag**, not one tag set: the name index of a
+#: set of tags is the union of what each tag contributes, and a project
+#: has far fewer *distinct tags* than assets.  Caching the tag set
+#: instead was measured and is not worth it - see the report.
+NAME_INDEX_CACHE_LIMIT = 8192
+
+#: key -> the frozen set of names one tag contributes.  An
+#: ``OrderedDict`` so the oldest entry can be dropped when the cache is
+#: full.
+_name_index_cache = OrderedDict()
+
+#: The cache is shared by the GUI thread and the background search
+#: workers, so it is guarded.
+_name_index_lock = threading.RLock()
+
+_name_index_counters = {'hits': 0, 'misses': 0, 'evictions': 0}
+
+#: Gives every :class:`TagSystem` an identity of its own.  Two systems
+#: (two projects, two scenes) must never share a cache entry even when
+#: their tables happen to look the same.
+_tag_system_counter = 0
+
+
+def _next_tag_system_token():
+    global _tag_system_counter
+    with _name_index_lock:
+        _tag_system_counter += 1
+        return _tag_system_counter
+
+
+def matching_tag_sets(groups, system, *, active=(), predicates=()):
+    """Resolve exact stored tag sets using the existing hierarchy/alias rules."""
+    import json
+    active = {str(name).casefold() for name in active}
+    result = []
+    for raw in sorted({row[1] for row in groups}):
+        index = name_index(json.loads(raw or '[]'), system)
+        if active.issubset(index) and all(predicate.matches(index) for predicate in predicates if predicate is not None):
+            result.append(raw)
+    return tuple(result)
+
+
 def name_index(tags, system):
     """Every name a set of tags can be found by.
 
@@ -259,7 +305,81 @@ def name_index(tags, system):
     leaf with and without its namespace, and all of that again for every
     synonym of the tag.  Implied parents are added the same way, so
     ``建筑`` finds an item that only carries ``建筑/红墙``.
+
+    The per-tag contribution is memoised, because a search asks for the
+    index of every asset it looks at and the answer only depends on the
+    tags and on the mapping table.  The key carries the table's
+    revision, so a changed synonym, a changed implied parent or a
+    renamed tag can never leave an old name behind; and it carries the
+    tag itself, so a re-tagged asset never keeps the names of its old
+    tags.
     """
+    prepared = _prepare_name_index(tags, system)
+    if prepared is None:
+        # Something we cannot key on (a tag list that is not iterable, a
+        # system that is not a TagSystem).  Fall back to the plain path
+        # so the behaviour - including the exception it raises - is
+        # exactly what it always was.
+        return _build_name_index(tags, system)
+    tag_list, system_key = prepared
+    index = set()
+    for tag in tag_list:
+        if not tag:
+            continue
+        index |= _tag_names(tag, system, system_key)
+    return index
+
+
+def _prepare_name_index(tags, system):
+    """Normalise the tags and read the identity of the mapping table."""
+    try:
+        tag_list = [str(tag).strip() for tag in (tags or ())]
+    except Exception:
+        return None
+    token = getattr(system, '_token', None)
+    revision = getattr(system, '_revision', None)
+    if token is None or revision is None:
+        return None
+    return tag_list, (token, revision)
+
+
+def _tag_names(tag, system, system_key):
+    """What one tag contributes to the name index - memoised per tag.
+
+    The work decomposes per tag: the index of a set of tags is the union
+    of what each tag contributes.  Caching that unit is what makes the
+    cache pay - the same contributions are reused by every asset that
+    carries the tag.
+    """
+    key = (system_key, tag)
+    with _name_index_lock:
+        cached = _name_index_cache.get(key)
+        if cached is not None:
+            _name_index_cache.move_to_end(key)
+            _name_index_counters['hits'] += 1
+            return cached
+        _name_index_counters['misses'] += 1
+    contribution = _build_tag_names(tag, system)
+    with _name_index_lock:
+        _name_index_cache[key] = contribution
+        _name_index_cache.move_to_end(key)
+        while len(_name_index_cache) > NAME_INDEX_CACHE_LIMIT:
+            _name_index_cache.popitem(last=False)
+            _name_index_counters['evictions'] += 1
+    return contribution
+
+
+def _build_tag_names(tag, system):
+    """What one tag contributes, built from scratch."""
+    names = set()
+    _add_tag_names(names, tag, system)
+    for parent in system.implied_parents(tag):
+        _add_tag_names(names, parent, system)
+    return frozenset(names)
+
+
+def _build_name_index(tags, system):
+    """The name index of a tag list, built from scratch."""
     index = set()
     for tag in tags or ():
         tag = str(tag).strip()
@@ -269,6 +389,30 @@ def name_index(tags, system):
         for parent in system.implied_parents(tag):
             _add_tag_names(index, parent, system)
     return index
+
+
+def name_index_cache_stats():
+    """How the name-index cache is doing (for diagnostics and tests).
+
+    The counters are **per tag**: one call to :func:`name_index` looks up
+    one entry per tag it carries.
+    """
+    with _name_index_lock:
+        stats = dict(_name_index_counters)
+        stats['size'] = len(_name_index_cache)
+        stats['limit'] = NAME_INDEX_CACHE_LIMIT
+        return stats
+
+
+def clear_name_index_cache():
+    """Throw the whole name-index cache away.
+
+    The cache invalidates itself - the key carries the tags and the
+    mapping table's revision - so this is only needed when something
+    changed the table without going through :class:`TagSystem`.
+    """
+    with _name_index_lock:
+        _name_index_cache.clear()
 
 
 def _add_tag_names(index, tag, system):
@@ -296,11 +440,25 @@ class TagSystem:
     """
 
     def __init__(self, siblings=None, parents=None):
+        # The identity of this table.  Two tables never share a name-index
+        # cache entry, and the revision tells the cache that the table
+        # changed - see :func:`name_index`.
+        self._token = _next_tag_system_token()
+        self._revision = 0
         self._siblings = {}
         self._parents = {}
         self._groups = {}
         self.set_siblings(siblings or ())
         self.set_parents(parents or ())
+
+    def _touch(self):
+        """Mark the mapping table as changed.
+
+        Every change to the synonyms or to the implied parents has to
+        bump the revision, otherwise a cached name index could still
+        carry a name that no longer belongs to the tag.
+        """
+        self._revision += 1
 
     # ── persistence ───────────────────────────────────────────────────
 
@@ -335,6 +493,17 @@ class TagSystem:
         clone._siblings = dict(self._siblings)
         clone._parents = {child: set(parents)
                           for child, parents in self._parents.items()}
+        clone._touch()
+        return clone
+
+    def __copy__(self):
+        return self.copy()
+
+    def __deepcopy__(self, memo):
+        # A copy gets an identity of its own, so the two tables can never
+        # share a name-index cache entry.
+        clone = self.copy()
+        memo[id(self)] = clone
         return clone
 
     def is_empty(self):
@@ -354,6 +523,7 @@ class TagSystem:
             canonical = str(canonical or '').strip()
             if alias and canonical and alias != canonical:
                 self._siblings[alias] = canonical
+        self._touch()
 
     def add_sibling(self, alias, canonical):
         """Make ``alias`` another name for ``canonical``."""
@@ -370,12 +540,14 @@ class TagSystem:
             if target == alias:
                 self._siblings[other] = canonical
         self._groups = {}
+        self._touch()
         return True
 
     def remove_sibling(self, alias):
         removed = bool(self._siblings.pop(str(alias or '').strip(), None))
         if removed:
             self._groups = {}
+        self._touch()
         return removed
 
     def canonical(self, tag):
@@ -428,6 +600,7 @@ class TagSystem:
             parent = str(parent or '').strip()
             if child and parent and child != parent:
                 self._parents.setdefault(child, set()).add(parent)
+        self._touch()
 
     def add_parent(self, child, parent):
         """Tagging ``child`` also counts as tagging ``parent``."""
@@ -438,6 +611,7 @@ class TagSystem:
         if child in self.implied_parents(parent):
             return False
         self._parents.setdefault(child, set()).add(parent)
+        self._touch()
         return True
 
     def remove_parent(self, child, parent):
@@ -448,6 +622,7 @@ class TagSystem:
         parents.discard(str(parent or '').strip())
         if not parents:
             self._parents.pop(str(child or '').strip(), None)
+        self._touch()
         return removed
 
     def rename_prefix(self, old, new):
@@ -477,6 +652,7 @@ class TagSystem:
                 siblings[alias] = canonical
         self._siblings = siblings
         self._groups = {}
+        self._touch()
 
         parents = {}
         for child, targets in self._parents.items():
@@ -486,6 +662,7 @@ class TagSystem:
             if child and renamed:
                 parents[child] = renamed
         self._parents = parents
+        self._touch()
 
     def direct_parents(self, tag):
         """The level above a tag plus the parents it was given explicitly."""
@@ -530,7 +707,7 @@ def tag_system(scene):
 
 
 def tag_names_of_items(scene):
-    """Tags used by canvas assets and material records, with their counts."""
+    """Tags used by canvas assets and both libraries, with their counts."""
     getter = getattr(scene, 'get_all_tags', None)
     if callable(getter):
         counts = dict(getter())
@@ -542,6 +719,10 @@ def tag_names_of_items(scene):
     from prism.material_service import iter_visible_materials
     for material in iter_visible_materials(scene):
         for name in set(material.get('tags', [])):
+            counts[name] = counts.get(name, 0) + 1
+    from prism.project_search import visible_models
+    for model in visible_models(scene):
+        for name in set(model.get('tags', [])):
             counts[name] = counts.get(name, 0) + 1
     return counts
 

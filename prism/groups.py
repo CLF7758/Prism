@@ -160,6 +160,15 @@ class GroupManager(QtCore.QObject):
         self.schedule()
 
     def _refresh_tick(self):
+        # A large project arrives in hundreds of short installation batches.
+        # Re-scanning and sorting all installed assets after every batch turns
+        # loading into quadratic work. Reconcile once after installation.
+        if (not self.scene.items_to_add.empty() or any(
+                getattr(view, '_project_opening', False)
+                or getattr(view, '_import_in_progress', False)
+                for view in self.scene.views())):
+            self.timer.start(32)
+            return
         if self._structure_dirty:
             self.refresh()
         else:

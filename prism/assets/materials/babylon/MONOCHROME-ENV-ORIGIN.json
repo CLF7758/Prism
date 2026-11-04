@@ -1,0 +1,15 @@
+{
+  "source": "User-provided monochrome_studio_02_2k.hdr",
+  "source_format": "Radiance RGBE, 2048x1024",
+  "source_sha256": "d0b4d290fafd689e018ccaedb5f74f0954f5862c6face8baa3100eee93f34a76",
+  "source_bytes": 6228677,
+  "output": "monochrome_studio_02_2k.env",
+  "output_sha256": "6763b1f2ef503041101f5f4a735e4844d1007bdb9f223c088e4a5284007b33ce",
+  "output_bytes": 2190838,
+  "conversion": "Bundled Babylon.js 8.26.0 HDRCubeTexture and EnvironmentTextureTools.CreateEnvTextureAsync",
+  "cube_face_size": 512,
+  "linear_hdr": true,
+  "prefiltered": true,
+  "irradiance": true,
+  "previous_environment": "studio.env"
+}

@@ -8,6 +8,60 @@ from tests.test_asset_browser import photo
 from tests.test_search_controller import submit
 
 
+def test_coarse_buffer_requests_detail_for_the_actual_browser_camera(main_window, monkeypatch):
+    from types import SimpleNamespace
+    item=SimpleNamespace(crop=QtCore.QRectF(0,0,2000,1000),
+                         _image_size=QtCore.QSize(2000,1000))
+    canvas=main_window.asset_browser.list
+    canvas.setTransform(QtGui.QTransform.fromScale(3,3))
+    requested=[]
+    monkeypatch.setattr(lod,'display_pixmap',lambda item,pixels,owner:requested.append(pixels))
+    image=QtGui.QImage(100,100,QtGui.QImage.Format.Format_RGB32)
+    painter=QtGui.QPainter(image)
+    painter.scale(.05,.05)  # A small cover tile, stretched during zoom.
+    try:
+        lod.draw_image(painter,item,QtCore.QRectF(0,0,156,156),canvas)
+    finally:
+        painter.end()
+    assert requested == [468*canvas.viewport().devicePixelRatioF()]
+    requested.clear()
+    painter=QtGui.QPainter(image)
+    painter.scale(8,8)  # A finer tile must not demand a different image LOD.
+    try:
+        lod.draw_image(painter,item,QtCore.QRectF(0,0,156,156),canvas)
+    finally:
+        painter.end()
+    assert requested == [468*canvas.viewport().devicePixelRatioF()]
+
+
+def test_far_real_preview_does_not_queue_unneeded_large_decodes(view, monkeypatch):
+    from prism.asset_records import ImageRecord
+    import base64
+    pixels = bytes([210, 40, 70, 255])*64
+    item = ImageRecord({'data': {'imageWidth': 4096, 'imageHeight': 4096,
+                       'displayOverview': [8, 8, base64.b64encode(pixels).decode('ascii')]}},
+                       ('not-needed.prism', 1))
+    view.scene.addItem(item)
+    request = Mock()
+    monkeypatch.setattr(image_decode, 'request_display', request)
+    preview = lod.display_pixmap(item, 3, view)
+    assert preview.width() == 8
+    assert preview.toImage().pixelColor(0, 0) == QtGui.QColor(210, 40, 70)
+    assert request.call_count == 0
+    lod.display_pixmap(item, 500, view)
+    assert request.call_count > 0, 'Zooming in must still request source-derived detail'
+
+
+def test_passive_record_preview_uses_exact_crop_without_materializing(view):
+    from prism.asset_records import ImageRecord
+    item=ImageRecord({'data':{'imageWidth':400,'imageHeight':200,'crop':[100,50,200,100]}},
+                     ('unused.prism',1))
+    view.scene.addItem(item)
+    image=QtGui.QPixmap(100,50)
+    assert lod.source_rect(item,image)==QtCore.QRectF(25,12.5,50,25)
+    assert item._graphics is None
+
+
 def test_tile_render_visits_only_records_inside_source_rect(view, monkeypatch):
     from prism.asset_records import ImageRecord
     from prism.viewport_items import RecordLayer
@@ -249,3 +303,40 @@ def test_material_display_only_builds_one_qt_layer(main_window):
     assert len(canvas.visible_cards(viewport)) < 300
     canvas.select_all()
     assert len(canvas.selectedIndexes()) == 20000
+
+
+def test_diagnostic_cache_read_does_not_change_eviction_order(view):
+    from prism.asset_records import ImageRecord
+    item = ImageRecord({'data': {'imageWidth': 512, 'imageHeight': 512}}, ('unused.prism', 1))
+    cache = lod.DisplayCache(QtWidgets.QApplication.instance())
+    pixels = QtGui.QPixmap(32, 32)
+    pixels.fill(QtGui.QColor('red'))
+    cache.store(item, 32, pixels)
+    cache.store(item, 64, pixels)
+    before = list(cache.entries)
+    assert cache.get(item, 32, touch=False).toImage().pixelColor(0, 0) == QtGui.QColor('red')
+    assert list(cache.entries) == before
+    cache.get(item, 32)
+    assert list(cache.entries)[-1] == before[0]
+    item._display_source_revision += 1
+    assert cache.get(item, 32, touch=False) is None
+
+
+def test_identical_saved_overviews_share_pixels_with_bounded_cache(qapp):
+    import base64
+    store = lod.DisplayCache(qapp)
+    store.overview_budget = 256
+    value = [8, 8, base64.b64encode(bytes([210, 30, 70, 255])*64).decode('ascii')]
+    first = store.saved_overview(value)
+    second = store.saved_overview(list(value))
+    assert first.cacheKey() == second.cacheKey()
+    assert first.toImage().pixelColor(0, 0) == QtGui.QColor(210, 30, 70)
+    changed = [8, 8, base64.b64encode(bytes([0, 20, 220, 255])*64).decode('ascii')]
+    third = store.saved_overview(changed)
+    assert third.cacheKey() != first.cacheKey()
+    assert len(store.overviews) == 1 and store.overview_bytes <= store.overview_budget
+    assert first.toImage().pixelColor(0, 0) == QtGui.QColor(210, 30, 70)
+    first.fill(QtGui.QColor('black'))
+    assert second.toImage().pixelColor(0, 0) == QtGui.QColor(210, 30, 70)
+    assert store.saved_overview([8, 8, 'invalid']) is None
+    assert store.saved_overview([999999, 8, value[2]]) is None

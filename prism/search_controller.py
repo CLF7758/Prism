@@ -1,12 +1,18 @@
 """Window-owned project search, independent of editor and asset selections."""
 import html
+import logging
 import time
 from PyQt6 import QtCore, QtGui, QtWidgets, sip
 from prism import tags
 from prism.i18n import _
-from prism.project_search import search_project, item_key, searchable_items
-from prism.widgets.search_canvas import SearchCanvas, result_kind
+from prism.project_search import (search_project, item_key, searchable_items,
+                                 search_catalog_assets, rank_result)
+from prism.project_open_scope import OpenScopeCancelled
+from prism.widgets.search_canvas import SearchCanvas, result_kind, TYPE_LABELS
 from prism.item_lifecycle import is_deleted
+
+
+logger = logging.getLogger(__name__)
 
 
 class SearchInput(QtWidgets.QLineEdit):
@@ -43,6 +49,7 @@ class SearchController(QtCore.QObject):
         self.results = []
         self.snapshot_pending = None
         self.wait_key = None
+        self._programmatic_query = None
         self.page = SearchCanvas(self.resolve_asset, preview_text=self.preview_text)
         from prism.material_cache import MaterialCache
         self._material_previews = MaterialCache(128, 16*1024*1024,
@@ -75,8 +82,17 @@ class SearchController(QtCore.QObject):
         old_search.hide()
         old_search.textChanged.disconnect(window.asset_browser.schedule)
         self.input = SearchInput()
-        self.input.setPlaceholderText(_('Search assets, materials, document text, mind map nodes and canvas content'))
-        self.input.setClearButtonEnabled(True)
+        self.input.setPlaceholderText(_('搜索素材、模型、材质球、文档正文、脑图节点和画布内容'))
+        # Qt's built-in clear button only clears text, leaving the image
+        # query alive. One explicit action cancels the whole active query.
+        self.input.setClearButtonEnabled(False)
+        from prism.widgets.components.icons import icon
+        self.clear_query_action = self.input.addAction(
+            icon('close'), QtWidgets.QLineEdit.ActionPosition.TrailingPosition)
+        self.clear_query_action.setToolTip(_('Clear search'))
+        self.clear_query_action.setVisible(False)
+        self.clear_query_action.triggered.connect(self.clear_query)
+        self.input.textChanged.connect(self._sync_clear_action)
         self.input.addAction(window.asset_browser.search.actions()[0].icon(), QtWidgets.QLineEdit.ActionPosition.LeadingPosition)
         self.input.setToolTip(self.library.search.toolTip())
         self.input.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
@@ -136,11 +152,25 @@ class SearchController(QtCore.QObject):
         from prism.visual_search_controller import VisualSearchController
         self.visual_search = VisualSearchController(self)
 
+    def _sync_clear_action(self, *_args):
+        visual = getattr(self, 'visual_search', None)
+        self.clear_query_action.setVisible(bool(self.input.text()) or
+                                          bool(visual is not None and visual.active))
+
+    def clear_query(self, *_args):
+        visual = getattr(self, 'visual_search', None)
+        if visual is not None and visual.active:
+            visual.exit()
+        else:
+            self.exit(clear=True)
+        self._sync_clear_action()
+
     def focus(self):
         self.input.setFocus()
         self.input.selectAll()
 
     def focus_global(self):
+        self._global_requested = True
         self.set_scope('project', None, _('Entire project'))
         self.focus()
 
@@ -183,11 +213,37 @@ class SearchController(QtCore.QObject):
             self.active_tags = {result['tag']}
             self.schedule()
 
-    def submit(self):
+    def submit(self, *, programmatic=False):
+        browser = self.window.asset_browser
+        visual = getattr(self, 'visual_search', None)
+        if (not programmatic and not self.active
+                and not getattr(self, '_global_requested', False)
+                and not (visual is not None and visual.active)
+                and self.window.tabs.currentWidget() is browser
+                and browser.mode in ('all', 'unclassified', 'untagged', 'recent', 'trash')
+                and browser.scope_pages is None and not browser.saved_rule):
+            self.timer.stop()
+            if not self.input.composing:
+                browser.refresh()
+                self.library._update_navigation()
+            return
+        query_key = (self.input.text(), self.scope, self.library.search_kind,
+                     self.view.scene.project_id)
+        if programmatic:
+            self._programmatic_query = query_key
+        elif self._programmatic_query == query_key:
+            programmatic = True
+        else:
+            self._programmatic_query = None
         visual = getattr(self, 'visual_search', None)
         if visual is not None and visual.active:
             visual.submit()
             return
+        if programmatic and self.input.composing:
+            # A clicked destination replaces the previous preedit, rather than
+            # waiting for an unrelated IME commit to submit the new tag.
+            QtGui.QGuiApplication.inputMethod().reset()
+            self.input.composing = False
         self.timer.stop()
         if self.input.composing:
             return
@@ -217,10 +273,12 @@ class SearchController(QtCore.QObject):
             if not ok:
                 self.page.status.setText(_('Current page content is still updating; try again shortly'))
                 self.info.setText(_('Current page content is still updating; try again shortly'))
-                if time.monotonic() < self.wait_until:
-                    QtCore.QTimer.singleShot(120, lambda: self.submit() if token == self.generation else None)
+                if programmatic or time.monotonic() < self.wait_until:
+                    QtCore.QTimer.singleShot(120, lambda: self.submit(programmatic=programmatic)
+                        if not sip.isdeleted(self) and token == self.generation else None)
                 return
             self.wait_key = None
+            self._programmatic_query = None
             self._run_query()
         if hasattr(current, 'search_snapshot'):
             current.search_snapshot(ready)
@@ -243,22 +301,26 @@ class SearchController(QtCore.QObject):
             current.capture_search_view(captured)
 
     def _run_query(self):
+        self._global_requested = False
         if not self.active:
             self.scope = ('project', None)
             self.scope_combo.setCurrentIndex(0)
             self._capture_origin()
             self.active = True
-        hits = self._query_hits()
+        try:
+            hits = self._query_hits()
+        except OpenScopeCancelled:
+            # Catalog candidates were cancelled by a newer keystroke; this
+            # round is discarded and the pending submit takes over.
+            return
         suggestions = [r for r in hits if r['kind'] in ('folder', 'tag')]
         hits = [r for r in hits if r['kind'] not in ('folder', 'tag') and self.in_scope(r)]
         if self.active_tags:
             system = tags.tag_system(self.view.scene)
             hits = [r for r in hits if self.active_tags.issubset(tags.name_index(r.get('tags', []), system))]
         if self.min_rating or self.color:
-            hits = [r for r in hits if result_kind(r) == 'asset' and
-                    getattr(r['item'], '_rating', 0) >= self.min_rating and
-                    (self.color is None or getattr(r['item'], 'color_group', None) == self.color)]
-        counts = {k: sum(result_kind(r) == k for r in hits) for k in ('asset', 'document', 'mindmap', 'canvas', 'material')}
+            hits = [r for r in hits if self._matches_asset_filter(r)]
+        counts = {k: sum(result_kind(r) == k for r in hits) for k in TYPE_LABELS}
         counts['all'] = len(hits)
         kind = self.library.search_kind
         hits = [r for r in hits if kind == 'all' or result_kind(r) == kind]
@@ -271,8 +333,13 @@ class SearchController(QtCore.QObject):
             self.back_button.hide()
             self.match_bar.hide()
         self.page.update_results(self.results, key, counts, kind, suggestions)
-        self.info.clear()
-        self.info.hide()
+        error = getattr(self, '_catalog_search_error', None)
+        if error:
+            self.info.setText(error)
+            self.info.show()
+        else:
+            self.info.clear()
+            self.info.hide()
         self.page.status.setText(self.page.status.text() + ' · ' +
                                  (_('Entire project') if self.scope[0] == 'project' else self.scope_combo.currentText()) +
                                  self.filter_description())
@@ -283,24 +350,101 @@ class SearchController(QtCore.QObject):
             self.window.tabs.setCurrentWidget(self.page)
 
     def _query_hits(self):
+        self._catalog_search_error = None
         panels = list(getattr(self.window, '_page_panels', {}).values())
         panels += [self.window.document_panel, self.window.mindmap_panel]
         text, expression = self.library._split_query(self.input.text())
-        return search_project(self.view.scene, self.library.resource_service, text, panels, expression,
+        hits = search_project(self.view.scene, self.library.resource_service, text, panels, expression,
                               self.library._pages_with_implicit_defaults())
+        if text and not expression:
+            generation = self.generation
+            catalog = self._catalog_asset_hits(text, generation)
+            if catalog:
+                needle = text.casefold().strip()
+                hits = hits + catalog
+                hits.sort(key=lambda r: rank_result(r, needle))
+        return hits
+
+    def _catalog_scope(self):
+        """Ready read-only catalog scope for a partially loaded project, or None.
+
+        Reuses :meth:`ProjectAssetCatalog._catalog_scope` so the "partial load
+        AND ready" decision lives in one place. ``None`` means "in-memory fast
+        path only", never "empty".
+        """
+        catalog = getattr(self.library, 'catalog', None)
+        if catalog is None:
+            return None
+        try:
+            return catalog._catalog_scope()
+        except Exception:
+            logger.exception('catalog scope check failed')
+            return None
+
+    def _catalog_asset_hits(self, text, generation):
+        """Whole-project asset candidates from the catalog for a partial load.
+
+        Only contributes assets that are not already loaded — the in-memory
+        fast path owns those, including their dirty edits. Returns ``[]`` when
+        the catalog is not ready (full load, or cache not built yet) or when it
+        failed: a failure is logged and visibly marks loaded-only results as
+        incomplete. It must never look like a successful whole-project miss. Cancellation is
+        re-raised so the caller discards this round.
+        """
+        scope = self._catalog_scope()
+        if scope is None:
+            if getattr(self.view.scene, '_partial_project_source', None):
+                self._catalog_search_error = _('Project search index is unavailable; showing loaded assets only')
+            return []
+        loaded = {item_key(item) for item in searchable_items(self.view.scene)}
+        try:
+            return search_catalog_assets(
+                scope, self.view.scene, self.library.resource_service, text,
+                loaded_keys=loaded,
+                cancel=(lambda: self.generation != generation))
+        except OpenScopeCancelled:
+            raise
+        except Exception:
+            logger.exception('catalog asset search failed; results are incomplete')
+            self._catalog_search_error = _('Project search could not finish; showing loaded assets only. Retry the search.')
+            return []
+
+    def _matches_asset_filter(self, result):
+        """Rating/color filter that also understands catalog (unloaded) assets.
+
+        Loaded assets answer from the scene item. Catalog assets carry the
+        rating from the catalog but have no color_group (that needs the pixels,
+        which are not loaded), so a color filter conservatively excludes them.
+        """
+        if result_kind(result) != 'asset':
+            return False
+        item = result.get('item')
+        if item is not None:
+            rating = getattr(item, '_rating', 0)
+            color = getattr(item, 'color_group', None)
+        else:
+            rating = result.get('rating', 0)
+            color = None
+        if rating < self.min_rating:
+            return False
+        if self.color is None:
+            return True
+        return color == self.color
 
     def in_scope(self, result):
         kind, value = self.scope
         if kind == 'project':
             return True
         if kind == 'page':
+            if value[0] in ('material', 'model'):
+                return result_kind(result) == value[0]
             return result.get('page_id') == value[1]
         if kind == 'folder':
             service = self.library.resource_service
             page_ids = {n.get('pageId') for i in service._descendants(value)
                         if (n := service._by_id(i)) and not n.get('deletedAt')}
             return (result.get('folder_id') in ({value} | set(service._descendants(value)))
-                    if result_kind(result) == 'material' else result.get('page_id') in page_ids)
+                    if result_kind(result) in ('material', 'model') else result.get('page_id') in page_ids)
         if kind == 'category':
             item = result.get('item')
             return item is not None and any(c == value or tags.is_descendant(c, value)
@@ -308,7 +452,11 @@ class SearchController(QtCore.QObject):
         if kind == 'navigation':
             if result['kind'] != 'asset':
                 return False
-            item = result['item']
+            item = result.get('item')
+            if item is None:
+                # Catalog assets have no scene item; navigation views cannot
+                # classify them, so they are conservatively excluded.
+                return False
             if value == 'unclassified':
                 return self.library.catalog.is_unclassified(item)
             if value == 'untagged':
@@ -369,7 +517,15 @@ class SearchController(QtCore.QObject):
         if result.get('project_id') != self.view.scene.project_id:
             return False
         if result_kind(result) == 'asset':
+            if result.get('catalog'):
+                # Unloaded assets have no scene item yet; open_result re-runs
+                # the query to verify the id is still in the catalog.
+                return bool(result.get('item_id'))
             return self.resolve_asset(result) is not None
+        if result_kind(result) == 'model':
+            from prism.project_search import visible_models
+            return any(m.get('id', m.get('model_id')) == result.get('model_id')
+                       for m in visible_models(self.view.scene))
         if result_kind(result) == 'material':
             from prism.material_service import iter_visible_materials
             return any(material['id'] == result.get('material_id') for material in iter_visible_materials(self.view.scene))
@@ -382,7 +538,16 @@ class SearchController(QtCore.QObject):
         kind = result_kind(result)
         if kind == 'asset':
             item = self.resolve_asset(result)
-            return asset_search_text(item) if item is not None else _('Content changed; refresh results')
+            if item is not None:
+                return asset_search_text(item)
+            if result.get('catalog'):
+                return result.get('catalog_text') or result.get('snippet', '')
+            return _('Content changed; refresh results')
+        if kind == 'model':
+            from prism.project_search import visible_models
+            model = next((m for m in visible_models(self.view.scene)
+                          if m.get('id', m.get('model_id')) == result.get('model_id')), None)
+            return (model.get('notes', '') + '\n' + ', '.join(model.get('tags', []))) if model else ''
         if kind == 'material':
             material = self.library.material_service.get(result.get('material_id'))
             return (material.get('notes', '') + '\n' + ', '.join(material.get('tags', []))) if material else ''
@@ -407,6 +572,11 @@ class SearchController(QtCore.QObject):
             panel.show_collection(_('Search results'), len(self.results), None)
             return
         if result_kind(result) == 'asset':
+            if result.get('catalog') and self.resolve_asset(result) is None:
+                panel.show_search_result(result, lambda: self.open_result(result),
+                                         lambda: self.open_result(result | {'open_original': True}),
+                                         item=None)
+                return
             panel.show_search_asset(result)
             return
         panel.show_search_result(result, lambda: self.open_result(result),
@@ -414,6 +584,9 @@ class SearchController(QtCore.QObject):
                                  item=self.resolve_asset(result) if result_kind(result) == 'asset' else None)
 
     def open_result(self, result):
+        from prism.navigation import defer_navigation
+        if defer_navigation(self.window, lambda: self.open_result(result), owner=self):
+            return
         if not self.valid_result(result) or result.get('query', self.input.text()) != self.input.text():
             self.page.status.setText(_('Content changed; refresh results'))
             self.schedule()
@@ -433,15 +606,43 @@ class SearchController(QtCore.QObject):
         self.back_button.show()
         if result_kind(result) == 'asset':
             item = self.resolve_asset(result)
-            kind, page_id = self.library.catalog.locate(item)
-            self.window.open_workspace_page(kind, page_id)
-            self._locate_item(item)
+            if item is None and result.get('catalog'):
+                self._locate_catalog_asset(result)
+            else:
+                kind, page_id = self.library.catalog.locate(item)
+                self.window.open_workspace_page(kind, page_id)
+                self._locate_item(item)
+        elif result_kind(result) == 'model':
+            self.window.model_library.reveal_model(result['model_id'], from_search=True)
         elif result_kind(result) == 'material':
             self.window.material_library.reveal_material(result['material_id'], from_search=True)
         else:
             self.window.open_workspace_page(result['page_kind'], result['page_id'])
             self.locate_match()
         self.match_bar.setVisible(bool(self.opened.get('matches')))
+
+    def _locate_catalog_asset(self, result):
+        """Open the target canvas and select an asset loaded on demand.
+
+        A partial load keeps only one canvas in the scene, so navigating to an
+        unloaded asset must ask the view to load that single id first. The hook
+        contract is ``view.ensure_asset_loaded(item_id) -> item | None`` (item_id
+        is the string form of the asset's save id). While the hook is not wired
+        yet, open the target canvas and report instead of crashing or claiming
+        the asset was located.
+        """
+        page_id = result.get('page_id') or 'default-canvas'
+        self.window.open_workspace_page('canvas', page_id)
+        loader = getattr(self.view, 'ensure_asset_loaded', None)
+        if loader is None:
+            self.page.status.setText(_('Target page opened; the asset is not loaded'))
+            return
+        item = loader(result.get('item_id'))
+        if item is None:
+            self.page.status.setText(_('Content changed; refresh results'))
+            self.schedule()
+            return
+        self._locate_item(item)
 
     def _locate_item(self, item):
         if item is None:
@@ -506,6 +707,9 @@ class SearchController(QtCore.QObject):
                 panel.end_search_location()
 
     def return_to_results(self):
+        from prism.navigation import defer_navigation
+        if defer_navigation(self.window, self.return_to_results, owner=self):
+            return
         self._release_location()
         self.opened = None
         self.match_bar.hide()
@@ -515,13 +719,21 @@ class SearchController(QtCore.QObject):
         self.page.view.setFocus()
         self.show_detail(self.page.selected_result())
 
-    def exit(self, clear=True):
+    def exit(self, clear=True, *, restore_origin=True):
+        from prism.navigation import defer_navigation
+        if defer_navigation(self.window,
+                            lambda: self.exit(clear, restore_origin=restore_origin), owner=self):
+            return
+        self._global_requested = False
         visual = getattr(self, 'visual_search', None)
         if visual is not None and visual.active:
-            visual.exit()
-            return
+            if restore_origin:
+                visual.exit()
+                return
+            visual.exit(restore_origin=False)
         self.generation += 1
         self.snapshot_pending = None
+        self._programmatic_query = None
         self.timer.stop()
         self._release_location()
         self.active = False
@@ -535,7 +747,7 @@ class SearchController(QtCore.QObject):
             blocker = QtCore.QSignalBlocker(self.input)
             self.input.clear()
             del blocker
-        if origin and origin['project_id'] == self.view.scene.project_id:
+        if restore_origin and origin and origin['project_id'] == self.view.scene.project_id:
             widget = origin['widget']
             if not is_deleted(widget):
                 if widget is self.window.asset_browser:
@@ -555,7 +767,10 @@ class SearchController(QtCore.QObject):
                     item.setSelected(True)
             self.library._restore_tree_state(origin['tree'])
 
+        self._sync_clear_action()
+
     def reset_project(self):
+        self._programmatic_query = None
         visual = getattr(self, 'visual_search', None)
         if visual is not None and visual.active:
             visual.cancel()

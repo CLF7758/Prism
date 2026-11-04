@@ -1,4 +1,4 @@
-#define AppVersion "0.4.0"
+#define AppVersion "0.5.0"
 #ifndef ComponentRoot
 #define ComponentRoot "..\build\bundled-components"
 #endif
@@ -27,7 +27,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 [Files]
-Source: "..\dist\Prism\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#ifndef AppBuildRoot
+#define AppBuildRoot "..\dist\Prism"
+#endif
+Source: "{#AppBuildRoot}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"
 Source: "..\NOTICE"; DestDir: "{app}"
 Source: "..\THIRD_PARTY.md"; DestDir: "{app}"
@@ -45,3 +48,26 @@ Root: HKCU; Subkey: "Software\Classes\Prism.File\DefaultIcon"; ValueType: string
 Root: HKCU; Subkey: "Software\Classes\Prism.File\shell\open\command"; ValueType: string; ValueData: """{app}\Prism.exe"" ""%1"""
 [Run]
 Filename: "{app}\Prism.exe"; Description: "Launch Prism"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Names: TArrayOfString;
+  I: Integer;
+  Root, ConfigPath, Config: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    Root := ExpandConstant('{localappdata}\Prism\components');
+    Names := ['capture', 'visual-search', 'video-download', 'video-f2', 'video-xhs', 'video-bili'];
+    Config := 'home = ' + Root + '\python-base' + #13#10 +
+      'include-system-site-packages = false' + #13#10 +
+      'version = 3.12' + #13#10;
+    for I := 0 to GetArrayLength(Names) - 1 do
+    begin
+      ConfigPath := Root + '\' + Names[I] + '\runtime\pyvenv.cfg';
+      if not SaveStringToFile(ConfigPath, UTF8Encode(Config), False) then
+        RaiseException('Cannot configure component runtime: ' + Names[I]);
+    end;
+  end;
+end;

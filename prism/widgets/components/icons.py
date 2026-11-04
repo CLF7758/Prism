@@ -25,15 +25,20 @@ def tinted_icon(name, colour):
 ICON_DIR = files('prism.assets').joinpath('icons')
 
 
-def icon(name):
-    """Return an icon from the bundled SVG set, rejecting path traversal."""
-    if not name or not all(ch.isascii() and (ch.isalnum() or ch == '-')
-                           for ch in name):
-        raise ValueError('Invalid icon name')
+@lru_cache(maxsize=128)
+def _bundled_icon(name):
     path = ICON_DIR.joinpath(name + '.svg')
     if not path.is_file():
         raise ValueError('Unknown icon: ' + name)
     return QtGui.QIcon(str(path))
+
+
+def icon(name):
+    """Return an independent Qt icon handle; stat bundled files only once."""
+    if not name or not all(ch.isascii() and (ch.isalnum() or ch == '-')
+                           for ch in name):
+        raise ValueError('Invalid icon name')
+    return QtGui.QIcon(_bundled_icon(name))
 
 
 def set_icon_button(button, name, accessible_name, *, size=None):

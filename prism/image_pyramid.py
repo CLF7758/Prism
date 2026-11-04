@@ -2,11 +2,46 @@
 import hashlib
 import os
 import threading
+from collections import OrderedDict
 from prism import thumbnail_cache
 
 _cache = None
 _lock = threading.Lock()
 LEVELS = (32, 64, 192, 512, 1024)
+_archive_versions = OrderedDict()
+_version_lock = threading.Lock()
+
+
+def acknowledge_archive_save(filename, receipt):
+    """Keep unchanged row previews only across a proven in-place partial save.
+
+    No proof/unknown external change means no reuse. Changed/deleted/new IDs
+    are excluded conservatively, even for metadata-only edits. State is
+    bounded and session-local, never a replacement for source validation.
+    """
+    from prism.source_fingerprint import file_fingerprint
+    before = getattr(receipt, 'source_before', None)
+    after = getattr(receipt, 'source_after', None)
+    changed_ids = getattr(receipt, 'catalog_item_ids', None)
+    if before is None or after is None or changed_ids is None:
+        return False
+    path = os.path.normcase(os.path.abspath(str(filename)))
+    try:
+        if file_fingerprint(filename) != after:
+            return False
+    except OSError:
+        return False
+    with _version_lock:
+        entry = _archive_versions.get(path)
+        if entry is None or entry['proof'] != before:
+            return False
+        excluded = entry['excluded'] | set(changed_ids)
+        if len(excluded) > 32768:
+            _archive_versions.pop(path, None)
+            return False
+        entry.update(proof=after, excluded=excluded)
+        _archive_versions.move_to_end(path)
+    return True
 
 
 def cache():
@@ -25,6 +60,12 @@ def cache():
 def source_key(blob, path, archive):
     if blob is not None:
         return hashlib.blake2b(blob, digest_size=16).hexdigest()
+    if archive and not path:
+        from prism.storage.managed import root_for, binding
+        if root_for(archive[0]) is not None:
+            ref=binding(archive[0],'sqlar',archive[1],item_id=True)
+            if ref is not None:
+                return hashlib.blake2b(('managed:'+ref[0]).encode(),digest_size=16).hexdigest()
     filename = path or (archive[0] if archive else None)
     if not filename:
         return None
@@ -32,8 +73,29 @@ def source_key(blob, path, archive):
         stat = os.stat(filename)
     except OSError:
         return None
-    identity = (os.path.normcase(os.path.abspath(filename)), stat.st_size,
-                stat.st_mtime_ns, stat.st_ctime_ns, archive if not path else None)
+    normalized = os.path.normcase(os.path.abspath(filename))
+    base = (normalized, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    if archive and not path:
+        from prism.source_fingerprint import file_fingerprint
+        try:
+            proof = file_fingerprint(filename)
+        except OSError:
+            return None
+        with _version_lock:
+            entry = _archive_versions.get(normalized)
+            if entry is None or entry['proof'] != proof:
+                entry = dict(proof=proof, base=base, excluded=set())
+                _archive_versions[normalized] = entry
+            elif archive[1] not in entry['excluded']:
+                base = entry['base']
+            _archive_versions.move_to_end(normalized)
+            while len(_archive_versions) > 32:
+                _archive_versions.popitem(last=False)
+        # WAL mutations must invalidate untrusted previews too. For the normal
+        # closed archive retain the existing cache-key format for disk hits.
+        if proof.get('wal') is not None:
+            base = (*base, tuple(proof['wal']))
+    identity = (*base, archive if not path else None)
     return hashlib.blake2b(repr(identity).encode(), digest_size=16).hexdigest()
 
 

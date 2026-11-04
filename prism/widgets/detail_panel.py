@@ -4,6 +4,7 @@ Shows preview, title, notes, category, file info,
 color distribution and histogram for selected item."""
 
 import logging
+import weakref
 import os
 from datetime import datetime
 
@@ -13,9 +14,7 @@ from PyQt6.QtCore import Qt
 from prism import commands
 from prism.i18n import _
 from prism import tags
-from prism.fileio.image import (adjust_display_image,
-                                false_color_preview, is_hdr_path,
-                                load_image)
+from prism.fileio.image import is_hdr_path, load_image
 from prism.items import (PrismPixmapItem, PrismVideoItem, COLOR_GROUPS,
                          _color_group_from_rgb, _rgb_to_hsl)
 from prism.widgets.tag_panel import tag_signals
@@ -56,12 +55,29 @@ class DetailPanel(QtWidgets.QWidget):
         self.scene = view.scene
         self._item = None
         self._inspection_session = None
+        from prism.widgets.preview_updates import PreviewUpdates
+        from prism.qt_thread_safety import JobRegistry
+        self._hdr_updates = PreviewUpdates(self)
+        self._hdr_updates.ready.connect(self._start_hdr_preview)
+        self._hdr_jobs = JobRegistry()
+        self._hdr_generation = 0
+        self._hdr_running = None
+        self._hdr_pending = None
+        self._hdr_source_cache = None
         self._search_result = None
         self._displayed_tags = set()
         self._setup_ui()
+        self._preview_retry = QtCore.QTimer(self)
+        self._preview_retry.setSingleShot(True)
+        self._preview_retry.setInterval(300)
+        self._preview_retry.timeout.connect(self._retry_busy_preview)
+        self._preview_retry_item = None
+        self._preview_retry_source = None
         self.scene.selectionChanged.connect(self._on_selection_changed)
         self.scene.metadata_changed.connect(self._refresh)
         self.scene.video_preview_changed.connect(self._video_preview_ready)
+        from prism import lod
+        lod.cache().changed.connect(self._image_preview_ready)
         # Synonyms, renames and nesting done in the manager change how a
         # tag is shown here, without touching the items.
         tag_signals().changed.connect(self._refresh)
@@ -499,6 +515,8 @@ class DetailPanel(QtWidgets.QWidget):
             self._search_original.clicked.connect(lambda: self._search_original_callback())
         self._search_open_callback = open_result
         self._search_original_callback = open_original
+        self._search_original.setText(_('Open original location'))
+        self._search_thumbnail.clear()
         fields = sorted({m['field'] for m in result.get('matches', [])})
         labels = {'body': 'Document text', 'node': 'Mind map node', 'canvas_item': 'Canvas object',
                   'asset': 'Asset information', 'title': 'Name', 'path': 'Location', 'tags': 'Tags'}
@@ -535,7 +553,25 @@ class DetailPanel(QtWidgets.QWidget):
                 return []
             item = controller.resolve_asset(self._search_result)
             return [item] if item is not None else []
+        browser = getattr(self.view.window(), 'asset_browser', None)
+        if (browser is not None and self.view.window().tabs.currentWidget() is browser):
+            return [item for index in browser.list.selectedIndexes()
+                    if not isinstance(item := index.data(Qt.ItemDataRole.UserRole), dict)
+                    and item is not None]
         return self.scene.selectedItems(user_only=True)
+
+    def _editable_items(self):
+        selected = self._selected_items()
+        resolved = []
+        for item in selected:
+            if getattr(item, '_catalog_proxy', False):
+                if item._catalog_project_id != self.scene.project_id:
+                    return []
+                item = self.view.ensure_asset_loaded(str(item.save_id))
+                if item is None or getattr(item, '_catalog_proxy', False):
+                    return []
+            resolved.append(item)
+        return resolved
 
     def show_search_asset(self, result):
         self._search_result = dict(result)
@@ -722,7 +758,7 @@ class DetailPanel(QtWidgets.QWidget):
         self._refresh()
 
     def _on_tag_box_toggled(self, name, checked):
-        items = self._selected_items()
+        items = self._editable_items()
         if not items:
             return
         changed = []
@@ -756,13 +792,29 @@ class DetailPanel(QtWidgets.QWidget):
         suffix = os.path.splitext(str(name))[1].lstrip('.').upper()
         return suffix or '\u2014'
 
-    @staticmethod
-    def _inspection_pixmap(item):
-        if is_pixmap_item(item) and not item._preview_adjusted:
-            preview = item._preview_pixmap
-            if preview is not None and not preview.isNull():
-                return preview
-        return getattr(item, 'pixmap', lambda: None)()
+    def _inspection_pixmap(self, item):
+        from prism import lod
+        from prism.item_lifecycle import native_pixmap
+        if is_pixmap_item(item):
+            return lod.display_pixmap(item, 512, owner=self)
+        return native_pixmap(item)
+
+    def needs_display(self, item):
+        return self._item is logical_item(item) and self.isVisible()
+
+    def _image_preview_ready(self, item):
+        if self._item is logical_item(item):
+            self._refresh_item(item)
+
+    def _retry_busy_preview(self):
+        from prism.item_lifecycle import is_deleted
+        from prism.image_decode import source_snapshot
+        item = self._preview_retry_item() if self._preview_retry_item else None
+        if (item is None or item is not self._item or is_deleted(item)
+                or item.scene() is not self.scene or not self.isVisible()
+                or source_snapshot(item) != self._preview_retry_source):
+            return
+        self._refresh_item(item)
 
     def _resize_preview(self):
         item = self._item
@@ -787,6 +839,9 @@ class DetailPanel(QtWidgets.QWidget):
         if changed_item:
             self._restore_inspection()
         self._item = item
+        if changed_item:
+            self._preview_retry.stop()
+            self._preview_retry_item = None
         if changed_item and getattr(item, 'TYPE', '') == 'pixmap':
             for widget in (self._exposure_slider, self._channel_combo,
                            self._tonemap_combo, self._false_color_box):
@@ -801,11 +856,25 @@ class DetailPanel(QtWidgets.QWidget):
             self._exposure_value.setText('0.0 EV')
 
         # Preview
+        self._preview_label.setToolTip('')
         pm = self._inspection_pixmap(item)
         if pm and not pm.isNull():
             self._resize_preview()
         else:
             txt = '\u89c6\u9891' if isinstance(item, PrismVideoItem) else '\u65e0\u9884\u89c8'
+            failure = getattr(item, '_source_read_error', None)
+            if failure is not None:
+                labels = {'source_busy': '工程正在维护，稍后自动重试',
+                          'missing': '原件不存在', 'corrupt': '原件校验失败',
+                          'permission_denied': '无权读取原件',
+                          'database_error': '工程数据读取失败', 'read_failed': '原件读取失败'}
+                txt = labels.get(failure.kind, '原件无法解码')
+                self._preview_label.setToolTip(failure.detail)
+                if failure.retryable and self.isVisible():
+                    from prism.image_decode import source_snapshot
+                    self._preview_retry_item = weakref.ref(item)
+                    self._preview_retry_source = source_snapshot(item)
+                    self._preview_retry.start()
             self._preview_label.setText(txt)
 
         # Title
@@ -843,10 +912,8 @@ class DetailPanel(QtWidgets.QWidget):
 
         self._sync_tag_checks(set(getattr(item, '_tags', [])), enabled=True)
         self._update_rating_buttons(getattr(item, '_rating', 0), enabled=True)
-        canvas_id = getattr(item, '_canvas_id', None) or getattr(self.view, 'current_canvas_id', None)
-        pages = self.view.category_panel._pages_with_implicit_defaults()
-        page = next((page for page in pages if page['id'] == canvas_id), None)
-        self._folder_button.setText(page.get('title', '画布') if page else '未归入画布')
+        page, location = self.item_location(item)
+        self._folder_button.setText(location)
         self._folder_button.setEnabled(page is not None)
         self._folder_button.setToolTip(self._folder_button.text())
 
@@ -1017,21 +1084,60 @@ class DetailPanel(QtWidgets.QWidget):
         self._set_color_widgets_visible(True)
 
     def _open_item_canvas(self):
+        if getattr(self._item, '_catalog_proxy', False):
+            browser = getattr(self.view.window(), 'asset_browser', None)
+            if browser is not None:
+                browser._locate_item(self._item, self.scene.project_id)
+            return
         controller = self._search_controller()
         if controller is not None and self._search_result is not None:
             controller.open_result(self._search_result)
             return
         if self._item is None:
             return
-        canvas_id = getattr(self._item, '_canvas_id', None) or getattr(self.view, 'current_canvas_id', None)
-        if canvas_id:
-            item = self._item
-            window = self.view.window()
+        from prism.item_lifecycle import is_deleted
+        from prism.navigation import defer_navigation
+        item = self._item
+        window = self.view.window()
+        project_id = self.view.scene.project_id
+
+        def locate():
+            if (is_deleted(item) or self.view.scene.project_id != project_id
+                    or item.scene() is not self.view.scene):
+                return
+            canvas_id = getattr(item, '_canvas_id', None) or 'default-canvas'
+            if not canvas_id:
+                return
             window.open_workspace_page('canvas', canvas_id)
+            if hasattr(window, 'request_navigation') and (
+                    window.tabs.currentWidget() is not window.canvas_page
+                    or window.current_page_id != canvas_id):
+                return
             self.view.scene.clearSelection()
             item.setVisible(True)
             item.setSelected(True)
             self.view.centerOn(item)
+
+        if not defer_navigation(window, locate, owner=self):
+            locate()
+
+    def item_location(self, item):
+        from prism.project_search import node_path
+        panel = self.view.category_panel
+        canvas_id = getattr(item, '_canvas_id', None) or 'default-canvas'
+        pages = panel._pages_with_implicit_defaults()
+        page = next((page for page in pages if page['id'] == canvas_id), None)
+        nodes = {node['id']: node for node in panel.resource_service.nodes if not node.get('deletedAt')}
+        node = next((node for node in nodes.values() if node.get('pageId') == canvas_id), None)
+        location = node_path(node, nodes) if node else (page.get('title', '画布') if page else '未归入画布')
+        return page, location
+
+    def show_asset_reference(self, item):
+        """The same full inspector as scene assets; source loading stays lazy."""
+        if item._catalog_project_id != self.scene.project_id:
+            return
+        self._search_result = None
+        self._on_selection_changed()
 
     def _on_title_changed(self, text):
         if not self._item:
@@ -1040,8 +1146,11 @@ class DetailPanel(QtWidgets.QWidget):
             self._item, 'filename', '')
         if text == old:
             return
+        selected = self._editable_items()
+        if len(selected) != 1:
+            return
         self.scene.undo_stack.push(
-            commands.ChangeMetadata([self._item], 'title', [text]))
+            commands.ChangeMetadata(selected, 'title', [text]))
 
     def _on_notes_changed(self):
         if not self._item:
@@ -1050,11 +1159,14 @@ class DetailPanel(QtWidgets.QWidget):
         old_notes = getattr(self._item, '_notes', '')
         if new_notes == old_notes:
             return
+        selected = self._editable_items()
+        if len(selected) != 1:
+            return
         self.scene.undo_stack.push(
-            commands.ChangeMetadata([self._item], 'notes', [new_notes]))
+            commands.ChangeMetadata(selected, 'notes', [new_notes]))
 
     def _on_category_changed(self, index):
-        selected = self._selected_items()
+        selected = self._editable_items()
         new_cats = self._cat_combo.currentData()
         if not selected or new_cats is None:
             return
@@ -1068,7 +1180,7 @@ class DetailPanel(QtWidgets.QWidget):
             self.view.category_panel.update_counts()
 
     def _set_rating(self, rating):
-        selected = self._selected_items()
+        selected = self._editable_items()
         changed = [item for item in selected
                    if getattr(item, '_rating', 0) != rating]
         if changed:
@@ -1097,7 +1209,8 @@ class DetailPanel(QtWidgets.QWidget):
         """HDR sources can only be re-decoded while the file still exists."""
         if not self._is_hdr_item(item):
             return False
-        return bool(item.filename) and os.path.exists(item.filename)
+        return bool(getattr(item, '_source_blob', None) or getattr(item, '_source_path', None)
+                    or getattr(item, '_prism_source', None) or item.filename)
 
     def _hdr_options(self):
         """The current exposure/channel/tone mapping selection."""
@@ -1170,6 +1283,12 @@ class DetailPanel(QtWidgets.QWidget):
                 canvas._invalidate_display_frame(regions)
 
     def _restore_inspection(self):
+        self._hdr_generation += 1
+        self._hdr_updates.stop()
+        self._hdr_pending = None
+        self._hdr_source_cache = None
+        if self._hdr_running is not None:
+            self._hdr_running[1].set()
         session, self._inspection_session = self._inspection_session, None
         if session is not None:
             item = session.restore()
@@ -1194,28 +1313,79 @@ class DetailPanel(QtWidgets.QWidget):
             return
         if self._inspection_session is None:
             self._inspection_session = InspectionPreview(item)
-        if self._hdr_source_available(item):
-            try:
-                image, _ = load_image(item.filename, options)
-            except (OSError, ValueError, TypeError, RuntimeError) as exc:
-                logger.exception('Image preview decode failed: %s', item.filename)
-                self._hdr_hint.setText(f'预览更新失败，已保留原图：{exc}')
-                return
-        else:
-            source = getattr(item, '_display_source_pixmap', None)
-            if source is None:
-                source = QtGui.QPixmap(item.pixmap())
-                item._display_source_pixmap = source
-            image = adjust_display_image(
-                source.toImage(), options['exposure'], options['channel'])
-        if image.isNull():
-            logger.info(f'Could not re-decode {item.filename}')
-            self._hdr_hint.setText('无法解码这张图片，已保留原来的预览。')
+        from prism.image_decode import source_snapshot
+        self._hdr_generation += 1
+        self._hdr_updates.submit((self._hdr_generation, weakref.ref(item), source_snapshot(item),
+            dict(options), self._hdr_source_available(item), item.filename,
+            self.scene.project_id, getattr(self.view, '_trace_open_epoch', None)))
+
+    def _hdr_current(self, intent):
+        from prism.item_lifecycle import is_deleted
+        from prism.image_decode import source_snapshot
+        _, reference, snapshot, _, _, _, project, epoch = intent
+        item = reference()
+        return (item is not None and item is self._item and not is_deleted(item)
+                and item.scene() is self.scene and self.scene.project_id == project
+                and getattr(self.view, '_trace_open_epoch', None) == epoch
+                and source_snapshot(item) == snapshot)
+
+    def _start_hdr_preview(self, intent):
+        if not self._hdr_current(intent) or intent[0] != self._hdr_generation:
             return
-        if options.get('false_color'):
-            # The source above already has exposure applied exactly once.
-            image = false_color_preview(image)
+        if self._hdr_running is not None:
+            self._hdr_pending = intent
+            return
+        from functools import partial
+        import threading
+        from prism.inspection_preview import render_inspection
+        from prism.widgets.material_task import MaterialTask
+        generation, _, snapshot, options, hdr, filename, _, _ = intent
+        cached = self._hdr_source_cache
+        source = cached[1] if cached is not None and cached[0] == snapshot else None
+        cancelled = threading.Event()
+        job = MaterialTask(partial(render_inspection, snapshot, options, hdr=hdr,
+            filename=filename, source=source, image_loader=load_image), obsolete=cancelled.is_set)
+        self._hdr_running = (job, cancelled)
+        from PyQt6 import sip
+        reference = weakref.ref(self)
+        registry = self._hdr_jobs
+        def owner():
+            panel = reference()
+            return panel if panel is not None and not sip.isdeleted(panel) else None
+        def result(value):
+            panel = owner()
+            if panel is not None:
+                panel._install_hdr_preview(intent, value)
+        def failed(reason):
+            panel = owner()
+            if panel is not None and panel._hdr_current(intent) and generation == panel._hdr_generation:
+                panel._hdr_hint.setText('预览更新失败，已保留原图：' + reason)
+        def finished():
+            registry.release(job)
+            panel = owner()
+            if panel is not None:
+                panel._hdr_running = None
+                pending, panel._hdr_pending = panel._hdr_pending, None
+                if pending is not None:
+                    panel._start_hdr_preview(pending)
+            job.signals.deleteLater()
+        job.signals.result.connect(result)
+        job.signals.error.connect(failed)
+        job.signals.finished.connect(finished)
+        self._hdr_hint.setText('预览更新中；原始素材保持不变。')
+        self._hdr_jobs.start(QtCore.QThreadPool.globalInstance(), job)
+
+    def _install_hdr_preview(self, intent, value):
+        if not self._hdr_current(intent):
+            return
+        image, source = value
+        if source is not None:
+            self._hdr_source_cache = (intent[2], source)
+        if intent[0] != self._hdr_generation:
+            return
+        item = intent[1]()
         item.set_preview_pixmap(QtGui.QPixmap.fromImage(image), adjusted=True)
+        self._hdr_hint.setText('仅改变预览，原始素材保持不变。')
         self._notify_inspection_display(item)
         self._refresh_item(item)
 

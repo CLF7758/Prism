@@ -57,6 +57,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
 from prism.fileio.attachments import extension_for  # noqa: E402
 from prism.i18n import _  # noqa: E402
+from prism.performance_trace import operation  # noqa: E402
 from prism.widgets import components  # noqa: E402
 from prism.item_lifecycle import is_pixmap_item
 
@@ -542,6 +543,7 @@ class DocumentPanel(QtWidgets.QWidget):
     # ── Board <-> panel ──────────────────────────────────────────
 
     def load_from_scene(self):
+        self._snapshot_epoch = getattr(self, '_snapshot_epoch', 0) + 1
         self._search_epoch = getattr(self, '_search_epoch', 0) + 1
         """Show the stored note, registering its pictures on the way."""
         html = self._scene_html()
@@ -557,26 +559,71 @@ class DocumentPanel(QtWidgets.QWidget):
         self._update_status()
 
     def store_to_scene(self):
-        """Copy the editor content back into the board for saving."""
-        if not self._content_loaded:
+        """Copy editable content back, but never commit a read-only preview."""
+        if getattr(self.view, '_upgrade_preview_readonly', False):
             return True
-        project_id = self.view.scene.project_id
-        needs_snapshot = self._ready and self._page is not None and not self._pending_push
-        raw = self._flush_from_page()
-        from prism.item_lifecycle import is_deleted
-        if is_deleted(self) or self.view.scene.project_id != project_id:
-            return False
-        if needs_snapshot and raw is None:
-            logger.warning('Document snapshot unavailable; refusing stale content')
-            return False
-        if raw is not None:
-            self._html = self._canonical_html(raw)
-            self._page_stale = False
-        if self._html is None:
+        with operation('document.store_to_scene'):
+            if not self._content_loaded:
+                return True
+            project_id = self.view.scene.project_id
+            epoch = getattr(self, '_snapshot_epoch', 0)
+            needs_snapshot = self._ready and self._page is not None and not self._pending_push
+            with operation('document.flush_from_page'):
+                raw = self._flush_from_page()
+            from prism.item_lifecycle import is_deleted
+            if (is_deleted(self) or self.view.scene.project_id != project_id
+                    or getattr(self, '_snapshot_epoch', 0) != epoch):
+                return False
+            if needs_snapshot and raw is None:
+                logger.warning('Document snapshot unavailable; refusing stale content')
+                return False
+            if raw is not None:
+                self._html = self._canonical_html(raw)
+                self._page_stale = False
+            if self._html is None:
+                return
+            self._set_scene_html(self._html)
+            self._update_status()
+            return True
+
+    def store_to_scene_async(self, callback):
+        """Navigation read-back, skipped while browsing a read-only source."""
+        if getattr(self.view, '_upgrade_preview_readonly', False):
+            callback(True)
             return
-        self._set_scene_html(self._html)
-        self._update_status()
-        return True
+        if not self._content_loaded or not self._ready or self._page is None or self._pending_push:
+            if self._content_loaded and self._html is not None:
+                self._set_scene_html(self._html)
+            callback(True)
+            return
+        from prism.widgets.editor_snapshot import request_editor_snapshot
+        from prism.item_lifecycle import is_deleted
+        project_id, page_id = self.view.scene.project_id, self.page_id
+        epoch = getattr(self, '_snapshot_epoch', 0)
+
+        def valid():
+            return (not is_deleted(self) and self.view.scene.project_id == project_id
+                    and self.page_id == page_id
+                    and getattr(self, '_snapshot_epoch', 0) == epoch)
+
+        def finished(raw):
+            if raw is None or not valid():
+                callback(False)
+                return
+            try:
+                html = self._canonical_html(raw)
+                self._set_scene_html(html)
+                self._html = html
+                self._page_stale = False
+                self._update_status()
+            except Exception:
+                logger.exception('Could not apply document navigation snapshot')
+                callback(False)
+                return
+            callback(True)
+
+        request_editor_snapshot(self._page, 'window.__flush ? window.__flush() : null',
+                                finished, valid=valid)
 
     def _store_current_html(self):
         """Timer callback: the page already told us what it holds."""
@@ -586,6 +633,7 @@ class DocumentPanel(QtWidgets.QWidget):
 
     def set_html(self, html):
         """Replace the note, e.g. after importing a Word file."""
+        self._snapshot_epoch = getattr(self, '_snapshot_epoch', 0) + 1
         self._html = self._canonical_html(html)
         self._content_loaded = True
         self._page_stale = self._ready
@@ -616,24 +664,37 @@ class DocumentPanel(QtWidgets.QWidget):
         return None
 
     def _scene_html(self):
+        from prism.fileio import load_deferred_board_extras
+        if self.page_id is None:
+            load_deferred_board_extras(self.view.scene, names={'note_html'})
+        else:
+            load_deferred_board_extras(self.view.scene, names={'workspace_pages'},
+                                       page_ids={self.page_id})
         if self.page_id is None:
             return getattr(self.view.scene, 'note_html', '') or ''
         page = self._workspace_page()
         return (page or {}).get('content') or ''
 
     def _set_scene_html(self, html):
+        if getattr(self.view, '_upgrade_preview_readonly', False):
+            return
         if self.page_id is None:
             self.view.scene.note_html = html
+            deferred = getattr(self.view.scene, '_deferred_board_extras', None)
+            if deferred is not None:
+                deferred.discard('note_html')
             return
         page = self._workspace_page()
         if page is not None:
             page['content'] = html
+            self.view.mark_page_modified(page)
 
     def _push_document(self):
         if not self._ready:
             return
         payload = {
             'html': self._display_html(_body_fragment(self._html or '')),
+            'readonly': bool(getattr(self.view, '_upgrade_preview_readonly', False)),
         }
         self._page_stale = False
         self._pending_push = True
@@ -653,8 +714,10 @@ class DocumentPanel(QtWidgets.QWidget):
         from prism.widgets.editor_snapshot import read_editor_snapshot
         from prism.item_lifecycle import is_deleted
         project_id = self.view.scene.project_id
+        epoch = getattr(self, '_snapshot_epoch', 0)
         return read_editor_snapshot(self._page, 'window.__flush ? window.__flush() : null',
-            valid=lambda: not is_deleted(self) and self.view.scene.project_id == project_id)
+            valid=lambda: not is_deleted(self) and self.view.scene.project_id == project_id
+                and getattr(self, '_snapshot_epoch', 0) == epoch)
 
     # ── Page callbacks ───────────────────────────────────────────
 
@@ -680,6 +743,8 @@ class DocumentPanel(QtWidgets.QWidget):
             logger.info('The editor could not load the stored note: %s', error)
 
     def _on_content_changed(self, raw):
+        if getattr(self.view, '_upgrade_preview_readonly', False):
+            return
         self._content_revision = getattr(self, '_content_revision', 0) + 1
         self._html = self._canonical_html(raw)
         self._content_loaded = True
@@ -700,19 +765,22 @@ class DocumentPanel(QtWidgets.QWidget):
             callback(False)
             return
         project_id = self.view.scene.project_id
+        page_id, page = self.page_id, self._page
         epoch = getattr(self, '_search_epoch', 0)
         revision = getattr(self, '_content_revision', 0)
+        from prism.widgets.editor_snapshot import request_editor_snapshot, owner_alive
+        def valid():
+            return (owner_alive(self) and owner_alive(self.view)
+                    and self.view.scene.project_id == project_id and self.page_id == page_id
+                    and self._page is page and epoch == getattr(self, '_search_epoch', 0))
         def finished(raw):
-            if self.view.scene.project_id != project_id or epoch != getattr(self, '_search_epoch', 0):
-                callback(False)
-                return
-            if not isinstance(raw, str):
+            if not isinstance(raw, str) or not valid():
                 callback(False)
                 return
             if revision == getattr(self, '_content_revision', 0) and self._canonical_html(raw) != self._html:
                 self._on_content_changed(raw)
             callback(True)
-        self._page.runJavaScript('window.__flush ? window.__flush() : null', finished)
+        request_editor_snapshot(page, 'window.__flush ? window.__flush() : null', finished, valid=valid)
 
     def editor_history(self, redo=False):
         if self._ready and not self._pending_push:
@@ -747,6 +815,8 @@ class DocumentPanel(QtWidgets.QWidget):
             handler()
 
     def _on_image_received(self, token, name, mime, payload):
+        if getattr(self.view, '_upgrade_preview_readonly', False):
+            return
         """An image was dropped or pasted into the page."""
         url = self._store_image_payload(name, mime, payload)
         self._bridge.imageStored.emit(token, url or '')
@@ -754,6 +824,8 @@ class DocumentPanel(QtWidgets.QWidget):
             self.view.mark_content_dirty()
 
     def _on_command_requested(self, command, payload):
+        if getattr(self.view, '_upgrade_preview_readonly', False):
+            return
         handlers = {
             'insert-image': self.insert_image_files,
             'insert-canvas': self.insert_canvas_selection,
@@ -1217,8 +1289,8 @@ class DocumentPanel(QtWidgets.QWidget):
         self._apply('insert-link', text=text or '', url=url)
 
     def choose_text_color(self, _payload=None):
-        color = QtWidgets.QColorDialog.getColor(
-            QtGui.QColor('#202124'), self, _('Text color'))
+        from prism.widgets.compact_color import choose_color
+        color = choose_color(QtGui.QColor('#202124'), self, _('Text color'))
         if not color.isValid():
             return
         self._apply('set-color', color=color.name())

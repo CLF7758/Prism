@@ -1,5 +1,6 @@
 """Large boards retain logical assets while Qt editing objects are recycled."""
 import hashlib
+from pathlib import Path
 from unittest.mock import Mock
 import pytest
 from PyQt6 import QtCore, QtGui, QtWidgets, sip
@@ -7,7 +8,7 @@ from prism import asset_records, commands, fileio, lod
 from prism.asset_records import ImageRecord
 from prism.fileio.sql import SQLiteIO
 from prism.item_lifecycle import is_deleted, is_record
-from prism.items import PrismPixmapItem, PrismTextItem
+from prism.items import PrismPixmapItem, PrismTextItem, PrismErrorItem
 from prism.project_catalog import ProjectAssetCatalog
 
 
@@ -22,6 +23,26 @@ def record(view, tmp_path, color='red', x=0, z=0, extra=None):
     item._preview_pixmap = QtGui.QPixmap.fromImage(image)
     view.scene.addItem(item)
     return item
+
+
+def test_metadata_counts_do_not_sort_or_duplicate_materialized_records(view, tmp_path, monkeypatch):
+    first = record(view, tmp_path, extra={'tags': ['shared'], 'categories': ['legacy']})
+    second = record(view, tmp_path, 'blue', extra={'tags': ['shared', 'blue']})
+    first.graphics_item()
+    native = PrismTextItem('native asset')
+    native.tags = ['native']
+    view.scene.addItem(native)
+    view.scene.category_names = ['empty']
+    expected = {first, second, native}
+    monkeypatch.setattr(view.scene, 'items', Mock(side_effect=AssertionError('metadata must not sort drawing order')))
+    assert set(view.scene.iter_assets()) == expected
+    assert len(list(view.scene.iter_assets())) == 3
+    assert view.scene.get_all_tags() == {'shared': 2, 'blue': 1, 'native': 1}
+    assert view.scene.get_all_categories() == {'legacy': 1}
+    assert view.category_panel._calc_counts() == {
+        'categories': {'empty': 0, 'legacy': 1},
+        'tags': {'shared': 2, 'blue': 1, 'native': 1}}
+    monkeypatch.undo()
 
 
 def test_virtual_scene_does_not_put_recycled_editors_in_qt_bsp(view, tmp_path):
@@ -116,6 +137,34 @@ def test_save_and_save_as_include_offscreen_records_without_materializing(view, 
     writer.write(); writer._close_connection()
     assert all(i._graphics is None for i in loaded)
     assert [hashlib.sha256(i.original_bytes()).hexdigest() for i in loaded] == originals
+
+
+@pytest.mark.parametrize('stored_blob,expected_type', [(None, 'error'), (b'', 'error'), ('original', 'pixmap')])
+def test_lazy_original_presence_distinguishes_null_empty_and_valid(view, tmp_path, monkeypatch,
+                                                                 stored_blob, expected_type):
+    import sqlite3
+    monkeypatch.setattr(asset_records, 'MIN_VIRTUAL_IMAGES', 1)
+    item = record(view, tmp_path)
+    original = item.original_bytes()
+    path = tmp_path/'presence.prism'
+    writer = SQLiteIO(str(path), view.scene, create_new=True)
+    writer.write(); writer._close_connection()
+    Path(item.filename).unlink()
+    with sqlite3.connect(path) as db:
+        db.execute('UPDATE sqlar SET data=?, sz=NULL',
+                   (original if stored_blob == 'original' else stored_blob,))
+    view.scene.clear()
+    reader = SQLiteIO(str(path), view.scene, readonly=True)
+    reader.read(); reader._close_connection()
+    data, _ = view.scene.items_to_add.get_nowait()
+    if expected_type == 'pixmap':
+        assert is_record(data['item'])
+        assert data['item'].original_bytes() == original
+        assert data['item']._graphics is None
+    else:
+        assert data['type'] == PrismErrorItem.TYPE
+    view.scene.items_to_add.put((data, False))
+    view.scene.add_queued_items()
 
 
 def test_regular_save_updates_positions_without_rebuilding_archive(view, tmp_path):

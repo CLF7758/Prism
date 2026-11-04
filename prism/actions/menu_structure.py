@@ -23,6 +23,8 @@ menu_structure = [
         'items': [
             'new_scene',
             'open',
+            'open_directory_project',
+
             {
                 'menu': _('Open &Recent'),
                 'items': '_build_recent_files',
@@ -30,14 +32,13 @@ menu_structure = [
             MENU_SEPARATOR,
             'save',
             'save_as',
-            'export_images',
-            'export_selected_images',
-            'import_document',
-            'import_mindmap',
-            'clipboard_inbox',
-            MENU_SEPARATOR,
-            'export_note_word',
-            'export_mindmap',
+            {'menu': '导入', 'items': ['import_eagle', 'import_document', 'import_mindmap', 'clipboard_inbox', 'open_project_bundle']},
+            {'menu': '导出', 'items': [
+                'export_images', 'export_selected_images',
+                'export_note_word', 'export_mindmap',
+                MENU_SEPARATOR, 'export_legacy_project', 'export_project_bundle']},
+            {'menu': _('Project tools'), 'items': [
+                'compact_project', 'recover_directory_project', 'open_readonly']},
             MENU_SEPARATOR,
             'quit',
         ],
@@ -60,8 +61,6 @@ menu_structure = [
             'paste',
             'delete',
             MENU_SEPARATOR,
-            'raise_to_top',
-            'lower_to_bottom',
         ],
     },
     {
@@ -85,7 +84,6 @@ menu_structure = [
             'insert_images',
             'insert_text',
             'screen_capture',
-            'video_download',
         ],
     },
     {

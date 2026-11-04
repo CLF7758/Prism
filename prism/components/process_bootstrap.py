@@ -6,6 +6,22 @@ import site
 import sys
 
 
+def storage_dependencies(directory):
+    """Expose only the storage adapter's missing dependencies to isolated workers.
+
+    Existing component packages keep priority. Do not add the host site-packages
+    to sys.path: that could replace the component's pinned ML libraries.
+    """
+    from importlib.machinery import PathFinder
+    allowed = frozenset(('disk_objectstore', 'sqlalchemy', 'click', 'greenlet', 'typing_extensions'))
+    class StorageFinder:
+        def find_spec(self, fullname, path=None, target=None):
+            if path is None and fullname in allowed:
+                return PathFinder.find_spec(fullname, [directory])
+            return None
+    sys.meta_path.append(StorageFinder())
+
+
 def managed_tree():
     if os.name != 'nt':
         return None
@@ -56,6 +72,8 @@ if __name__ == '__main__':
     _job = managed_tree()
     sys.prefix = sys.exec_prefix = runtime
     site.addsitedir(str(Path(runtime)/'Lib/site-packages'))
+    if os.environ.get('PRISM_STORAGE_SITE_PACKAGES'):
+        storage_dependencies(os.environ['PRISM_STORAGE_SITE_PACKAGES'])
     sys.argv = [script, *arguments]
     sys.path.insert(0, str(Path(script).resolve().parent))
     runpy.run_path(script, run_name='__main__')

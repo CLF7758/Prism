@@ -8,14 +8,17 @@
 - **素材**：画布上按 Delete（或查重里删）丢进来的图片 / 视频 / 模型。它们是
   **软删除**：数据一个字节都没动，只是被隐藏 + 打了 `deletedAt` 时间戳。恢复
   走可撤销的 `RestoreItems` 命令；永久删除才真正把图元移出场景（保存时数据库
-  记录和 sqlar 原始字节随之删除），并清空撤销栈（不可逆）。
+  记录和 sqlar 原始字节随之删除），并清空撤销栈（不可逆）。**部分加载的工程
+  不给这一步**（见 `ASSET_PURGE_REFUSED`）：它没有依据删 `items` 行。
 - **页面/文件夹**：资源树里删掉的画布 / 文档 / 脑图节点。恢复走服务层的
   `restore_deleted`（父节点还在回收站里时会拒绝，提示照实说）；永久删除之后
-  要把对应的页面正文一起清掉，由外面的 `purged` 信号交给主窗口处理。
+  要把对应的页面正文一起清掉，由外面的 `purged` 信号交给主窗口处理。**部分加载
+  时先向保存会话取得删除授权**（`authorize_resource_purge`），拿不到就一步都
+  不改 —— 节点是原地删的，删了而保存不认，工程就再也存不了了。
 """
 import logging
 
-from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtWidgets
 
 from prism import commands, ui_tokens
 
@@ -26,31 +29,21 @@ SECTION_TITLES = {'canvas': '画布', 'mindmap': '脑图', 'document': '文档',
                   'material': '材质库'}
 NODE_TITLES = {'folder': '文件夹', 'page': '页面'}
 
+#: 部分加载的工程为什么不给「永久删除素材」——按钮禁用和兜底提示共用这一句。
+#: 关键点：素材的 `items` 行和原始字节是按工程共享的，部分保存只写它读过的
+#: 记录，删不动 —— 真删了，之后每次保存都会被拒绝，用户还不知道为什么。
+ASSET_PURGE_REFUSED = (
+    '这个工程只加载了一部分，不能永久删除素材。\n\n'
+    '部分保存只能写它读过的记录，而 `items` 行和原始字节是按工程共享的，'
+    '它没有依据替你删掉它们。\n\n'
+    '素材可以先留在回收站（软删除，随时可以恢复）；'
+    '要真正删掉，请整开工程后再操作。')
 
-def _thumb_icon(item, side=56):
-    """给回收站列表里的一行做个小缩略图。取不到就返回 None（不画图标）。
-
-    缩略图只是锦上添花，绝不能因为它把回收站面板搞崩 —— 所以整段包在
-    try 里，任何解码 / 绘制异常都退化成"没有图标"。
-    """
-    try:
-        image = None
-        if hasattr(item, 'analysis_image'):
-            image = item.analysis_image(side)
-        if image is None and hasattr(item, 'pixmap'):
-            pix = item.pixmap()
-            if pix is not None and not pix.isNull():
-                image = pix.toImage()
-        if image is None or image.isNull():
-            return None
-        scaled = image.scaled(
-            side, side,
-            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-            QtCore.Qt.TransformationMode.SmoothTransformation)
-        return QtGui.QIcon(QtGui.QPixmap.fromImage(scaled))
-    except Exception:  # pragma: no cover - 缩略图失败不影响功能
-        logger.debug('回收站缩略图生成失败', exc_info=True)
-        return None
+#: 工程刚打开、只部分加载的会话还没准备好时的统一说法。
+PURGE_NOT_READY = (
+    '这个工程还在按需加载，准备完成之前任何永久删除都不能做：\n'
+    '部分保存只能写它读过的记录，现在它还没有基线。\n\n'
+    '等加载完成后再试，或者整开工程再操作。')
 
 
 class TrashPanel(QtWidgets.QDialog):
@@ -62,9 +55,12 @@ class TrashPanel(QtWidgets.QDialog):
     #: 清 sqlar 原始字节并清空撤销栈）。
     assets_purged = QtCore.pyqtSignal(list)
 
-    def __init__(self, view, parent=None):
+    def __init__(self, view, parent=None, *, embedded=False):
         super().__init__(parent)
         self.view = view
+        self.embedded = embedded
+        if embedded:
+            self.setWindowFlags(QtCore.Qt.WindowType.Widget)
         self.service = view.category_panel.resource_service
         self.catalog = getattr(view.category_panel, 'catalog', None)
         if self.catalog is None:
@@ -75,6 +71,22 @@ class TrashPanel(QtWidgets.QDialog):
         self._setup_ui()
         self._refresh_assets()
         self._refresh_nodes()
+
+    def load_from_scene(self):
+        """A library tab can survive reopening; never retain another project."""
+        self._project_id = self.view.scene.project_id
+        self.service = self.view.category_panel.resource_service
+        self.catalog = self.view.category_panel.catalog
+        self._refresh_assets()
+        self._refresh_nodes()
+        self._update_hint()
+
+    def keyPressEvent(self, event):
+        if self.embedded and event.key() == QtCore.Qt.Key.Key_Escape:
+            self.asset_list.clearSelection()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     # ── 界面 ──────────────────────────────────────────────────
 
@@ -87,6 +99,7 @@ class TrashPanel(QtWidgets.QDialog):
         self.tabs.addTab(self._build_asset_tab(), '素材')
         self.tabs.addTab(self._build_node_tab(), '页面 / 文件夹')
         layout.addWidget(self.tabs, 1)
+        layout.addWidget(self.zoom_bar)
 
         row = QtWidgets.QHBoxLayout()
         self.hint = QtWidgets.QLabel('')
@@ -95,6 +108,7 @@ class TrashPanel(QtWidgets.QDialog):
         row.addWidget(self.hint, 1)
         close = QtWidgets.QPushButton('关闭')
         close.clicked.connect(self.accept)
+        close.setVisible(not self.embedded)
         row.addWidget(close)
         layout.addLayout(row)
 
@@ -107,14 +121,28 @@ class TrashPanel(QtWidgets.QDialog):
         vbox.setContentsMargins(0, 8, 0, 0)
         vbox.setSpacing(8)
 
-        self.asset_list = QtWidgets.QListWidget()
-        self.asset_list.setSelectionMode(
-            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.asset_list.setIconSize(QtCore.QSize(56, 56))
-        self.asset_list.itemSelectionChanged.connect(self._update_asset_buttons)
-        self.asset_list.setMinimumHeight(
-            ui_tokens.COMPONENTS['textarea-min-height'])
+        from prism.widgets.asset_grid import AssetGrid, GridDelegate
+        from prism.widgets.asset_browser import AssetModel, AssetDelegate
+        self.asset_list = AssetGrid(self)
+        self.asset_model = AssetModel(self)
+        self.asset_list.setModel(self.asset_model)
+        self.asset_list.setItemDelegate(GridDelegate(self.asset_list, AssetDelegate(self.asset_list)))
+        self.asset_list.setGridSize(QtCore.QSize(156, 120))
+        self.asset_list.selectionModel().selectionChanged.connect(self._update_asset_buttons)
+        from prism.lod import cache
+        cache().changed.connect(self.asset_list.request_display_refresh)
+        self.asset_list.setMinimumHeight(ui_tokens.COMPONENTS['textarea-min-height'])
         vbox.addWidget(self.asset_list, 1)
+        zoom=QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        zoom.setObjectName('trashThumbnailSize')
+        zoom.setRange(96,280);zoom.setValue(156);zoom.setMaximumWidth(160)
+        zoom.setToolTip('缩略图大小；Ctrl + 滚轮也可调整')
+        zoom.valueChanged.connect(lambda value:self.asset_list.setGridSize(QtCore.QSize(value,int(value*120/156))))
+        self.asset_list.card_size_changed.connect(zoom.setValue)
+        from .thumbnail_zoom import thumbnail_zoom_bar
+        self.zoom_bar=thumbnail_zoom_bar(zoom)
+        self.zoom_slider=zoom
+
 
         row = QtWidgets.QHBoxLayout()
         self.asset_restore_button = QtWidgets.QPushButton('恢复')
@@ -158,7 +186,7 @@ class TrashPanel(QtWidgets.QDialog):
 
     def _update_hint(self):
         if self.tabs.currentIndex() == 0:
-            count = self.asset_list.count()
+            count = self.asset_model.rowCount()
             self.hint.setText(
                 '回收站是空的。' if not count else
                 f'回收站里有 {count} 个素材。恢复就能回到画布；'
@@ -171,6 +199,18 @@ class TrashPanel(QtWidgets.QDialog):
                 '永久删除之后就真的没了。')
 
     # ── 素材页签 ──────────────────────────────────────────────
+
+    def _partial_state(self):
+        """(是不是部分加载, 它的会话)。保存口径以 `_partial_project_source` 为准。
+
+        会话可能还没准备好（打开工程的后台准备阶段），那种情况下部分保存会
+        直接拒绝，所以这里按「部分加载」处理 —— 宁可先不给做，也不做出一个
+        存不了的工程。
+        """
+        scene = getattr(self.view, 'scene', None)
+        if not getattr(scene, '_partial_project_source', None):
+            return False, None
+        return True, getattr(scene, '_partial_project_session', None)
 
     def _asset_rows(self):
         """把软删除的素材整理成 (item, 显示文本, tooltip) 列表。"""
@@ -191,36 +231,27 @@ class TrashPanel(QtWidgets.QDialog):
 
     def _refresh_assets(self):
         selected = {id(item) for item in self._selected_assets()}
-        self.asset_list.blockSignals(True)
-        self.asset_list.clear()
-        for item, label, tooltip in self._asset_rows():
-            row = QtWidgets.QListWidgetItem(label)
-            icon = _thumb_icon(item)
-            if icon is not None:
-                row.setIcon(icon)
-            row.setData(QtCore.Qt.ItemDataRole.UserRole, id(item))
-            row.setToolTip(tooltip)
-            self.asset_list.addItem(row)
-            row.setData(QtCore.Qt.ItemDataRole.UserRole + 1, item)
+        rows = self._asset_rows()
+        self.asset_model.replace([item for item, _label, _tooltip in rows])
+        selection = QtCore.QItemSelection()
+        for row, (item, _label, _tooltip) in enumerate(rows):
             if id(item) in selected:
-                row.setSelected(True)
-        self.asset_list.blockSignals(False)
+                index = self.asset_model.index(row, 0)
+                selection.select(index, index)
+        self.asset_list.selectionModel().select(
+            selection, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect)
         self._update_asset_buttons()
 
     def _selected_assets(self):
-        items = []
-        for index in range(self.asset_list.count()):
-            row = self.asset_list.item(index)
-            if row.isSelected():
-                item = row.data(QtCore.Qt.ItemDataRole.UserRole + 1)
-                if item is not None:
-                    items.append(item)
-        return items
+        return [index.data(QtCore.Qt.ItemDataRole.UserRole)
+                for index in self.asset_list.selectedIndexes()]
 
-    def _update_asset_buttons(self):
-        has_selection = bool(self.asset_list.selectedItems())
+    def _update_asset_buttons(self, *_args):
+        has_selection = self.asset_list.selectionModel().hasSelection()
+        partial, _session = self._partial_state()
         self.asset_restore_button.setEnabled(has_selection)
-        self.asset_purge_button.setEnabled(has_selection)
+        self.asset_purge_button.setEnabled(has_selection and not partial)
+        self.asset_purge_button.setToolTip(ASSET_PURGE_REFUSED if partial else '')
 
     def restore_selected_assets(self):
         """恢复选中的素材：走可撤销的 `RestoreItems` 命令。"""
@@ -237,6 +268,12 @@ class TrashPanel(QtWidgets.QDialog):
         """永久删除选中的素材：再次确认后交给主窗口真正移除。"""
         items = self._selected_assets()
         if not items:
+            return []
+        # 部分加载的工程删不了 items 行：按钮已经禁用，这里再挡一道，
+        # 免得别的调用路径（快捷键、脚本）把工程变成「再也存不了」。
+        partial, _session = self._partial_state()
+        if partial:
+            QtWidgets.QMessageBox.information(self, '永久删除', ASSET_PURGE_REFUSED)
             return []
         names = []
         for item in items:
@@ -321,6 +358,16 @@ class TrashPanel(QtWidgets.QDialog):
                     page_ids.append(candidate['pageId'])
         return page_ids
 
+    def _nodes_under(self, ids):
+        """`purge` 会拿掉的所有节点：选中的加上每一层后代。"""
+        ordered, seen = [], set()
+        for node_id in list(ids) + [i for node_id in ids
+                                    for i in self.service._descendants(node_id)]:
+            if node_id not in seen:
+                seen.add(node_id)
+                ordered.append(node_id)
+        return ordered
+
     def purge_selected(self):
         ids = self._selected_ids()
         if not ids:
@@ -338,6 +385,21 @@ class TrashPanel(QtWidgets.QDialog):
             QtWidgets.QMessageBox.StandardButton.Cancel)
         if reply != QtWidgets.QMessageBox.StandardButton.Yes:
             return []
+        # 部分加载：先让会话认下这些删除，再动手。认不下来就一步都别改 ——
+        # 节点一旦原地没了而保存不认，这个工程以后就再也存不了。
+        partial, session = self._partial_state()
+        if partial:
+            if session is None:
+                QtWidgets.QMessageBox.information(
+                    self, '永久删除', PURGE_NOT_READY)
+                return []
+            from prism.fileio.partial_save import PartialSaveConflict
+            try:
+                session.authorize_resource_purge(
+                    self._nodes_under(ids), page_ids, self.view.scene)
+            except PartialSaveConflict as exc:
+                QtWidgets.QMessageBox.information(self, '永久删除', str(exc))
+                return []
         try:
             removed = self.service.purge(ids)
         except ValueError as exc:

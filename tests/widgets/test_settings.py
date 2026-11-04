@@ -12,13 +12,13 @@ from prism.widgets.settings import (
 
 def test_image_storage_format_sets_title_when_not_edited(settings, view):
     widget = ImageStorageFormatWidget()
-    assert widget.title() == 'Image Storage Format:'
+    assert widget.title() == 'Rendered image format:'
 
 
 def test_image_storage_format_sets_title_when_edited(settings, view):
     settings.setValue('Items/image_storage_format', 'jpg')
     widget = ImageStorageFormatWidget()
-    assert widget.title() == 'Image Storage Format: ✎'
+    assert widget.title() == 'Rendered image format: ✎'
 
 
 def test_image_storage_format_selects_radiobox(settings, view):
@@ -37,7 +37,7 @@ def test_image_storage_format_saves_change(settings, view):
     assert widget.buttons['png'].isChecked() is False
     assert widget.buttons['jpg'].isChecked() is True
     assert settings.valueOrDefault('Items/image_storage_format') == 'jpg'
-    assert widget.title() == 'Image Storage Format: ✎'
+    assert widget.title() == 'Rendered image format: ✎'
 
 
 def test_image_storage_format_on_restore_defaults(settings, view):
@@ -48,7 +48,7 @@ def test_image_storage_format_on_restore_defaults(settings, view):
     assert widget.buttons['best'].isChecked() is True
     assert widget.buttons['png'].isChecked() is False
     assert widget.buttons['jpg'].isChecked() is False
-    assert widget.title() == 'Image Storage Format:'
+    assert widget.title() == 'Rendered image format:'
 
 
 def test_arrange_gap_initialises_input_from_settings(settings, view):

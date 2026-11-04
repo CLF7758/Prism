@@ -5,10 +5,19 @@ from prism.workspace_service import ResourceTreeService
 from prism.widgets.asset_canvas import MaterialCard
 
 
-def test_empty_project_always_has_default_canvas(main_window):
+def test_empty_project_invents_no_default_canvas(main_window):
+    """An empty project has no legal canvas at all.
+
+    The legacy ``default-canvas`` is only a landing spot for a project that
+    still carries content for it.  An empty project gets no fake page: the
+    interface shows the normal empty state instead of inventing one, and
+    showing that empty state does not dirty the project.
+    """
     library = main_window.view.category_panel
     pages = library._pages_with_implicit_defaults()
-    assert any(p['id'] == 'default-canvas' for p in pages)
+    assert not any(p['id'] == 'default-canvas' for p in pages)
+    assert main_window._first_canvas_id() is None
+    assert not main_window.view.is_dirty()
     model = library.resource_tree.model()
     record = next(n for n in model._nodes.values() if n.get('pageId') == 'default-canvas')
     index = model.index_for_id(record['id'])

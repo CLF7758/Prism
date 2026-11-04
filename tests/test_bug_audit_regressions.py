@@ -15,6 +15,12 @@ def populate(window):
     image = QtGui.QImage(10, 10, QtGui.QImage.Format.Format_RGB32)
     image.fill(QtGui.QColor('red'))
     item = PrismPixmapItem(image, filename='audit-unique-image.png')
+    # 导入的图片要留着原件：工程里「原件没留存就不许保存」这条规矩
+    # （prism/image_source.py）正是靠它生效，测试里的素材也得像真导入的那样。
+    buffer = QtCore.QBuffer()
+    buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, 'PNG')
+    item.set_source_blob(bytes(buffer.data()), 'png')
     item.canvas_id = 'old-canvas'
     scene.addItem(item)
     panel = window.view.category_panel
@@ -27,7 +33,12 @@ def populate(window):
 
 def test_startup_does_not_choose_trashed_canvas(main_window):
     populate(main_window)
-    assert main_window._first_canvas_id() == 'default-canvas'
+    # The landing canvas is the first LEGAL canvas in project order: the
+    # trashed one is skipped, and the implicit legacy canvas never outranks
+    # a canvas the project really stores.
+    landing = main_window._first_canvas_id()
+    assert landing == 'new-canvas'
+    assert landing != 'old-canvas', '回收站里的画布不能是落点'
 
 
 def test_permanent_purge_removes_canvas_images(main_window):
@@ -121,7 +132,9 @@ def test_restoring_trashed_canvas_restores_navigation_and_search(main_window):
     item, node, service = populate(main_window)
     service.restore_deleted([node['id']])
     main_window.view.category_panel.rebuild_workspace_tree()
-    assert main_window._first_canvas_id() == 'default-canvas'
+    # The restored canvas is legal again, so it is the first canvas in
+    # project order -- and the landing page is it again.
+    assert main_window._first_canvas_id() == 'old-canvas'
     main_window.open_workspace_page('canvas', 'old-canvas')
     assert item.isVisible()
     assert any(result.get('item') is item for result in
@@ -177,17 +190,18 @@ def test_empty_export_does_not_include_hidden_items(view):
     assert not list(SceneToSVGExporter(view.scene).render_to_svg().iter('image'))
 
 
-def test_inserting_text_after_custom_canvases_trashed_uses_live_default(main_window):
+def test_inserting_text_after_a_canvas_is_trashed_uses_the_first_live_canvas(main_window):
     from prism.items import PrismTextItem
     item, node, service = populate(main_window)
-    new_node = next(n for n in service.nodes if n.get('pageId') == 'new-canvas')
-    service.trash([new_node['id']], '2026-10-08T00:00:00+00:00')
+    # ``populate`` already trashed the FIRST stored canvas, so the landing
+    # page has to skip it and take the next live one.
+    assert main_window._first_canvas_id() == 'new-canvas'
     main_window.open_workspace_page('canvas', main_window._first_canvas_id())
     main_window.view.on_action_insert_text()
     text = next(i for i in main_window.view.scene.items_for_save()
                 if isinstance(i, PrismTextItem))
     assert text.canvas_id == main_window.view.current_canvas_id
-    assert text.canvas_id == 'default-canvas'
+    assert text.canvas_id == 'new-canvas', '文字要落在还活着的画布上'
     assert text.isVisible()
     assert not item.isVisible()
     text.exit_edit_mode()

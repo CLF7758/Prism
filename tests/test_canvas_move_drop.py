@@ -142,11 +142,15 @@ def test_legacy_default_canvas_is_kept_when_new_canvases_exist(main_window):
     window = main_window
     item = image_item(window.view.scene, 'default-canvas')
     window.create_workspace_page_quietly('canvas', 'New canvas')
+    new_canvas = window.current_page_id
     panel = window.view.category_panel
     panel.rebuild_workspace_tree()
     assert 'default-canvas' in {p['id'] for p in panel._pages_with_implicit_defaults()}
     assert not item.isVisible()
-    assert window._first_canvas_id() == 'default-canvas'
+    # The legacy canvas stays reachable -- it still holds the assets -- but
+    # it is only an implicit landing spot: it never outranks a canvas the
+    # project really stores, so the landing page is the new one.
+    assert window._first_canvas_id() == new_canvas
     window.open_workspace_page('canvas', 'default-canvas')
     assert item.isVisible()
     target = next(p['id'] for p in window.view.scene.workspace_pages

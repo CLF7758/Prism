@@ -34,10 +34,16 @@ def test_init_without_filenames(open_file_mock, qapp, commandline_args):
 
 
 @patch('prism.view.PrismGraphicsView.open_from_file')
-def test_init_with_filenames_beefile(open_file_mock, qapp, commandline_args):
+def test_init_with_filenames_beefile(open_file_mock, qapp, commandline_args, qtbot):
     commandline_args.filenames = ['test.prism']
     parent = QtWidgets.QMainWindow()
     view = PrismGraphicsView(qapp, parent)
+    # 视图是在**下一轮事件循环**才打开命令行工程的（view.py 用
+    # QTimer.singleShot(0, ...) 推迟，免得在构造函数里嵌套事件循环）。
+    # 所以这个断言必须等定时器真的触发 —— 补丁在用例函数返回时就撤掉了，
+    # 定时器若在那之后才响，打开的就是真实文件，失败弹出的模态框会把
+    # 整个测试跑卡死。
+    qtbot.waitUntil(lambda: open_file_mock.called, timeout=5000)
     open_file_mock.assert_called_once_with('test.prism')
     del view
 
@@ -250,46 +256,47 @@ def test_on_action_open_recent_file_when_unsaved_changes_confirmed(
 def test_open_from_file(clear_mock, view, qtbot):
     root = os.path.dirname(__file__)
     filename = os.path.join(root, 'assets', 'test1item.bee')
-    view.on_loading_finished = MagicMock(wraps=view.on_loading_finished)
-    view.open_from_file(filename)
-    view.worker.wait()
-    qtbot.waitUntil(lambda: view.on_loading_finished.called is True)
-    qtbot.waitUntil(lambda: view.scene.items_to_add.empty() and view._load_scheduler.finished is None)
+    assert view.open_from_file(filename) is False
+    operation = view._opening_operation
+    qtbot.waitUntil(lambda: operation.terminal, timeout=10000)
+    assert operation.reader_stopped
+    assert view.scene.items_to_add.empty() and view._load_scheduler.finished is None
     assert len(view.scene.items()) == 1
     item = view.scene.items()[0]
     assert item.isSelected() is False
     assert item.pixmap()
     clear_mock.assert_called_once_with()
-    view.on_loading_finished.assert_called_once_with(filename, [])
+    assert operation.reader_result == (filename, [])
+    assert view.filename == filename
 
 
 def test_open_from_file_when_error(view, qtbot):
-    view.on_loading_finished = MagicMock()
     view.open_from_file('uieauiae')
-    view.worker.wait()
-    qtbot.waitUntil(lambda: view.on_loading_finished.called is True)
+    operation = view._opening_operation
+    qtbot.waitUntil(lambda: operation.terminal, timeout=10000)
     assert list(view.scene.items()) == []
-    view.on_loading_finished.assert_called_once_with(
-        'uieauiae', ['unable to open database file'])
+    assert operation.reader_result == ('uieauiae', ['unable to open database file'])
+    assert operation.phase == 'failed'
+    assert view.filename is None
 
 
 @patch('PyQt6.QtWidgets.QFileDialog.getOpenFileName')
 def test_on_action_open(dialog_mock, view, qtbot):
-    # FIXME: #1
-    # Can't check signal handling currently
     root = os.path.dirname(__file__)
     filename = os.path.join(root, 'assets', 'test1item.bee')
     dialog_mock.return_value = (filename, None)
-    view.on_loading_finished = MagicMock()
     view.cancel_active_modes = MagicMock()
 
     view.on_action_open()
-    qtbot.waitUntil(lambda: view.on_loading_finished.called is True)
+    operation = view._opening_operation
+    assert view.filename is None
+    qtbot.waitUntil(lambda: operation.terminal, timeout=10000)
     assert len(view.scene.items()) == 1
     item = view.scene.items()[0]
     assert item.isSelected() is False
     assert item.pixmap()
-    view.on_loading_finished.assert_called_once_with(filename, [])
+    assert operation.reader_result == (filename, [])
+    assert view.filename == filename
     view.cancel_active_modes.assert_called_with()
 
 
@@ -317,7 +324,7 @@ def test_on_action_open_when_no_filename(open_mock, dialog_mock, view):
 
 
 @patch('PyQt6.QtWidgets.QFileDialog.getSaveFileName')
-def test_on_action_save_as(dialog_mock, view, imgfilename3x3, tmpdir):
+def test_on_action_save_as(dialog_mock, view, qtbot, imgfilename3x3, tmpdir):
     item = PrismPixmapItem(QtGui.QImage(imgfilename3x3))
     view.scene.addItem(item)
     view.cancel_active_modes = MagicMock()
@@ -325,7 +332,10 @@ def test_on_action_save_as(dialog_mock, view, imgfilename3x3, tmpdir):
     assert os.path.exists(filename) is False
     dialog_mock.return_value = (filename, None)
     view.on_action_save_as()
-    view.worker.wait()
+    # 保存 worker 要等 GUI 侧放行（它等的那个 ready 事件是主线程排队的
+    # 回调设的）。这里用 waitUntil 而不是 worker.wait()：后者会把主线程
+    # 堵死，那个回调就永远轮不到，两边互等，测试永远不返回。
+    qtbot.waitUntil(lambda: not view.worker.isRunning(), timeout=30000)
     assert os.path.exists(filename) is True
     view.cancel_active_modes.assert_called_once_with()
 
@@ -356,7 +366,14 @@ def test_on_action_save_as_filename_doesnt_end_with_bee(
     view.on_action_save_as()
     qtbot.waitUntil(lambda: view.on_saving_finished.called is True)
     assert os.path.exists(f'{filename}.prism') is True
-    view.on_saving_finished.assert_called_once_with(f'{filename}.prism', [])
+    callback = view.on_saving_finished
+    callback.assert_called_once()
+    expected = f'{filename}.prism.data{os.sep}metadata.sqlite'
+    assert callback.call_args.args == (expected, [])
+    assert callback.call_args.kwargs['silent'] is False
+    outcome = callback.call_args.kwargs['outcome']
+    assert outcome.commit_state == 'committed_complete'
+    assert outcome.terminal == 'written_unconfirmed'
     view.cancel_active_modes.assert_called_once_with()
 
 
@@ -373,7 +390,13 @@ def test_on_action_save_as_when_error(
     save_mock.side_effect = sqlite3.Error('foo')
     view.on_action_save_as()
     qtbot.waitUntil(lambda: view.on_saving_finished.called is True)
-    view.on_saving_finished.assert_called_once_with(filename, ['foo'])
+    callback = view.on_saving_finished
+    callback.assert_called_once()
+    assert callback.call_args.args == (filename + '.data', ['foo'])
+    assert callback.call_args.kwargs['silent'] is False
+    outcome = callback.call_args.kwargs['outcome']
+    assert outcome.terminal == 'failed'
+    assert outcome.error == 'foo'
     view.cancel_active_modes.assert_called_once_with()
 
 
@@ -389,7 +412,13 @@ def test_on_action_save(view, qtbot, imgfilename3x3, tmpdir):
     view.on_action_save()
     qtbot.waitUntil(lambda: view.on_saving_finished.called is True)
     assert os.path.exists(view.filename) is True
-    view.on_saving_finished.assert_called_once_with(view.filename, [])
+    callback = view.on_saving_finished
+    callback.assert_called_once()
+    assert callback.call_args.args == (view.filename, [])
+    assert callback.call_args.kwargs['silent'] is False
+    outcome = callback.call_args.kwargs['outcome']
+    assert outcome.commit_state == 'committed_complete'
+    assert outcome.terminal == 'written_unconfirmed'
     view.cancel_active_modes.assert_called_once_with()
 
 
@@ -610,11 +639,17 @@ def test_on_action_help(show_mock, view):
 
 
 @patch('prism.widgets.DebugLogDialog.show')
-def test_on_action_debuglog(show_mock, view):
-    with patch('builtins.open', mock_open(read_data='log')) as open_mock:
+def test_on_action_debuglog(show_mock, view, qtbot, tmp_path):
+    path = tmp_path / 'Prism.log'
+    path.write_text('asynchronous diagnostic log', encoding='utf-8')
+    with patch('prism.widgets.diagnostics_dialog.logfile_name', return_value=str(path)):
         view.on_action_debuglog()
         show_mock.assert_called_once()
-        open_mock.assert_called_once_with(logfile_name())
+        from prism.widgets.diagnostics_dialog import DebugLogDialog
+        dialog = view.findChild(DebugLogDialog)
+        qtbot.waitUntil(lambda: dialog._preview_job is None)
+        assert dialog.log.toPlainText() == 'asynchronous diagnostic log'
+        dialog.close()
 
 
 @patch('prism.scene.PrismGraphicsScene.clearSelection')
@@ -1125,14 +1160,14 @@ def test_update_window_title_changes_no_filename(clear_mock, view):
 def test_update_window_title_no_changes_filename(clear_mock, view):
     view.filename = 'test.prism'
     view.update_window_title()
-    assert view.parent.windowTitle() == 'test.prism - Prism'
+    assert view.parent.windowTitle() == 'test - Prism'
 
 
 @patch('PyQt6.QtGui.QUndoStack.isClean', return_value=False)
 def test_update_window_title_changes_filename(clear_mock, view):
     view.filename = 'test.prism'
     view.update_window_title()
-    assert view.parent.windowTitle() == 'test.prism* - Prism'
+    assert view.parent.windowTitle() == 'test* - Prism'
 
 
 @patch('prism.view.PrismGraphicsView.recalc_scene_rect')

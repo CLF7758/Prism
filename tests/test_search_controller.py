@@ -1,7 +1,7 @@
 """Search navigation must never become an edit of the original project."""
 from unittest.mock import patch
 from PyQt6 import QtCore, QtGui, QtWidgets
-from tests.test_asset_browser import photo
+from tests.test_asset_browser import assets_only, photo
 from tests.test_unified_project_search import page
 from prism.project_search import item_key
 
@@ -176,7 +176,7 @@ def test_unclassified_respects_canvas_assignment(main_window):
     assigned._categories = ['参考']
     unassigned = photo(main_window, record['id'], '未分类')
     main_window.asset_browser.open('unclassified')
-    assert main_window.asset_browser.model.items == [assigned]
+    assert assets_only(main_window.asset_browser.model.items) == [assigned]
 
 
 def test_canvas_match_opens_and_locates_actual_object(main_window):

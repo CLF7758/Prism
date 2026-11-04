@@ -15,12 +15,18 @@ from prism.widgets import (
 
 
 def test_debug_log_dialog(qtbot, settings, view):
-    with open(logfile_name(), 'w') as f:
+    import os
+    path = logfile_name()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as f:
         f.write('my log output')
 
     dialog = DebugLogDialog(view)
     dialog.show()
     qtbot.addWidget(dialog)
+    # 日志是在后台线程读的（界面不能等它），所以这里等它读完。
+    qtbot.waitUntil(lambda: dialog.log.toPlainText() != '正在读取最近日志…',
+                    timeout=10000)
     assert dialog.log.toPlainText() == 'my log output'
     qtbot.mouseClick(dialog.copy_button, Qt.MouseButton.LeftButton)
     clipboard = QtWidgets.QApplication.clipboard()

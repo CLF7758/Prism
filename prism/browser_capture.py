@@ -17,15 +17,20 @@ class BrowserCaptureService(QtCore.QObject):
 
     capture_received = QtCore.pyqtSignal(str, str, list)
     status_changed = QtCore.pyqtSignal(str)
+    #: Emitted once the server thread is gone and the port is free again.
+    stopped = QtCore.pyqtSignal()
 
     def __init__(self, port=47653, parent=None):
         super().__init__(parent)
         self.port = int(port)
         self._server = None
         self._thread = None
+        # Cleared while the server runs, set when it really stopped.
+        self._stopped = threading.Event()
+        self._stopped.set()
 
     def start(self):
-        if self._server is not None:
+        if self.is_running():
             return
         service = self
 
@@ -103,6 +108,7 @@ class BrowserCaptureService(QtCore.QObject):
             logger.warning('Could not start browser capture service: %s', exc)
             self.status_changed.emit(str(exc))
             return
+        self._stopped.clear()
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             name='PrismBrowserCapture', daemon=True)
@@ -110,10 +116,71 @@ class BrowserCaptureService(QtCore.QObject):
         logger.info('Browser capture listening on http://127.0.0.1:%s', self.port)
         self.status_changed.emit('running')
 
+    def is_running(self):
+        """True while the server serves requests or is winding down."""
+        return self._server is not None or not self._stopped.is_set()
+
     def stop(self):
-        if self._server is None:
+        """Ask the capture server to stop. Returns without waiting.
+
+        `socketserver.shutdown()` only returns once the serving thread left
+        its loop, so it must never run on the GUI thread: the request goes
+        to a helper thread and the `stopped` signal reports the real end.
+        Stopping twice is safe.
+        """
+        server = self._server
+        if server is None:
+            # Nothing to stop, or a stop request is already on its way.
+            if self._stopped.is_set():
+                self._emit_stopped()
             return
-        self._server.shutdown()
-        self._server.server_close()
+        thread = self._thread
         self._server = None
         self._thread = None
+        worker = threading.Thread(
+            target=self._shutdown, args=(server, thread),
+            name='PrismBrowserCaptureStop', daemon=True)
+        worker.start()
+
+    def wait_for_stop(self, timeout=5.0):
+        """Block until the server thread is gone and the port is released.
+
+        Only for callers that own no event loop; the GUI thread has to stay
+        responsive while the server winds down.
+        """
+        return self._stopped.wait(timeout)
+
+    def _shutdown(self, server, thread):
+        """Stop the server and release the port, off the GUI thread."""
+        clean = True
+        try:
+            server.shutdown()
+        except Exception:
+            clean = False
+            logger.exception('Browser capture server did not shut down cleanly')
+        try:
+            server.server_close()
+        except Exception:
+            clean = False
+            logger.exception('Browser capture socket did not close cleanly')
+        if thread is not None:
+            # This helper owns no GUI event loop. A timeout is not evidence
+            # that the serving thread stopped; keep the real completion signal
+            # tied to its actual end instead of allowing the process to quit.
+            thread.join()
+            if thread.is_alive():
+                logger.error('Browser capture serving thread is still running')
+                return
+        if not clean:
+            # Keep the service honestly in its stopping state on failure.
+            # The application's watchdog must not turn this into success.
+            return
+        self._stopped.set()
+        self._emit_stopped()
+
+    def _emit_stopped(self):
+        try:
+            self.stopped.emit()
+        except RuntimeError:
+            # The application is already tearing down; nobody listens.
+            pass

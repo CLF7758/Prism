@@ -100,6 +100,22 @@ def test_handshake_flushes_bounded_queue_without_starting_helper(view):
     adapter.close()
 
 
+def test_captured_both_opens_reference_and_preserves_canvas_import(view, tmp_path, qtbot):
+    adapter = CaptureService(view)
+    imported = Mock()
+    adapter.imported.connect(imported)
+    target = dict(destination='both', project_id=view.scene.project_id,
+                  canvas_id='default-canvas')
+    path = str(make_image(tmp_path))
+    try:
+        adapter._retained(target, path, path, '')
+        assert len(adapter.references) == 1
+        assert adapter.references[0].canvas.reference.pixmap().size() == QtCore.QSize(100, 80)
+        imported.assert_called_once_with(target, path)
+    finally:
+        adapter.close()
+
+
 def test_real_qt5_helper_capture_roundtrip_inserts_and_undoes(view, tmp_path, monkeypatch, qtbot):
     import pytest
     from prism.capture_service import component_command

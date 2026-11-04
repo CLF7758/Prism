@@ -185,3 +185,31 @@ def test_engine_alpha_modes_use_explicit_alpha_not_filename(qtbot, tmp_path):
         assert not errors,errors
         (tmp_path/(mode+'.png')).write_bytes(results[-1])
     assert len({hashlib.sha256(b).hexdigest() for b in results})==3
+
+
+def test_hidden_slot_construction_never_shows_temporary_windows(qtbot, qapp):
+    from PyQt6 import QtCore, QtWidgets
+    from prism.material_parameters import RANGES
+    from prism.widgets.material_slots import MaterialSlot
+    from prism.widgets.widget_construction import widget_steps
+
+    owner = QtWidgets.QWidget()
+    qtbot.addWidget(owner)
+    shown = []
+    class WindowShows(QtCore.QObject):
+        def eventFilter(self, widget, event):
+            if (event.type() == QtCore.QEvent.Type.Show
+                    and isinstance(widget, QtWidgets.QWidget) and widget.isWindow()):
+                shown.append(type(widget).__name__)
+            return False
+    watcher = WindowShows(owner)
+    qapp.installEventFilter(watcher)
+    try:
+        for key in RANGES:
+            for _ in widget_steps(MaterialSlot, key, key, owner):
+                qapp.processEvents()
+        assert shown == [], 'Hidden inspector construction exposed temporary top-level windows'
+    finally:
+        qapp.removeEventFilter(watcher)
+
+

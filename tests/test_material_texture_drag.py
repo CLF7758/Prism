@@ -81,6 +81,7 @@ def test_dom_drag_uses_whole_selection_and_stale_events_rejected(main_window,qtb
     page.materials.select_record(records[1]['id'],True)
     root = tmp_path/'transfer'
     with patch('prism.material_transfer.transfer_directory',return_value=root), \
+         patch.object(QtWidgets.QApplication,'keyboardModifiers',return_value=QtCore.Qt.KeyboardModifier.AltModifier), \
          patch.object(QtWidgets.QApplication,'mouseButtons',return_value=QtCore.Qt.MouseButton.LeftButton), \
          patch('prism.external_drag.start_file_drag',return_value=QtCore.Qt.DropAction.CopyAction) as drag:
         javascript(page.materials,"document.querySelector('.asset-card').dispatchEvent(new DragEvent('dragstart',{bubbles:true,cancelable:true}))",qtbot)
@@ -100,6 +101,7 @@ def test_released_mouse_prepares_but_does_not_start_ghost_drag(main_window,qtbot
     service, records = create_sources(main_window,tmp_path)
     page = main_window.material_library
     with patch('prism.material_transfer.transfer_directory',return_value=tmp_path/'out'), \
+         patch.object(QtWidgets.QApplication,'keyboardModifiers',return_value=QtCore.Qt.KeyboardModifier.AltModifier), \
          patch.object(QtWidgets.QApplication,'mouseButtons',return_value=QtCore.Qt.MouseButton.NoButton), \
          patch('prism.external_drag.start_file_drag') as drag:
         page.drag_textures([records[0]['id']])
@@ -119,6 +121,7 @@ def test_left_mouse_gesture_in_real_card_webview(main_window,qtbot,tmp_path):
     assert target is not None
     point = QtCore.QPoint(round(position['x']),round(position['y']))
     with patch('prism.material_transfer.transfer_directory',return_value=tmp_path/'out'), \
+         patch.object(QtWidgets.QApplication,'keyboardModifiers',return_value=QtCore.Qt.KeyboardModifier.AltModifier), \
          patch.object(QtWidgets.QApplication,'mouseButtons',return_value=QtCore.Qt.MouseButton.LeftButton), \
          patch('prism.external_drag.start_file_drag',return_value=QtCore.Qt.DropAction.CopyAction) as drag:
         QtTest.QTest.mousePress(target,QtCore.Qt.MouseButton.LeftButton,pos=point)
@@ -141,6 +144,7 @@ def test_old_preparation_cannot_start_a_new_mouse_gesture(main_window,qtbot,tmp_
         release.wait(5)
         return dict(paths=[str(tmp_path/'0/Color.png')],materials=1,empty=0,renamed=0)
     with patch('prism.material_transfer.prepare_texture_transfer',side_effect=prepare), \
+         patch.object(QtWidgets.QApplication,'keyboardModifiers',return_value=QtCore.Qt.KeyboardModifier.AltModifier), \
          patch.object(QtWidgets.QApplication,'mouseButtons',return_value=QtCore.Qt.MouseButton.LeftButton), \
          patch('prism.external_drag.start_file_drag') as drag:
         page.drag_textures([records[0]['id']])

@@ -31,6 +31,12 @@ def add_image(window, categories=()):
     image = QtGui.QImage(10, 10, QtGui.QImage.Format.Format_RGB32)
     image.fill(QtGui.QColor('red'))
     item = PrismPixmapItem(image, filename='example.png')
+    # 导入的图片要留着原件：工程里「原件没留存就不许保存」这条规矩
+    # （prism/image_source.py）正是靠它生效，测试里的素材也得像真导入的那样。
+    buffer = QtCore.QBuffer()
+    buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, 'PNG')
+    item.set_source_blob(bytes(buffer.data()), 'png')
     item._categories = list(categories)
     window.view.scene.addItem(item)
     return item
@@ -270,6 +276,10 @@ def test_group_roundtrip_and_filter_visibility(window, tmp_path):
     reader.read()
     scene.add_queued_items()
     reader._close_connection()
+    # Opening a project lands on its first legal canvas.  The direct read
+    # above bypasses that step, so the canvas context is established here --
+    # otherwise the assets have no canvas to show up on.
+    window.open_workspace_page('canvas', window._first_canvas_id())
     scene.groups.refresh()
     assert len(scene.groups.frames) == 1
     frame = scene.groups.frames['group-test']

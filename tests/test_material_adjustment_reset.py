@@ -5,6 +5,23 @@ from prism.material_parameters import slot_options
 from prism.material_textures import prepare_texture, render_signature
 
 
+def test_selecting_a_saved_material_also_discards_old_numeric_adjustments(main_window, tmp_path):
+    main_window.open_material_library()
+    page = main_window.material_library
+    record = page.records.create(name='Previously adjusted')
+    source = tmp_path / 'normal.png'
+    Image.new('RGB', (8,8), (128,128,255)).save(source)
+    page.records.configure(record['id'], slot='normal', prepared=prepare_texture(source), channel='RGB')
+    page.records.configure(record['id'], slot_settings=('normal', {'value': 2.75}))
+    before = page.records.get(record['id'])
+    page._selection_changed(record['id'])
+    page._auto_timer.stop()
+    after = page.records.get(record['id'])
+    assert after['textures'] == before['textures']
+    assert page.details.slots['normal'].amount.value() == 1
+    assert page.details.slots['normal'].slider.value() == page.details.slots['normal'].slider.maximum()
+
+
 def test_switch_discards_adjustments_but_keeps_sources_and_channels(main_window, qtbot, tmp_path):
     main_window.show()
     main_window.open_material_library()
