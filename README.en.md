@@ -2,7 +2,7 @@
 <h1 align="center">Prism</h1>
 <p align="center">A local creative asset workspace for reference boards, PBR materials, 3D models, documents and mind maps.</p>
 
-[Download the complete Windows installer](https://github.com/CLF7758/Prism/releases/latest) · [0.5.0 release notes](docs/RELEASE_0.5.0.md) · [中文](README.md)
+[Download the complete Windows installer](https://github.com/CLF7758/Prism/releases/download/v0.5.0/Prism-Setup-0.5.0-windows-x64.exe) · [0.5.0 release notes](docs/RELEASE_0.5.0.md) · [中文](README.md)
 
 Prism brings reference collection, asset organization, material/model previews and production notes into one local project. Images, canvases, mind maps, documents, materials and models are peer resources. All Assets, Unclassified, Untagged, Recent and Trash are views of the same project resources.
 
@@ -80,7 +80,7 @@ New/open/save/save-as, recent projects, autosave and recovery entry points are a
 
 ## Install
 
-Download `Prism-Setup-0.5.0-windows-x64.exe` and `SHA256.txt` from [Releases](https://github.com/CLF7758/Prism/releases/latest). The per-user Windows x64 installer includes the application, Qt/WebEngine, image/video dependencies, capture tools, local visual-search model and download components. No separate Python installation is required.
+Download `Prism-Setup-0.5.0-windows-x64.exe` and `SHA256.txt` from [Releases](https://github.com/CLF7758/Prism/releases/download/v0.5.0/Prism-Setup-0.5.0-windows-x64.exe). The per-user Windows x64 installer includes the application, Qt/WebEngine, image/video dependencies, capture tools, local visual-search model and download components. No separate Python installation is required.
 
 3D previews need a working GPU/WebGL environment. Online platforms require connectivity and appropriate access. Windows 11 is the primary development environment. Builds are unsigned; verify the release SHA-256. Large projects, cold preview startup and thumbnail generation remain hardware/content dependent; test coverage is not a guarantee of flawless behavior on every computer.
 

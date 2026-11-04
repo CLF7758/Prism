@@ -3,7 +3,7 @@
 <p align="center">一个本地创作资产工作区：参考图、无限画布、PBR 材质、3D 模型、文档与脑图。</p>
 
 <p align="center">
-<a href="https://github.com/CLF7758/Prism/releases/latest">下载 Windows 完整安装包</a> ·
+<a href="https://github.com/CLF7758/Prism/releases/download/v0.5.0/Prism-Setup-0.5.0-windows-x64.exe">下载 Windows 完整安装包</a> ·
 <a href="https://github.com/CLF7758/Prism/releases/tag/v0.5.0">0.5.0 版本说明</a> ·
 <a href="README.en.md">English</a>
 </p>
@@ -137,7 +137,7 @@ Prism 的当前工程采用 **`.prism` 入口加 `.prism.data` 数据目录**的
 
 ## 安装和运行
 
-1. 到 [GitHub Releases](https://github.com/CLF7758/Prism/releases/latest) 下载 **Prism-Setup-0.5.0-windows-x64.exe** 与同页 `SHA256.txt`。
+1. 到 [GitHub Releases](https://github.com/CLF7758/Prism/releases/download/v0.5.0/Prism-Setup-0.5.0-windows-x64.exe) 下载 **Prism-Setup-0.5.0-windows-x64.exe** 与同页 `SHA256.txt`。
 2. 安装到当前 Windows 用户目录，按需创建桌面快捷方式。
 3. 打开已有工程，或新建工程后导入素材。
 4. 用 `Ctrl+S` 保存；升级前建议备份自己的整个工程。
